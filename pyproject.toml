@@ -1,0 +1,29 @@
+[project]
+name = "swing-harness"
+version = "0.1.0"
+description = "AI-native swing trading system — validation harness (Phase 1)."
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "pyarrow>=14.0",
+    "scipy>=1.11",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+# Real data adapters (network); not needed for offline/synthetic runs or tests.
+live-data = ["pandas-datareader>=0.10", "requests>=2.31"]
+# Real LLM agents; not needed for the MockLLMClient default.
+llm = ["anthropic>=0.40"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["harness*", "system*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

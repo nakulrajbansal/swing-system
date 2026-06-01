@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Local PIT data store (never commit data; it is rebuilt by the loader)
+*.parquet
+data_store/
+*.sqlite
+*.db
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
