@@ -16,6 +16,8 @@ dev = ["pytest>=7.4"]
 live-data = ["pandas-datareader>=0.10", "requests>=2.31"]
 # Real LLM agents; not needed for the MockLLMClient default.
 llm = ["anthropic>=0.40"]
+# Desktop app packaging (Tkinter GUI is stdlib; only the bundler is extra).
+gui = ["pyinstaller>=6.0"]
 
 [build-system]
 requires = ["setuptools>=68"]

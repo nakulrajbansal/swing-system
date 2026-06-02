@@ -16,6 +16,17 @@ data_store/
 *.sqlite
 *.db
 
+# PyInstaller build artifacts (the spec/scripts under build/ are source)
+/dist/
+/.pyinstaller/
+/.pyi_build*/
+
+# Local app config + run logs (may contain secrets; never commit)
+.swing_system/
+
+# Claude Code transient state
+.claude/scheduled_tasks.lock
+
 # OS / editor
 .DS_Store
 .vscode/

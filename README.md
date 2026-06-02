@@ -60,6 +60,22 @@ python -m system.run_live    # end-to-end paper-trading cycle (MockLLMClient)
 `harness.run` recovers the planted Edge-1 signal (PASS) and KILLs the noise edges,
 applying a deflated-Sharpe multiple-testing correction at the portfolio level.
 
+## Desktop app (GUI)
+
+A Tkinter GUI to configure API keys/parameters and run the harness or paper
+engine with live output, packaged as a standalone executable.
+
+```bash
+pip install -e ".[dev,gui]"
+python -m app.main                 # launch the GUI
+.\build\build_windows.ps1          # -> dist\SwingSystem.exe (Windows)
+bash build/build_macos.sh          # -> dist/SwingSystem.app (run on a Mac)
+```
+
+See `build/README.md` for details. Keys are stored locally in
+`~/.swing_system/config.json` (never committed or bundled). Live-data, real-LLM,
+and live-broker paths are configurable but gated; one-click runs stay paper-only.
+
 ## Enabling real components (opt-in)
 
 - **Real data:** `pip install -e ".[live-data]"` then use
