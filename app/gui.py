@@ -87,11 +87,13 @@ class SwingApp:
                         command=self._warn_live).pack(anchor="w")
 
         ttk.Label(parent, foreground="#888", wraplength=820, justify="left",
-                  text="Paper-only by default. Live broker and real-LLM execution are "
-                       "gated and not yet wired into one-click runs — the runs exercise "
-                       "the deterministic, offline pipeline. Keys are saved locally to "
-                       "~/.swing_system/config.json (never committed or bundled).").pack(
-            anchor="w", padx=12, pady=(4, 8))
+                  text="Data source 'live' pulls REAL free data (Yahoo prices + corporate "
+                       "actions), cached locally; 'synthetic' runs a planted-signal demo. "
+                       "LLM agents call the Anthropic API when enabled (capped by "
+                       "ANTHROPIC_MAX_CALLS; real backtests can be costly). Live-broker "
+                       "trading stays paper-only/gated (a human must wire real money). "
+                       "Keys are saved to ~/.swing_system/config.json (never committed "
+                       "or bundled).").pack(anchor="w", padx=12, pady=(4, 8))
 
         btns = ttk.Frame(parent)
         btns.pack(fill="x", padx=12, pady=8)

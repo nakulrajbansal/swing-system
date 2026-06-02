@@ -13,7 +13,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7.4"]
 # Real data adapters (network); not needed for offline/synthetic runs or tests.
-live-data = ["pandas-datareader>=0.10", "requests>=2.31"]
+# yfinance = free prices + splits/dividends; requests = EDGAR filings/Form 4.
+live-data = ["yfinance>=0.2.40", "requests>=2.31"]
 # Real LLM agents; not needed for the MockLLMClient default.
 llm = ["anthropic>=0.40"]
 # Desktop app packaging (Tkinter GUI is stdlib; only the bundler is extra).

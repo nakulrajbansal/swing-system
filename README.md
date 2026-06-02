@@ -78,9 +78,13 @@ and live-broker paths are configurable but gated; one-click runs stay paper-only
 
 ## Enabling real components (opt-in)
 
-- **Real data:** `pip install -e ".[live-data]"` then use
-  `harness.data.loader.fetch_prices_stooq` / `fetch_edgar_submissions` (SEC requires
-  a `User-Agent`). Loaders set `available_at` with a conservative latency buffer.
+- **Real data (wired):** `pip install -e ".[live-data]"`. The app's `data_source="live"`
+  pulls **real free data via yfinance** (`harness.data.loader.LiveLoader` /
+  `fetch_prices_yahoo`) — raw prices + splits/dividends, so the point-in-time
+  as-of-T adjustment holds on real data. Cached under `~/.swing_system/data_store`.
+  `fetch_edgar_submissions` pulls EDGAR filing metadata (SEC requires a `User-Agent`).
+  Filing-text / Form-4-detail / news tables for live data are a further step, so on
+  real data today only the price-based momentum edge (and the paper engine) have inputs.
 - **Real LLM agents:** `pip install -e ".[llm]"` and set `ANTHROPIC_API_KEY`.
   `system.agents.llm_client.default_client()` then returns the Anthropic adapter
   (pinned models, temperature 0, structured output, prompt caching). Without a key

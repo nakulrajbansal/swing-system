@@ -19,10 +19,17 @@ from app.runner import run_paper, run_validation
 
 
 def _selftest(which: str) -> int:
-    # A small, fast universe so the bundle can be verified quickly.
-    cfg = AppConfig(n_symbols=4, start_date="2021-01-04", end_date="2021-12-31",
-                    seed=1, oos_start="2021-09-01")
-    fn = run_paper if which == "paper" else run_validation
+    if which == "live":
+        # Tiny REAL-data validation: proves yfinance works inside the bundle.
+        cfg = AppConfig(data_source="live", n_symbols=2,
+                        start_date="2022-01-01", end_date="2022-12-31",
+                        oos_start="2022-09-01")
+        fn = run_validation
+    else:
+        # A small, fast synthetic universe so the bundle can be verified quickly.
+        cfg = AppConfig(n_symbols=4, start_date="2021-01-04", end_date="2021-12-31",
+                        seed=1, oos_start="2021-09-01")
+        fn = run_paper if which == "paper" else run_validation
 
     # Always log to a file (works in windowed builds where sys.__stdout__ is None),
     # and also to the real stdout when a console exists. The runner redirects

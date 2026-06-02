@@ -36,23 +36,41 @@ class MockLLMClient(LLMClient):
         )
 
 
+class CallBudgetExceeded(RuntimeError):
+    """Raised when an AnthropicClient passes its per-run API call cap."""
+
+
 class AnthropicClient(LLMClient):
-    """Real Anthropic adapter (gated by ANTHROPIC_API_KEY). Lazy SDK import."""
+    """Real Anthropic adapter (gated by ANTHROPIC_API_KEY). Lazy SDK import.
+
+    A hard per-run call budget protects against runaway spend: each `complete`
+    increments a counter and raises once the cap is hit. The cap defaults to
+    ANTHROPIC_MAX_CALLS (or 200). Callers that swallow agent errors (the
+    orchestrator) will then simply stop using the LLM for the rest of the run.
+    """
 
     deterministic = False
 
-    def __init__(self, api_key: str | None = None):
+    def __init__(self, api_key: str | None = None, max_calls: int | None = None):
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not self.api_key:
             raise RuntimeError(
                 "No ANTHROPIC_API_KEY. Use MockLLMClient for offline/deterministic "
                 "runs, or supply a key to enable real specialist agents."
             )
+        self.max_calls = int(max_calls if max_calls is not None
+                             else os.environ.get("ANTHROPIC_MAX_CALLS", 200))
+        self.calls = 0
         from anthropic import Anthropic  # lazy
         self._client = Anthropic(api_key=self.api_key)
 
     def complete(self, system: str, payload: dict, schema_hint: str,
                  model: str, max_tokens: int = 1500, temperature: float = 0.0) -> dict:
+        if self.calls >= self.max_calls:
+            raise CallBudgetExceeded(
+                f"LLM call budget ({self.max_calls}) reached; stopping to cap cost. "
+                "Raise ANTHROPIC_MAX_CALLS to allow more.")
+        self.calls += 1
         # Structured output via a single tool the model must call.
         tool = {
             "name": "emit",

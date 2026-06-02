@@ -78,21 +78,50 @@ def _redirect(emit: Emit):
 
 
 def _build_store(cfg: AppConfig, emit: Emit):
+    """Build (or load) the PIT store for this run; returns (store, sector_map)."""
+    if cfg.data_source == "live":
+        return _build_live_store(cfg, emit)
+    return _build_synthetic_store(cfg, emit)
+
+
+def _build_synthetic_store(cfg: AppConfig, emit: Emit):
     from harness.data.loader import SyntheticConfig, SyntheticLoader
     from harness.data.pit_store import PITStore
     import tempfile
 
-    if cfg.data_source != "synthetic":
-        emit("[note] live data source not yet wired into one-click runs; "
-             "using the synthetic universe.")
-    emit(f"[data] building synthetic universe: {cfg.n_symbols} symbols, "
+    emit(f"[data] SYNTHETIC universe (planted signal): {cfg.n_symbols} symbols, "
          f"{cfg.start_date} -> {cfg.end_date} (seed {cfg.seed}) ...")
     store = PITStore(tempfile.mkdtemp(prefix="swing_app_"))
     loader = SyntheticLoader(store, SyntheticConfig(
         n_symbols=int(cfg.n_symbols), start=cfg.start_date, end=cfg.end_date,
         seed=int(cfg.seed)))
     loader.load_all()
-    emit("[data] universe ready.")
+    emit("[data] synthetic universe ready (NOTE: planted edge; not real markets).")
+    return store, loader.sector_map()
+
+
+def _build_live_store(cfg: AppConfig, emit: Emit):
+    """Real free data (yfinance), cached to ~/.swing_system/data_store so repeat
+    runs don't re-hit the network. Delete that folder to force a refresh."""
+    from harness.data.loader import LiveLoader, live_symbols
+    from harness.data.pit_store import PITStore
+
+    syms = live_symbols(int(cfg.n_symbols))
+    cache = (CONFIG_DIR / "data_store" /
+             f"live_{len(syms)}_{cfg.start_date}_{cfg.end_date}")
+    store = PITStore(cache)
+    loader = LiveLoader(store, symbols=syms, start=cfg.start_date,
+                        end=cfg.end_date, emit=emit)
+    if (cache / "prices.parquet").exists():
+        emit(f"[data] LIVE: using cached real data at {cache}")
+        emit("[data] (delete that folder to refetch from Yahoo)")
+    else:
+        emit(f"[data] LIVE: fetching real data for {len(syms)} symbols from "
+             "Yahoo Finance — first run is slow ...")
+        loader.load_all()
+    emit("[data] live universe ready (REAL market prices + corporate actions).")
+    emit("[note] filing/insider/news tables are not yet wired for live data, so "
+         "only the price-based momentum edge has real inputs.")
     return store, loader.sector_map()
 
 
@@ -132,13 +161,21 @@ def run_paper(cfg: AppConfig, emit: Emit) -> dict:
     from system.run_live import PaperTradingEngine
 
     cfg.apply_to_env()
-    use_llm = bool(cfg.use_llm_agents and cfg.anthropic_api_key)
-    client = default_client() if use_llm else MockLLMClient()
+    requested_llm = bool(cfg.use_llm_agents and cfg.anthropic_api_key)
+    client = default_client() if requested_llm else MockLLMClient()
+    real_llm = not client.deterministic
 
     with _run_logger(emit, "paper") as (log, _path):
-        if use_llm:
-            log("[warn] LLM agents enabled (experimental): core-agent real-mode "
-                "parsing is not yet wired, so those calls fail-safe to PASS.")
+        # Honest status: report the client actually in use, not just the toggle.
+        log(f"[agents] active client: {type(client).__name__} "
+            f"(deterministic={client.deterministic})")
+        if requested_llm and not real_llm:
+            log("[warn] LLM agents requested, but the Anthropic SDK/key is not "
+                "available in this build — fell back to the deterministic mock. "
+                "No API calls were made and no tokens were spent.")
+        elif real_llm:
+            log("[warn] real LLM agents active: specialist reads will call the API "
+                "(this spends tokens).")
         t0 = time.time()
         with _redirect(log):
             store, sector_map = _build_store(cfg, log)

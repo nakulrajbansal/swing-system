@@ -195,14 +195,43 @@ class SyntheticLoader:
 # --------------------------------------------------------------------------
 # Real adapters (network; imported lazily so offline runs are unaffected)
 # --------------------------------------------------------------------------
-def fetch_prices_stooq(symbol: str, start: str, end: str | None = None) -> pd.DataFrame:
-    """Free daily OHLCV from Stooq via pandas-datareader. Returns store-ready rows."""
-    from pandas_datareader import data as pdr  # lazy
+def fetch_prices_yahoo(symbol: str, start: str, end: str | None = None):
+    """Free daily data from Yahoo via yfinance. No API key.
 
-    df = pdr.DataReader(symbol, "stooq", start, end).sort_index().reset_index()
-    df.columns = [c.lower() for c in df.columns]
-    df["symbol"] = symbol
-    return df[["symbol", "date", "open", "high", "low", "close", "volume"]]
+    Returns (prices_df, corp_actions_df) ready for the PIT store:
+      * prices: RAW (unadjusted) OHLCV + session date — the store keeps raw prices
+        as ground truth and back-adjusts as-of-T (master §9), so we must NOT use
+        Yahoo's pre-adjusted 'Adj Close'.
+      * corp_actions: splits and cash dividends with their ex-dates, which drive
+        the as-of-T adjustment.
+    """
+    import yfinance as yf  # lazy
+
+    h = yf.Ticker(symbol).history(start=start, end=end, auto_adjust=False, actions=True)
+    if h.empty:
+        cols = ["symbol", "date", "open", "high", "low", "close", "volume"]
+        return pd.DataFrame(columns=cols), pd.DataFrame(
+            columns=["symbol", "ex_date", "type", "ratio_or_amount"])
+
+    idx = h.index.tz_localize(None).normalize() if h.index.tz is not None else h.index.normalize()
+    prices = pd.DataFrame({
+        "symbol": symbol, "date": idx,
+        "open": h["Open"].to_numpy(), "high": h["High"].to_numpy(),
+        "low": h["Low"].to_numpy(), "close": h["Close"].to_numpy(),
+        "volume": h["Volume"].astype("int64").to_numpy(),
+    }).dropna()
+
+    actions = []
+    if "Stock Splits" in h:
+        for d, r in h["Stock Splits"][h["Stock Splits"] > 0].items():
+            actions.append({"symbol": symbol, "ex_date": pd.Timestamp(d).tz_localize(None).normalize(),
+                            "type": "split", "ratio_or_amount": float(r)})
+    if "Dividends" in h:
+        for d, a in h["Dividends"][h["Dividends"] > 0].items():
+            actions.append({"symbol": symbol, "ex_date": pd.Timestamp(d).tz_localize(None).normalize(),
+                            "type": "dividend", "ratio_or_amount": float(a)})
+    corp = pd.DataFrame(actions, columns=["symbol", "ex_date", "type", "ratio_or_amount"])
+    return prices, corp
 
 
 def fetch_edgar_submissions(cik: str, user_agent: str) -> pd.DataFrame:
@@ -230,3 +259,80 @@ def fetch_edgar_submissions(cik: str, user_agent: str) -> pd.DataFrame:
     df["section_text_mdna"] = None
     return df[["symbol", "cik", "form_type", "available_at", "accession",
                "doc_uri", "section_text_riskfactors", "section_text_mdna"]]
+
+
+# --------------------------------------------------------------------------
+# Real universe loader (free data: yfinance prices + corp actions)
+# --------------------------------------------------------------------------
+# A curated, liquid, multi-sector universe mapped to matching sector ETFs (used
+# as the abnormal-return benchmark). Tunable; the app exposes a size knob.
+LIVE_UNIVERSE: dict[str, list[str]] = {
+    "XLK": ["AAPL", "MSFT", "NVDA", "AVGO", "ORCL"],
+    "XLF": ["JPM", "BAC", "WFC", "GS", "MS"],
+    "XLE": ["XOM", "CVX", "COP", "SLB"],
+    "XLV": ["JNJ", "UNH", "PFE", "MRK", "ABBV"],
+    "XLY": ["AMZN", "TSLA", "HD", "MCD", "NKE"],
+}
+
+
+def live_symbols(n: int | None = None) -> list[str]:
+    """Flatten the universe to a ticker list, optionally capped at n."""
+    syms = [s for tickers in LIVE_UNIVERSE.values() for s in tickers]
+    return syms[:n] if n else syms
+
+
+class LiveLoader:
+    """Populate the PIT store with REAL free data (yfinance prices + corp actions).
+
+    Prices are stored RAW with their splits/dividends, so the point-in-time
+    as-of-T adjustment still holds on real data. Per-symbol fetch failures are
+    skipped with a note (network is best-effort). Filing/insider/news tables are
+    not populated here yet — those EDGAR document/XML parsers are a further step,
+    so on real data only the price-based edge (and the paper engine) have inputs.
+    """
+
+    def __init__(self, store: PITStore, symbols: list[str] | None = None,
+                 start: str = "2016-01-01", end: str | None = None, emit=None):
+        self.store = store
+        self.symbols = symbols or live_symbols()
+        self.start = start
+        self.end = end
+        self.emit = emit or (lambda _m: None)
+        self._sector = {sym: etf for etf, tickers in LIVE_UNIVERSE.items()
+                        for sym in tickers}
+
+    def sector_map(self) -> dict[str, str]:
+        return dict(self._sector)
+
+    def load_all(self) -> None:
+        benchmarks = sorted({self._sector[s] for s in self.symbols if s in self._sector})
+        to_fetch = list(self.symbols) + benchmarks
+        all_prices, all_actions, loaded = [], [], []
+        for i, sym in enumerate(to_fetch, 1):
+            self.emit(f"[live] fetching {sym} ({i}/{len(to_fetch)}) ...")
+            try:
+                prices, actions = fetch_prices_yahoo(sym, self.start, self.end)
+            except Exception as exc:
+                self.emit(f"[live] skip {sym}: {type(exc).__name__}: {exc}")
+                continue
+            if prices.empty:
+                self.emit(f"[live] skip {sym}: no data returned")
+                continue
+            all_prices.append(prices)
+            if not actions.empty:
+                all_actions.append(actions)
+            loaded.append(sym)
+
+        if not all_prices:
+            raise RuntimeError("live load failed: no price data fetched (check network).")
+        self.store.write_prices(pd.concat(all_prices, ignore_index=True))
+        if all_actions:
+            self.store.write_corp_actions(pd.concat(all_actions, ignore_index=True))
+
+        stocks = [s for s in loaded if s in self._sector]
+        first_session = pd.concat(all_prices)["date"].min()
+        self.store.write_constituents(pd.DataFrame({
+            "symbol": stocks, "start_date": first_session, "end_date": pd.NaT,
+        }))
+        self.emit(f"[live] loaded {len(stocks)} stocks + "
+                  f"{len(loaded) - len(stocks) + len(benchmarks)} benchmarks.")

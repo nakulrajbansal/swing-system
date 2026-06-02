@@ -17,7 +17,7 @@ data_store/
 *.db
 
 # PyInstaller build artifacts (the spec/scripts under build/ are source)
-/dist/
+/dist*/
 /.pyinstaller/
 /.pyi_build*/
 

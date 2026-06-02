@@ -8,8 +8,8 @@ set -euo pipefail
 PY="python3"
 if [ -x "./.venv/bin/python" ]; then PY="./.venv/bin/python"; fi
 
-echo "Installing build + app dependencies..."
-"$PY" -m pip install -e ".[dev,gui]" >/dev/null
+echo "Installing build + app dependencies (incl. real data + LLM)..."
+"$PY" -m pip install -e ".[dev,gui,live-data,llm]" >/dev/null
 
 echo "Building app bundle with PyInstaller..."
 "$PY" -m PyInstaller build/swing_app.spec --noconfirm --clean --workpath .pyinstaller --distpath dist

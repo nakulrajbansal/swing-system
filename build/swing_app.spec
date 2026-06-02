@@ -21,12 +21,18 @@ ROOT = os.path.abspath(os.path.join(SPECPATH, os.pardir))
 
 datas, binaries, hiddenimports = [], [], []
 
-# scipy and pyarrow ship data/extension modules PyInstaller can miss; collect all.
-for pkg in ("scipy", "pyarrow"):
-    d, b, h = collect_all(pkg)
-    datas += d
-    binaries += b
-    hiddenimports += h
+# These ship data/extension modules (or are imported lazily) that PyInstaller
+# can miss; collect them fully. yfinance + anthropic enable the real data / LLM
+# paths inside the bundle; certifi provides CA certs for their HTTPS calls.
+_COLLECT = ["scipy", "pyarrow", "yfinance", "anthropic", "requests", "certifi"]
+for pkg in _COLLECT:
+    try:
+        d, b, h = collect_all(pkg)
+        datas += d
+        binaries += b
+        hiddenimports += h
+    except Exception:
+        pass  # optional packages may be absent in a minimal build
 
 # Our own packages (entry imports them lazily / by string in places).
 for pkg in ("harness", "system", "app"):

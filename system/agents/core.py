@@ -12,6 +12,13 @@ from system.agents.prompts import HYPOTHESIS, PORTFOLIO_MANAGER, SKEPTIC
 from system.schemas import Critique, Objection, RiskDecision, TradeHypothesis
 
 
+def _f(raw: dict, key: str, default=0.0) -> float:
+    try:
+        return float(raw.get(key, default))
+    except (TypeError, ValueError):
+        return float(default)
+
+
 class HypothesisAgent(Agent):
     name = "hypothesis"
     schema_name = "TradeHypothesis"
@@ -40,6 +47,17 @@ class HypothesisAgent(Agent):
         return TradeHypothesis(
             symbol=symbol, decision="decline", mechanism="", evidence_refs=[],
             expected_hold_days=10, invalidation="", raw_conviction=0.3)
+
+    def parse(self, raw: dict, inputs: dict) -> TradeHypothesis:
+        return TradeHypothesis(
+            symbol=inputs["symbol"],
+            decision="propose" if raw.get("decision") == "propose" else "decline",
+            mechanism=str(raw.get("mechanism", "")),
+            evidence_refs=list(raw.get("evidence_refs", [])),
+            expected_hold_days=int(raw.get("expected_hold_days", 10) or 10),
+            invalidation=str(raw.get("invalidation", "")),
+            raw_conviction=_f(raw, "raw_conviction", 0.3),
+            direction=raw.get("direction", "long"))
 
 
 class SkepticAgent(Agent):
@@ -72,6 +90,18 @@ class SkepticAgent(Agent):
         m = crit.max_severity()
         crit.verdict = "kill" if m >= 0.7 else "caution" if m >= 0.45 else "clean"
         return crit
+
+    def parse(self, raw: dict, inputs: dict) -> Critique:
+        objs = [Objection(str(o.get("kind", "objection")), str(o.get("detail", "")),
+                          _f(o, "severity", 0.3))
+                for o in raw.get("objections", [])] or \
+            [Objection("base_rate", "edges decay", 0.4)]
+        verdict = raw.get("verdict", "caution")
+        if verdict not in {"kill", "caution", "clean"}:
+            verdict = "caution"
+        return Critique(objections=objs,
+                        strongest=str(raw.get("strongest", objs[0].detail)),
+                        verdict=verdict)
 
 
 class PortfolioManagerAgent(Agent):
@@ -111,3 +141,20 @@ class PortfolioManagerAgent(Agent):
         return RiskDecision(symbol=symbol, action="enter", final_conviction=final,
                             entry=entry, stop=stop, target=target, constraints_ack=True,
                             decisive_factor="edge survives the bear case")
+
+    def parse(self, raw: dict, inputs: dict) -> RiskDecision:
+        action = raw.get("action", "pass")
+        if action not in {"enter", "adjust", "pass"}:
+            action = "pass"
+        price = _f(inputs, "price", 0.0)
+        atr = _f(inputs, "atr", 0.0)
+        # Treat the model's entry/stop/target as requests; fall back to ATR if absent.
+        entry = _f(raw, "entry", price) if action != "pass" else None
+        stop = _f(raw, "stop", price - 2 * atr) if action != "pass" else None
+        target = _f(raw, "target", (entry + 2 * (entry - stop))
+                    if (entry and stop) else 0.0) if action != "pass" else None
+        return RiskDecision(symbol=inputs["symbol"], action=action,
+                            final_conviction=_f(raw, "final_conviction", 0.0),
+                            entry=entry, stop=stop, target=target,
+                            constraints_ack=bool(raw.get("constraints_ack", True)),
+                            decisive_factor=str(raw.get("decisive_factor", "")))
