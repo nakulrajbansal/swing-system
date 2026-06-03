@@ -115,6 +115,82 @@ def _resolve_client(cfg: AppConfig, log: Emit):
         return MockLLMClient(), False
 
 
+# --------------------------------------------------------------------------
+# Alpaca broker integration
+# --------------------------------------------------------------------------
+def _alpaca_broker(cfg: AppConfig):
+    """Construct an AlpacaBroker for the configured environment. Live (real money)
+    requires `enable_live_trading` to be on as well (asymmetric-autonomy gate)."""
+    from system.execution.broker import AlpacaBroker
+    live = cfg.alpaca_env == "live"
+    return AlpacaBroker(cfg.alpaca_key_id, cfg.alpaca_secret, env=cfg.alpaca_env,
+                        confirm_live=(live and bool(cfg.enable_live_trading)))
+
+
+def check_alpaca(cfg: AppConfig, emit: Emit) -> dict:
+    """Determine whether the app can transact on Alpaca: hit /v2/account and
+    report status, buying power, and the active (paper/live) environment.
+    Read-only — places no orders."""
+    cfg.apply_to_env()
+    result = {"ok": False, "env": cfg.alpaca_env}
+    with _run_logger(emit, "alpaca-check") as (log, _path):
+        if not (cfg.alpaca_key_id and cfg.alpaca_secret):
+            log("[alpaca] No API keys saved. Enter your Alpaca key id + secret on the "
+                "Configuration tab and Save first.")
+            return result
+        log(f"[alpaca] checking the {cfg.alpaca_env.upper()} account ...")
+        try:
+            broker = _alpaca_broker(cfg)
+            log(f"[alpaca] endpoint: {broker.base}")
+            ok, reason = broker.is_tradable()
+            log(f"[alpaca] {reason}")
+            result["ok"] = ok
+            if ok:
+                log("[alpaca] RESULT: account is ACTIVE and able to make transactions.")
+            else:
+                log("[alpaca] RESULT: reachable but NOT currently tradable (see flags).")
+        except Exception as exc:
+            log(f"[error] Alpaca check failed: {exc}")
+            log("[hint] 401/403 usually means wrong keys or wrong environment — paper "
+                "keys and live keys are DIFFERENT. For live, also enable live trading. "
+                "Generate keys at https://app.alpaca.markets (paper) or your live dashboard.")
+    return result
+
+
+def _maybe_place_orders(cfg: AppConfig, tickets, sector_map, log: Emit) -> None:
+    if not cfg.place_orders:
+        if tickets:
+            log("\n[orders] 'Place orders on Alpaca' is OFF — showing proposals only, "
+                "nothing was submitted.")
+        return
+    if not tickets:
+        log("\n[orders] nothing approved to submit.")
+        return
+    env = cfg.alpaca_env
+    if env == "live" and not cfg.enable_live_trading:
+        log("\n[orders] place_orders is ON and env=LIVE, but 'Enable live trading' is "
+            "OFF — refusing to send real-money orders. Turn it on to proceed, or use "
+            "env=paper.")
+        return
+    log(f"\n[orders] submitting {len(tickets)} approved order(s) to Alpaca "
+        f"{env.upper()} {'(REAL MONEY)' if env == 'live' else '(paper)'} ...")
+    try:
+        broker = _alpaca_broker(cfg)
+    except Exception as exc:
+        log(f"[error] could not open Alpaca broker: {exc}")
+        return
+    for t in tickets:
+        band = 0.005
+        try:
+            o = broker.submit_entry(t.symbol, t.shares, band_low=t.entry * (1 - band),
+                                    band_high=t.entry * (1 + band), stop=t.stop,
+                                    target=t.target, sector=sector_map.get(t.symbol, "?"))
+            log(f"  [orders] {t.symbol}: submitted {t.shares} sh — order id "
+                f"{o.get('id', '?')} status {o.get('status', '?')}")
+        except Exception as exc:
+            log(f"  [orders] {t.symbol}: FAILED — {exc}")
+
+
 def _build_store(cfg: AppConfig, emit: Emit):
     """Build (or load) the PIT store for this run; returns (store, sector_map)."""
     if cfg.data_source == "live":
@@ -285,6 +361,7 @@ def run_deliberation(cfg: AppConfig, emit: Emit) -> dict:
 
         # Two-key view: what the Risk Governor would actually approve/size today.
         log("\n[two-key] Risk Governor sizing of any ENTER decisions:")
+        approved_tickets = []
         any_enter = False
         for d in cycle.decisions:
             if d.action not in {"enter", "adjust"}:
@@ -300,6 +377,7 @@ def run_deliberation(cfg: AppConfig, emit: Emit) -> dict:
                                   sector=sector_map.get(d.symbol, "?"))
             ticket = engine.governor.evaluate(d.symbol, d.action, ctx)
             if ticket.approved:
+                approved_tickets.append(ticket)
                 log(f"  {d.symbol}: APPROVE {ticket.shares} sh @ ~{ticket.entry:.2f} "
                     f"stop {ticket.stop:.2f} target {ticket.target:.2f} "
                     f"(binding cap: {ticket.binding_cap})")
@@ -307,6 +385,9 @@ def run_deliberation(cfg: AppConfig, emit: Emit) -> dict:
                 log(f"  {d.symbol}: REJECT - {ticket.reason}")
         if not any_enter:
             log("  (no ENTER decisions - nothing to size)")
+
+        # Optionally route the approved orders to Alpaca (the real transaction).
+        _maybe_place_orders(cfg, approved_tickets, sector_map, log)
 
         calls = getattr(client, "calls", 0)
         if real_llm:

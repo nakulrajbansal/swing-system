@@ -13,13 +13,14 @@ from tkinter import messagebox, scrolledtext, ttk
 
 from app import APP_NAME, APP_VERSION
 from app.config import SECRET_FIELDS, AppConfig
-from app.runner import run_deliberation, run_paper, run_validation
+from app.runner import check_alpaca, run_deliberation, run_paper, run_validation
 
 # (field, label, kind)  kind: "secret" | "text" | "int" | "float" | "choice"
 _FIELDS = [
     ("anthropic_api_key", "Anthropic API key (LLM agents)", "secret"),
-    ("alpaca_key_id", "Alpaca key id (live broker)", "secret"),
-    ("alpaca_secret", "Alpaca secret (live broker)", "secret"),
+    ("alpaca_key_id", "Alpaca key id (broker)", "secret"),
+    ("alpaca_secret", "Alpaca secret (broker)", "secret"),
+    ("alpaca_env", "Alpaca environment", "choice"),
     ("edgar_user_agent", "EDGAR User-Agent (e.g. you@email.com)", "text"),
     ("data_source", "Data source", "choice"),
     ("n_symbols", "Universe size (symbols)", "int"),
@@ -29,6 +30,9 @@ _FIELDS = [
     ("starting_equity", "Starting equity ($)", "float"),
     ("oos_start", "Out-of-sample start (YYYY-MM-DD)", "text"),
 ]
+
+# Allowed values for "choice" fields.
+_CHOICES = {"data_source": ["synthetic", "live"], "alpaca_env": ["paper", "live"]}
 
 
 class SwingApp:
@@ -66,7 +70,7 @@ class SwingApp:
             cur = getattr(self.cfg, field)
             if kind == "choice":
                 var = tk.StringVar(value=str(cur))
-                ttk.Combobox(form, textvariable=var, values=["synthetic", "live"],
+                ttk.Combobox(form, textvariable=var, values=_CHOICES.get(field, []),
                              state="readonly", width=38).grid(row=i, column=1, sticky="w")
             else:
                 var = tk.StringVar(value=str(cur))
@@ -81,19 +85,23 @@ class SwingApp:
         self.vars["use_llm_agents"] = tk.BooleanVar(value=self.cfg.use_llm_agents)
         ttk.Checkbutton(toggles, text="Use LLM agents (experimental — may spend tokens)",
                         variable=self.vars["use_llm_agents"]).pack(anchor="w")
+        self.vars["place_orders"] = tk.BooleanVar(value=self.cfg.place_orders)
+        ttk.Checkbutton(toggles, text="Place approved orders on Alpaca (live deliberation)",
+                        variable=self.vars["place_orders"]).pack(anchor="w")
         self.vars["enable_live_trading"] = tk.BooleanVar(value=self.cfg.enable_live_trading)
-        ttk.Checkbutton(toggles, text="Enable LIVE trading (real money — gated)",
+        ttk.Checkbutton(toggles, text="Enable LIVE (real-money) Alpaca env — extra gate",
                         variable=self.vars["enable_live_trading"],
                         command=self._warn_live).pack(anchor="w")
 
         ttk.Label(parent, foreground="#888", wraplength=820, justify="left",
-                  text="Data source 'live' pulls REAL free data (Yahoo prices + corporate "
-                       "actions), cached locally; 'synthetic' runs a planted-signal demo. "
-                       "LLM agents call the Anthropic API when enabled (capped by "
-                       "ANTHROPIC_MAX_CALLS; real backtests can be costly). Live-broker "
-                       "trading stays paper-only/gated (a human must wire real money). "
-                       "Keys are saved to ~/.swing_system/config.json (never committed "
-                       "or bundled).").pack(anchor="w", padx=12, pady=(4, 8))
+                  text="Data source 'live' pulls REAL free data (Yahoo), cached locally; "
+                       "'synthetic' is a planted-signal demo. Alpaca environment 'paper' = "
+                       "fake money, 'live' = REAL money (also requires the Enable-live gate). "
+                       "'Place approved orders on Alpaca' submits the live-deliberation's "
+                       "approved trades as bracket orders; OFF = show proposals only. LLM "
+                       "agents call Anthropic when enabled (capped). Keys are saved to "
+                       "~/.swing_system/config.json (never committed or bundled).").pack(
+            anchor="w", padx=12, pady=(4, 8))
 
         btns = ttk.Frame(parent)
         btns.pack(fill="x", padx=12, pady=8)
@@ -113,6 +121,9 @@ class SwingApp:
         self.btn_delib = ttk.Button(bar, text="Run live deliberation (1 day, LLM)",
                                     command=lambda: self._start(run_deliberation))
         self.btn_delib.pack(side="left", padx=(0, 8))
+        self.btn_alpaca = ttk.Button(bar, text="Check Alpaca connection",
+                                     command=lambda: self._start(check_alpaca))
+        self.btn_alpaca.pack(side="left", padx=(0, 8))
         ttk.Button(bar, text="Clear output", command=self._clear).pack(side="left")
         ttk.Button(bar, text="Open logs folder", command=self._open_logs).pack(side="left", padx=8)
         self.spinner = ttk.Label(bar, text="", foreground="#27a")
@@ -135,6 +146,7 @@ class SwingApp:
                 val = float(val)
             d[field] = val
         d["use_llm_agents"] = bool(self.vars["use_llm_agents"].get())
+        d["place_orders"] = bool(self.vars["place_orders"].get())
         d["enable_live_trading"] = bool(self.vars["enable_live_trading"].get())
         return AppConfig(**d)
 
@@ -150,10 +162,12 @@ class SwingApp:
     def _warn_live(self):
         if self.vars["enable_live_trading"].get():
             messagebox.showwarning(
-                "Live trading is gated",
-                "Real-money trading requires the Alpaca broker to be wired by a human "
-                "and is intentionally not enabled by one-click runs (asymmetric-autonomy "
-                "invariant). This toggle only records your intent; runs stay paper-only.")
+                "Real-money trading",
+                "Enabling LIVE allows the app to place orders on your REAL-money Alpaca "
+                "account (api.alpaca.markets) when Alpaca environment = 'live' AND "
+                "'Place approved orders on Alpaca' is on. Real capital can be lost. "
+                "Default to 'paper' until you have validated everything. Use the kill "
+                "switch / your Alpaca dashboard to halt.")
 
     def _start(self, fn):
         if self.running:
@@ -196,6 +210,7 @@ class SwingApp:
         self.btn_val.config(state=state)
         self.btn_paper.config(state=state)
         self.btn_delib.config(state=state)
+        self.btn_alpaca.config(state=state)
         self.spinner.config(text="running…" if busy else "")
 
     def _log(self, line: str):

@@ -156,28 +156,80 @@ class PaperBroker(Broker):
 
 
 class AlpacaBroker(Broker):
-    """Real-broker adapter — GATED. Live trading requires explicit human enable.
+    """Real Alpaca adapter (REST). Two environments:
 
-    Construction fails unless ``enable_live=True`` AND both API keys are present.
-    Order methods are intentionally not implemented here: wiring real-money
-    execution is a deliberate human act (master invariants 3 & 5).
+      * ``env="paper"`` -> paper-api.alpaca.markets (fake money; default, safe).
+      * ``env="live"``  -> api.alpaca.markets (REAL money) and requires
+        ``confirm_live=True`` to construct (asymmetric-autonomy invariant: a human
+        must deliberately opt into real-money execution).
+
+    Entries are submitted as marketable-limit BRACKET orders (attached stop +
+    target), mirroring the deterministic plane's two-stage entry. Uses `requests`
+    so nothing extra needs bundling.
     """
 
-    def __init__(self, key_id: str | None, secret: str | None, *, enable_live: bool = False):
-        if not enable_live:
+    PAPER_URL = "https://paper-api.alpaca.markets"
+    LIVE_URL = "https://api.alpaca.markets"
+
+    def __init__(self, key_id: str | None, secret: str | None, *,
+                 env: str = "paper", confirm_live: bool = False):
+        if env not in {"paper", "live"}:
+            raise ValueError(f"env must be 'paper' or 'live', got {env!r}")
+        if env == "live" and not confirm_live:
             raise RuntimeError(
-                "AlpacaBroker is disabled. Live trading is opt-in only: pass "
-                "enable_live=True and supply credentials. Default to PaperBroker."
+                "Refusing to construct a LIVE (real-money) Alpaca broker without "
+                "confirm_live=True. Use env='paper', or explicitly confirm live."
             )
         if not key_id or not secret:
             raise RuntimeError("Alpaca credentials missing (key_id/secret required).")
-        self.key_id, self.secret = key_id, secret  # wiring left to a human operator
+        self.env = env
+        self.base = self.LIVE_URL if env == "live" else self.PAPER_URL
+        self._headers = {"APCA-API-KEY-ID": key_id, "APCA-API-SECRET-KEY": secret}
 
-    def submit_entry(self, *a, **k):
-        raise NotImplementedError("Wire Alpaca order submission deliberately (human gate).")
+    # -- REST plumbing -----------------------------------------------------
+    def _req(self, method: str, path: str, payload: dict | None = None):
+        import requests  # lazy
+        r = requests.request(method, self.base + path, headers=self._headers,
+                             json=payload, timeout=30)
+        if r.status_code >= 300:
+            raise RuntimeError(f"Alpaca {method} {path} -> {r.status_code}: {r.text[:200]}")
+        return r.json() if r.text else {}
 
-    def positions(self):
-        raise NotImplementedError
+    def account(self) -> dict:
+        """Raw /v2/account (status, buying_power, etc.). Read-only."""
+        return self._req("GET", "/v2/account")
+
+    def is_tradable(self) -> tuple[bool, str]:
+        a = self.account()
+        ok = (a.get("status") == "ACTIVE" and not a.get("trading_blocked")
+              and not a.get("account_blocked"))
+        reason = (f"status={a.get('status')} trading_blocked={a.get('trading_blocked')} "
+                  f"account_blocked={a.get('account_blocked')} "
+                  f"buying_power={a.get('buying_power')}")
+        return ok, reason
+
+    # -- orders ------------------------------------------------------------
+    def submit_entry(self, symbol, shares, band_low, band_high, stop, target, sector="?"):
+        if shares <= 0:
+            return None
+        payload = {
+            "symbol": symbol, "qty": str(int(shares)), "side": "buy",
+            "type": "limit", "limit_price": round(float(band_high), 2),
+            "time_in_force": "day", "order_class": "bracket",
+            "take_profit": {"limit_price": round(float(target), 2)},
+            "stop_loss": {"stop_price": round(float(stop), 2)},
+        }
+        return self._req("POST", "/v2/orders", payload)
+
+    def positions(self) -> dict[str, BrokerPosition]:
+        out: dict[str, BrokerPosition] = {}
+        for p in self._req("GET", "/v2/positions"):
+            out[p["symbol"]] = BrokerPosition(
+                p["symbol"], int(float(p["qty"])), float(p["avg_entry_price"]),
+                stop=0.0, target=0.0)
+        return out
 
     def cancel_pending(self, symbol):
-        raise NotImplementedError
+        for o in self._req("GET", "/v2/orders?status=open"):
+            if o.get("symbol") == symbol:
+                self._req("DELETE", f"/v2/orders/{o['id']}")

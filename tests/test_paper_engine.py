@@ -29,11 +29,17 @@ def test_engine_uses_paper_broker(synth_store):
 
 
 def test_live_broker_is_gated():
-    # Asymmetric autonomy: live trading cannot be turned on without explicit opt-in.
-    with pytest.raises(RuntimeError, match="disabled"):
-        AlpacaBroker("key", "secret")
+    # Paper constructs fine (no network on construction).
+    paper = AlpacaBroker("key", "secret")
+    assert paper.env == "paper" and "paper-api" in paper.base
+    # Asymmetric autonomy: LIVE (real money) requires explicit confirmation.
+    with pytest.raises(RuntimeError, match="confirm_live|real-money"):
+        AlpacaBroker("key", "secret", env="live")
+    # Live with confirmation points at the live endpoint.
+    assert "//api.alpaca" in AlpacaBroker("k", "s", env="live", confirm_live=True).base
+    # Missing credentials always rejected.
     with pytest.raises(RuntimeError, match="credentials"):
-        AlpacaBroker(None, None, enable_live=True)
+        AlpacaBroker(None, None)
 
 
 def test_closed_trades_have_protective_exit_reasons(synth_store):
