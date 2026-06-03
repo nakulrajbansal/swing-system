@@ -77,6 +77,44 @@ def _redirect(emit: Emit):
     stream.flush()
 
 
+def _resolve_client(cfg: AppConfig, log: Emit):
+    """Pick the LLM client and, for a real one, PREFLIGHT it so API failures are
+    surfaced loudly instead of silently swallowed. Returns (client, real_llm).
+
+    On any preflight failure (no credits, bad key, bad model, network) we report
+    the exact error and fall back to the free deterministic mock so the run still
+    produces useful output.
+    """
+    from system.agents.llm_client import MockLLMClient, default_client
+    from system.config import DEFAULT_CONFIG
+
+    if not (cfg.use_llm_agents and cfg.anthropic_api_key):
+        log("[agents] deterministic agents (MockLLMClient) — free, no API calls.")
+        return MockLLMClient(), False
+
+    client = default_client()
+    if client.deterministic:
+        log("[warn] LLM requested but the Anthropic SDK/key is unavailable — using "
+            "the deterministic mock (no tokens spent).")
+        return client, False
+
+    log("[agents] verifying Anthropic API access (one tiny preflight call) ...")
+    try:
+        client.complete("preflight", {"ok": 1}, "object",
+                        model=DEFAULT_CONFIG.models.framing, max_tokens=8)
+        log(f"[agents] Anthropic API OK (model {DEFAULT_CONFIG.models.framing}). "
+            "Real LLM agents are active.")
+        return client, True
+    except Exception as exc:
+        log(f"[error] Anthropic API is not usable: {type(exc).__name__}: {exc}")
+        log("[error] Most often this means the account has no credits. Add credits at "
+            "https://console.anthropic.com/settings/billing, or turn OFF 'Use LLM "
+            "agents'.")
+        log("[agents] Falling back to the free deterministic agents so this run still "
+            "produces output.")
+        return MockLLMClient(), False
+
+
 def _build_store(cfg: AppConfig, emit: Emit):
     """Build (or load) the PIT store for this run; returns (store, sector_map)."""
     if cfg.data_source == "live":
@@ -157,25 +195,15 @@ def run_validation(cfg: AppConfig, emit: Emit) -> dict:
 
 def run_paper(cfg: AppConfig, emit: Emit) -> dict:
     """Run the end-to-end paper-trading engine; return a result summary."""
-    from system.agents.llm_client import MockLLMClient, default_client
     from system.run_live import PaperTradingEngine
 
     cfg.apply_to_env()
-    requested_llm = bool(cfg.use_llm_agents and cfg.anthropic_api_key)
-    client = default_client() if requested_llm else MockLLMClient()
-    real_llm = not client.deterministic
-
     with _run_logger(emit, "paper") as (log, _path):
-        # Honest status: report the client actually in use, not just the toggle.
-        log(f"[agents] active client: {type(client).__name__} "
-            f"(deterministic={client.deterministic})")
-        if requested_llm and not real_llm:
-            log("[warn] LLM agents requested, but the Anthropic SDK/key is not "
-                "available in this build - fell back to the deterministic mock. "
-                "No API calls were made and no tokens were spent.")
-        elif real_llm:
-            log("[warn] real LLM agents active: specialist reads will call the API "
-                "(this spends tokens).")
+        client, real_llm = _resolve_client(cfg, log)
+        if real_llm:
+            log("[warn] real LLM over a multi-cycle backtest can make MANY calls "
+                "(capped at ANTHROPIC_MAX_CALLS) and spends tokens. The cheaper, "
+                "design-correct use is 'Run live deliberation' (a single day).")
         t0 = time.time()
         with _redirect(log):
             store, sector_map = _build_store(cfg, log)
@@ -223,25 +251,15 @@ def run_deliberation(cfg: AppConfig, emit: Emit) -> dict:
     Governor). Bounded cost: a single day, so the LLM is called a small,
     predictable number of times. This is the design-correct way to use the
     agents (a forward decision, not a backtest). No orders are placed."""
-    from system.agents.llm_client import MockLLMClient, default_client
     from system.risk.governor import GovernorContext
     from system.run_live import PaperTradingEngine
     from system.data_plane.indicators import last_atr
 
     cfg.apply_to_env()
-    requested_llm = bool(cfg.use_llm_agents and cfg.anthropic_api_key)
-    client = default_client() if requested_llm else MockLLMClient()
-    real_llm = not client.deterministic
-
     with _run_logger(emit, "deliberation") as (log, _path):
-        log(f"[agents] active client: {type(client).__name__} "
-            f"(deterministic={client.deterministic})")
-        if requested_llm and not real_llm:
-            log("[warn] LLM requested but unavailable - using deterministic mock "
-                "(no tokens spent).")
-        elif real_llm:
-            log("[warn] real LLM active - this single-day deliberation will make a "
-                "small, bounded number of API calls.")
+        client, real_llm = _resolve_client(cfg, log)
+        if real_llm:
+            log("[agents] single-day deliberation: a small, bounded number of API calls.")
 
         with _redirect(log):
             store, sector_map = _build_store(cfg, log)
