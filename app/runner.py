@@ -89,12 +89,12 @@ def _resolve_client(cfg: AppConfig, log: Emit):
     from system.config import DEFAULT_CONFIG
 
     if not (cfg.use_llm_agents and cfg.anthropic_api_key):
-        log("[agents] deterministic agents (MockLLMClient) — free, no API calls.")
+        log("[agents] deterministic agents (MockLLMClient) - free, no API calls.")
         return MockLLMClient(), False
 
     client = default_client()
     if client.deterministic:
-        log("[warn] LLM requested but the Anthropic SDK/key is unavailable — using "
+        log("[warn] LLM requested but the Anthropic SDK/key is unavailable - using "
             "the deterministic mock (no tokens spent).")
         return client, False
 
@@ -130,7 +130,7 @@ def _alpaca_broker(cfg: AppConfig):
 def check_alpaca(cfg: AppConfig, emit: Emit) -> dict:
     """Determine whether the app can transact on Alpaca: hit /v2/account and
     report status, buying power, and the active (paper/live) environment.
-    Read-only — places no orders."""
+    Read-only - places no orders."""
     cfg.apply_to_env()
     result = {"ok": False, "env": cfg.alpaca_env}
     with _run_logger(emit, "alpaca-check") as (log, _path):
@@ -151,7 +151,7 @@ def check_alpaca(cfg: AppConfig, emit: Emit) -> dict:
                 log("[alpaca] RESULT: reachable but NOT currently tradable (see flags).")
         except Exception as exc:
             log(f"[error] Alpaca check failed: {exc}")
-            log("[hint] 401/403 usually means wrong keys or wrong environment — paper "
+            log("[hint] 401/403 usually means wrong keys or wrong environment - paper "
                 "keys and live keys are DIFFERENT. For live, also enable live trading. "
                 "Generate keys at https://app.alpaca.markets (paper) or your live dashboard.")
     return result
@@ -160,7 +160,7 @@ def check_alpaca(cfg: AppConfig, emit: Emit) -> dict:
 def _maybe_place_orders(cfg: AppConfig, tickets, sector_map, log: Emit) -> None:
     if not cfg.place_orders:
         if tickets:
-            log("\n[orders] 'Place orders on Alpaca' is OFF — showing proposals only, "
+            log("\n[orders] 'Place orders on Alpaca' is OFF - showing proposals only, "
                 "nothing was submitted.")
         return
     if not tickets:
@@ -169,7 +169,7 @@ def _maybe_place_orders(cfg: AppConfig, tickets, sector_map, log: Emit) -> None:
     env = cfg.alpaca_env
     if env == "live" and not cfg.enable_live_trading:
         log("\n[orders] place_orders is ON and env=LIVE, but 'Enable live trading' is "
-            "OFF — refusing to send real-money orders. Turn it on to proceed, or use "
+            "OFF - refusing to send real-money orders. Turn it on to proceed, or use "
             "env=paper.")
         return
     log(f"\n[orders] submitting {len(tickets)} approved order(s) to Alpaca "
@@ -185,10 +185,10 @@ def _maybe_place_orders(cfg: AppConfig, tickets, sector_map, log: Emit) -> None:
             o = broker.submit_entry(t.symbol, t.shares, band_low=t.entry * (1 - band),
                                     band_high=t.entry * (1 + band), stop=t.stop,
                                     target=t.target, sector=sector_map.get(t.symbol, "?"))
-            log(f"  [orders] {t.symbol}: submitted {t.shares} sh — order id "
+            log(f"  [orders] {t.symbol}: submitted {t.shares} sh - order id "
                 f"{o.get('id', '?')} status {o.get('status', '?')}")
         except Exception as exc:
-            log(f"  [orders] {t.symbol}: FAILED — {exc}")
+            log(f"  [orders] {t.symbol}: FAILED - {exc}")
 
 
 def _build_store(cfg: AppConfig, emit: Emit):
@@ -337,6 +337,18 @@ def run_deliberation(cfg: AppConfig, emit: Emit) -> dict:
         if real_llm:
             log("[agents] single-day deliberation: a small, bounded number of API calls.")
 
+        # A live deliberation is a decision about TODAY: it must use data through
+        # the latest session, not a backtest end date. Otherwise it would price
+        # orders off stale history (e.g. a 2-year-old close).
+        if cfg.data_source == "live":
+            import dataclasses
+            import datetime
+            today = datetime.date.today().isoformat()
+            if str(cfg.end_date) < today:
+                log(f"[live] deliberation uses data through {today} (latest), not the "
+                    f"configured backtest end {cfg.end_date}.")
+                cfg = dataclasses.replace(cfg, end_date=today)
+
         with _redirect(log):
             store, sector_map = _build_store(cfg, log)
             engine = PaperTradingEngine(store, sector_map, client=client,
@@ -386,8 +398,16 @@ def run_deliberation(cfg: AppConfig, emit: Emit) -> dict:
         if not any_enter:
             log("  (no ENTER decisions - nothing to size)")
 
-        # Optionally route the approved orders to Alpaca (the real transaction).
-        _maybe_place_orders(cfg, approved_tickets, sector_map, log)
+        # Safety: never route orders off stale data (prices would be wrong).
+        import datetime as _dt
+        stale_days = (_dt.date.today() - session.date()).days
+        if cfg.place_orders and stale_days > 5:
+            log(f"\n[orders] BLOCKED: latest data session ({session.date()}) is "
+                f"{stale_days} days old. Refusing to place orders on stale prices — "
+                "set Data source=live with a current End date and refresh.")
+        else:
+            # Optionally route the approved orders to Alpaca (the real transaction).
+            _maybe_place_orders(cfg, approved_tickets, sector_map, log)
 
         calls = getattr(client, "calls", 0)
         if real_llm:
