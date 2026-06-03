@@ -13,7 +13,7 @@ from tkinter import messagebox, scrolledtext, ttk
 
 from app import APP_NAME, APP_VERSION
 from app.config import SECRET_FIELDS, AppConfig
-from app.runner import run_paper, run_validation
+from app.runner import run_deliberation, run_paper, run_validation
 
 # (field, label, kind)  kind: "secret" | "text" | "int" | "float" | "choice"
 _FIELDS = [
@@ -110,6 +110,9 @@ class SwingApp:
         self.btn_paper = ttk.Button(bar, text="Run paper trading",
                                     command=lambda: self._start(run_paper))
         self.btn_paper.pack(side="left", padx=8)
+        self.btn_delib = ttk.Button(bar, text="Run live deliberation (1 day, LLM)",
+                                    command=lambda: self._start(run_deliberation))
+        self.btn_delib.pack(side="left", padx=(0, 8))
         ttk.Button(bar, text="Clear output", command=self._clear).pack(side="left")
         ttk.Button(bar, text="Open logs folder", command=self._open_logs).pack(side="left", padx=8)
         self.spinner = ttk.Label(bar, text="", foreground="#27a")
@@ -192,6 +195,7 @@ class SwingApp:
         state = "disabled" if busy else "normal"
         self.btn_val.config(state=state)
         self.btn_paper.config(state=state)
+        self.btn_delib.config(state=state)
         self.spinner.config(text="running…" if busy else "")
 
     def _log(self, line: str):
