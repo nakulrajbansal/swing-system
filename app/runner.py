@@ -14,6 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+import pandas as pd
+
 from app.config import CONFIG_DIR, AppConfig
 
 Emit = Callable[[str], None]
@@ -298,6 +300,79 @@ def run_validation(cfg: AppConfig, emit: Emit) -> dict:
         log(f"[gate] recorded validated edges ({cfg.data_source}): "
             f"{summary['edges_passed'] or 'none'} -> live deliberation will use these.")
     return summary
+
+
+def run_insider_validation(cfg: AppConfig, emit: Emit) -> dict:
+    """Validate the INSIDER edge (edge 6) on YEARS of REAL history, using SEC's
+    quarterly bulk insider-transaction datasets (no per-filing fetches). Updates
+    only edge 6's status in the validation gate (other edges' validation is
+    preserved), so a passing insider edge can trade live."""
+    from harness.data.loader import (LIVE_UNIVERSE, LiveLoader, fetch_insider_quarter,
+                                     live_symbols, recent_quarters)
+    from harness.data.pit_store import PITStore
+    from harness.report.report import edge_scorecard, format_scorecard
+    from harness.signals import Edge06Insider
+    from harness.study.costs import CostModel
+    from harness.study.event_study import run_event_study
+    from app.gating import load_validated, save_validated
+
+    cfg.apply_to_env()
+    with _run_logger(emit, "insider-validation") as (log, _path):
+        ua = cfg.edgar_user_agent
+        if not ua:
+            log("[error] EDGAR User-Agent required for bulk SEC data. Set it on the "
+                "Configuration tab (e.g. your email) and Save.")
+            return {"passed": []}
+
+        syms = live_symbols(int(cfg.n_symbols))
+        nq = int(cfg.insider_history_quarters)
+        quarters = recent_quarters(nq)
+        start = f"{min(q[0] for q in quarters)}-01-01"
+        cache = CONFIG_DIR / "data_store" / f"insider_val_{len(syms)}_{nq}q"
+        store = PITStore(cache)
+
+        with _redirect(log):
+            if not (cache / "prices.parquet").exists():
+                log(f"[hist] fetching {nq}q of prices for {len(syms)} symbols from "
+                    f"{start} - slow, cached after ...")
+                LiveLoader(store, symbols=syms, start=start, end=None, emit=log).load_all()
+            else:
+                log(f"[hist] using cached prices at {cache}")
+            if not (cache / "form4.parquet").exists():
+                tickset, frames = set(syms), []
+                for (y, q) in quarters:
+                    log(f"[hist] insider dataset {y}Q{q} ...")
+                    try:
+                        frames.append(fetch_insider_quarter(y, q, ua, tickset))
+                    except Exception as exc:
+                        log(f"[hist] skip {y}Q{q}: {type(exc).__name__}: {exc}")
+                frames = [f for f in frames if not f.empty]
+                if frames:
+                    store.write_form4(pd.concat(frames, ignore_index=True))
+                log(f"[hist] insider PURCHASE events loaded: {sum(len(f) for f in frames)}")
+            else:
+                log(f"[hist] using cached insider history at {cache}")
+
+            sector_map = {s: etf for etf, tk in LIVE_UNIVERSE.items() for s in tk}
+            costs = CostModel()
+            oos = (pd.Timestamp.now() - pd.Timedelta(days=365)).date().isoformat()
+            sig = Edge06Insider()
+            log(f"[edge] studying {sig.edge_id} on real history ...")
+            res = run_event_study(store, sig, sector_map, costs=costs, oos_start=oos)
+            card = edge_scorecard(res, costs)
+            log(format_scorecard(card))
+
+        # Merge into the gate: only flip edge 6's status; keep other edges as-is.
+        prev = set(load_validated().get("passed") or [])
+        if card["verdict"] == "PASS":
+            prev.add(sig.edge_id)
+        else:
+            prev.discard(sig.edge_id)
+        save_validated(sorted(prev), "live-historical")
+        log(f"\n[gate] edge 6 verdict: {card['verdict']} "
+            f"({card['n_events']} events). Gate now allows: {sorted(prev) or 'none'}.")
+    return {"verdict": card["verdict"], "n_events": card["n_events"],
+            "passed": sorted(prev)}
 
 
 def run_paper(cfg: AppConfig, emit: Emit) -> dict:

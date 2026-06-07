@@ -1,5 +1,6 @@
 """Event study: the harness recovers a planted edge and kills noise."""
 
+import pandas as pd
 import pytest
 
 from harness.data.loader import SyntheticConfig, SyntheticLoader
@@ -37,4 +38,20 @@ def test_noise_edge07_does_not_pass(synth_store):
     store, sector_map = synth_store
     result = run_event_study(store, Edge07Links(), sector_map, oos_start="2022-01-01")
     card = edge_scorecard(result)
+    assert card["verdict"] == "KILL"
+
+
+def test_small_sample_never_passes():
+    """A great-looking spread on too few events must KILL (anti-overfitting)."""
+    from harness.study.event_study import EventStudyResult
+
+    n = 13
+    events = pd.DataFrame({"abn_20": [0.1] * n, "raw_score": list(range(n))})
+    qt = pd.DataFrame({"mean": [0.0, 0.05, 0.1, 0.15, 0.2], "count": [3, 2, 3, 2, 3]},
+                      index=[1, 2, 3, 4, 5])
+    res = EventStudyResult(edge_id="x", windows=(20,), events=events, quintiles={20: qt},
+                           spreads={20: {"spread": 0.2, "tstat": 14.0, "n": n}},
+                           oos_spreads={20: {"spread": 0.1, "tstat": 5.0, "n": n}})
+    card = edge_scorecard(res)
+    assert card["n_events"] == 13 and card["enough_events"] is False
     assert card["verdict"] == "KILL"

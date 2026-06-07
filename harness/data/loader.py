@@ -294,6 +294,103 @@ def live_symbols(n: int | None = None) -> list[str]:
     return out[:n] if n else out
 
 
+# SEC quarterly bulk insider-transactions datasets (Form 3/4/5) — the source for
+# validating the insider edge on YEARS of history without per-filing fetches.
+INSIDER_DATASET_BASE = ("https://www.sec.gov/files/structureddata/data/"
+                        "insider-transactions-data-sets")
+
+_SENIOR_KEYS = {"CEO": "CEO", "CHIEF EXECUTIVE": "CEO", "CFO": "CFO",
+                "CHIEF FINANCIAL": "CFO", "COO": "COO", "CHIEF OPERATING": "COO",
+                "PRESIDENT": "President", "CHAIR": "Chairman"}
+
+
+def _canon_role(title: str | None, relationship: str | None) -> str:
+    """Map a Form 4 owner title/relationship to edge 6's role vocabulary."""
+    t = title.upper() if isinstance(title, str) else ""
+    for key, canon in _SENIOR_KEYS.items():
+        if key in t:
+            return canon
+    rel = relationship.lower() if isinstance(relationship, str) else ""
+    if "director" in rel:
+        return "Director"
+    if "officer" in rel:
+        return "Officer"
+    return "Insider"
+
+
+def recent_quarters(n: int, asof: pd.Timestamp | None = None) -> list[tuple[int, int]]:
+    """The n most recent COMPLETED calendar quarters as (year, quarter)."""
+    asof = (asof or pd.Timestamp.now()).normalize()
+    q = (asof.month - 1) // 3 + 1
+    y = asof.year
+    out = []
+    # step back one quarter first (current quarter's dataset isn't complete).
+    for _ in range(n):
+        q -= 1
+        if q == 0:
+            q, y = 4, y - 1
+        out.append((y, q))
+    return out
+
+
+def fetch_insider_quarter(year: int, quarter: int, user_agent: str,
+                          tickers: set[str]) -> pd.DataFrame:
+    """Parse one quarterly bulk dataset into edge-6 purchase rows for `tickers`.
+
+    Aggregates each Form 4's non-derivative PURCHASES (code 'P') to one row:
+    symbol, available_at (filing-date close), insider_role, shares, value.
+    """
+    import io
+    import zipfile
+    import requests  # lazy
+
+    url = f"{INSIDER_DATASET_BASE}/{year}q{quarter}_form345.zip"
+    z = zipfile.ZipFile(io.BytesIO(
+        requests.get(url, headers={"User-Agent": user_agent}, timeout=120).content))
+
+    def tsv(name, cols):
+        return pd.read_csv(z.open(name), sep="\t", dtype=str, encoding="latin-1",
+                           usecols=cols)
+
+    sub = tsv("SUBMISSION.tsv", ["ACCESSION_NUMBER", "FILING_DATE", "ISSUERTRADINGSYMBOL"])
+    sub = sub[sub["ISSUERTRADINGSYMBOL"].isin(tickers)]
+    if sub.empty:
+        return pd.DataFrame(columns=["symbol", "cik", "available_at", "insider_role",
+                                     "txn_code", "shares", "value"])
+    nd = tsv("NONDERIV_TRANS.tsv",
+             ["ACCESSION_NUMBER", "TRANS_CODE", "TRANS_SHARES", "TRANS_PRICEPERSHARE"])
+    nd = nd[(nd["TRANS_CODE"] == "P") & nd["ACCESSION_NUMBER"].isin(sub["ACCESSION_NUMBER"])]
+    if nd.empty:
+        return pd.DataFrame(columns=["symbol", "cik", "available_at", "insider_role",
+                                     "txn_code", "shares", "value"])
+    ro = tsv("REPORTINGOWNER.tsv",
+             ["ACCESSION_NUMBER", "RPTOWNER_RELATIONSHIP", "RPTOWNER_TITLE"])
+    ro = ro.groupby("ACCESSION_NUMBER", as_index=False).first()
+
+    nd["sh"] = pd.to_numeric(nd["TRANS_SHARES"], errors="coerce")
+    nd["px"] = pd.to_numeric(nd["TRANS_PRICEPERSHARE"], errors="coerce")
+    nd["val"] = nd["sh"] * nd["px"]
+    agg = nd.groupby("ACCESSION_NUMBER", as_index=False).agg(shares=("sh", "sum"),
+                                                             value=("val", "sum"))
+    m = sub.merge(agg, on="ACCESSION_NUMBER").merge(ro, on="ACCESSION_NUMBER", how="left")
+
+    rows = []
+    for r in m.itertuples(index=False):
+        fdate = pd.to_datetime(r.FILING_DATE, format="%d-%b-%Y", errors="coerce")
+        if pd.isna(fdate):
+            fdate = pd.to_datetime(r.FILING_DATE, errors="coerce")
+        if pd.isna(fdate) or not r.shares or r.shares <= 0:
+            continue
+        rows.append({
+            "symbol": r.ISSUERTRADINGSYMBOL, "cik": "",
+            "available_at": available_at_for_session(fdate),
+            "insider_role": _canon_role(getattr(r, "RPTOWNER_TITLE", None),
+                                        getattr(r, "RPTOWNER_RELATIONSHIP", None)),
+            "txn_code": "P", "shares": int(r.shares), "value": float(r.value or 0),
+        })
+    return pd.DataFrame(rows)
+
+
 _CIK_CACHE: dict[str, str] | None = None
 
 

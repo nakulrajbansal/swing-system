@@ -19,6 +19,7 @@ from harness.study.event_study import EventStudyResult
 
 DECISION_WINDOW = 20
 TSTAT_BAR = 2.5
+MIN_EVENTS = 30          # a PASS needs enough events to not be small-sample noise
 
 
 def _monotonic(quintile_table: pd.DataFrame) -> bool:
@@ -44,9 +45,11 @@ def edge_scorecard(result: EventStudyResult, costs: CostModel | None = None) -> 
     spr = spread.get("spread", float("nan"))
     tstat = spread.get("tstat", float("nan"))
     oos_spr = oos.get("spread", float("nan"))
+    n_events = 0 if result.events is None else int(len(result.events))
 
+    enough_events = n_events >= MIN_EVENTS
     passes = bool(
-        result.events is not None and not result.events.empty
+        enough_events                                  # small samples never pass
         and np.isfinite(spr) and spr > cost_frac
         and np.isfinite(tstat) and tstat > TSTAT_BAR
         and monotonic
@@ -54,7 +57,8 @@ def edge_scorecard(result: EventStudyResult, costs: CostModel | None = None) -> 
     )
     return {
         "edge_id": result.edge_id,
-        "n_events": 0 if result.events is None else int(len(result.events)),
+        "n_events": n_events,
+        "enough_events": enough_events,
         "decision_window": w,
         "monotonic_quintiles": monotonic,
         "spread": spr,
@@ -96,8 +100,10 @@ def portfolio_summary(scorecards: list[dict], results: list[EventStudyResult]) -
 
 
 def format_scorecard(card: dict) -> str:
+    enough = card.get("enough_events", card["n_events"] >= MIN_EVENTS)
+    flag = "" if enough else f"  (< {MIN_EVENTS} events: too small to trust)"
     lines = [f"=== {card['edge_id']} : {card['verdict']} ===",
-             f"  events={card['n_events']}  window={card['decision_window']}d",
+             f"  events={card['n_events']}{flag}  window={card['decision_window']}d",
              f"  spread={card['spread']:.4f}  vs_cost={card['spread_vs_cost']:.4f}"
              f"  tstat={card['tstat']:.2f}  oos_spread={card['oos_spread']:.4f}",
              f"  monotonic_quintiles={card['monotonic_quintiles']}"]
