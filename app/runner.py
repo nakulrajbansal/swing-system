@@ -115,6 +115,28 @@ def _resolve_client(cfg: AppConfig, log: Emit):
         return MockLLMClient(), False
 
 
+def _gated_edges(cfg: AppConfig, log: Emit) -> list:
+    """Edge classes allowed to trade. With the gate on, only edges that PASSED
+    the most recent validation (master principle: validate before trading)."""
+    from harness.signals import ALL_FREE_EDGES
+    if not cfg.only_validated_edges:
+        log("[gate] 'Only trade validated edges' is OFF -> using ALL edges (ungated).")
+        return list(ALL_FREE_EDGES)
+    from app.gating import load_validated
+    v = load_validated()
+    passed = set(v.get("passed") or [])
+    if not passed:
+        return []
+    if v.get("data_source") and v["data_source"] != cfg.data_source:
+        log(f"[gate] WARNING: validated edges were from data_source={v['data_source']!r}, "
+            f"but this run uses {cfg.data_source!r}. Re-run validation on the same data "
+            "for a meaningful gate.")
+    allowed = [E for E in ALL_FREE_EDGES if getattr(E, "edge_id", None) in passed]
+    log(f"[gate] validated edges in use: {[getattr(E, 'edge_id') for E in allowed]} "
+        f"(validated {v.get('saved_at')}).")
+    return allowed
+
+
 # --------------------------------------------------------------------------
 # Alpaca broker integration
 # --------------------------------------------------------------------------
@@ -221,21 +243,25 @@ def _build_live_store(cfg: AppConfig, emit: Emit):
     from harness.data.pit_store import PITStore
 
     syms = live_symbols(int(cfg.n_symbols))
+    ua = cfg.edgar_user_agent or None
+    tag = "edgar" if ua else "noedgar"
     cache = (CONFIG_DIR / "data_store" /
-             f"live_{len(syms)}_{cfg.start_date}_{cfg.end_date}")
+             f"live_{len(syms)}_{cfg.start_date}_{cfg.end_date}_{tag}")
     store = PITStore(cache)
     loader = LiveLoader(store, symbols=syms, start=cfg.start_date,
-                        end=cfg.end_date, emit=emit)
+                        end=cfg.end_date, emit=emit, edgar_user_agent=ua)
     if (cache / "prices.parquet").exists():
         emit(f"[data] LIVE: using cached real data at {cache}")
-        emit("[data] (delete that folder to refetch from Yahoo)")
+        emit("[data] (delete that folder to refetch)")
     else:
-        emit(f"[data] LIVE: fetching real data for {len(syms)} symbols from "
-             "Yahoo Finance - first run is slow ...")
+        emit(f"[data] LIVE: fetching real data for {len(syms)} symbols "
+             f"({'with' if ua else 'without'} EDGAR) - first run is slow ...")
         loader.load_all()
-    emit("[data] live universe ready (REAL market prices + corporate actions).")
-    emit("[note] filing/insider/news tables are not yet wired for live data, so "
-         "only the price-based momentum edge has real inputs.")
+    emit("[data] live universe ready (REAL market prices + corporate actions"
+         f"{' + EDGAR 8-K/insider' if ua else ''}).")
+    if not ua:
+        emit("[note] no EDGAR User-Agent set -> only price/momentum edge has live "
+             "inputs. Add one on the Configuration tab to enable 8-K + insider edges.")
     return store, loader.sector_map()
 
 
@@ -266,6 +292,11 @@ def run_validation(cfg: AppConfig, emit: Emit) -> dict:
         log(f"\n[done] validation finished in {time.time() - t0:.1f}s")
         log(f"[summary] edges passed: {summary['edges_passed'] or 'none'}")
         log(f"[summary] portfolio verdict: {summary['portfolio_verdict']}")
+        # Record which edges are cleared to trade live (the validation gate).
+        from app.gating import save_validated
+        save_validated(summary["edges_passed"], cfg.data_source)
+        log(f"[gate] recorded validated edges ({cfg.data_source}): "
+            f"{summary['edges_passed'] or 'none'} -> live deliberation will use these.")
     return summary
 
 
@@ -349,10 +380,20 @@ def run_deliberation(cfg: AppConfig, emit: Emit) -> dict:
                     f"configured backtest end {cfg.end_date}.")
                 cfg = dataclasses.replace(cfg, end_date=today)
 
+        # The validation gate: trade only edges that PASSED (master principle).
+        edges = _gated_edges(cfg, log)
+        if not edges:
+            log("\n[gate] No validated edges to trade. Run the validation harness "
+                "first (and pass an edge), or turn off 'Only trade validated edges'. "
+                "Nothing to deliberate — the system's default is to do nothing.")
+            return {"session": None, "candidates": [], "decisions": [], "llm_calls":
+                    getattr(client, "calls", 0)}
+
         with _redirect(log):
             store, sector_map = _build_store(cfg, log)
             engine = PaperTradingEngine(store, sector_map, client=client,
-                                        starting_equity=float(cfg.starting_equity))
+                                        starting_equity=float(cfg.starting_equity),
+                                        edges=edges)
             session = engine._last_session()
             from harness.data.loader import available_at_for_session
             T = available_at_for_session(session)

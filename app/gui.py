@@ -85,6 +85,9 @@ class SwingApp:
         self.vars["use_llm_agents"] = tk.BooleanVar(value=self.cfg.use_llm_agents)
         ttk.Checkbutton(toggles, text="Use LLM agents (experimental — may spend tokens)",
                         variable=self.vars["use_llm_agents"]).pack(anchor="w")
+        self.vars["only_validated_edges"] = tk.BooleanVar(value=self.cfg.only_validated_edges)
+        ttk.Checkbutton(toggles, text="Only trade validated edges (run validation first)",
+                        variable=self.vars["only_validated_edges"]).pack(anchor="w")
         self.vars["place_orders"] = tk.BooleanVar(value=self.cfg.place_orders)
         ttk.Checkbutton(toggles, text="Place approved orders on Alpaca (live deliberation)",
                         variable=self.vars["place_orders"]).pack(anchor="w")
@@ -146,6 +149,7 @@ class SwingApp:
                 val = float(val)
             d[field] = val
         d["use_llm_agents"] = bool(self.vars["use_llm_agents"].get())
+        d["only_validated_edges"] = bool(self.vars["only_validated_edges"].get())
         d["place_orders"] = bool(self.vars["place_orders"].get())
         d["enable_live_trading"] = bool(self.vars["enable_live_trading"].get())
         return AppConfig(**d)

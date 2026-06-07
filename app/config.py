@@ -40,6 +40,7 @@ class AppConfig:
 
     # --- feature toggles (default safe) ---
     use_llm_agents: bool = False         # experimental; spends tokens if a key is set
+    only_validated_edges: bool = True    # live deliberation trades only edges that PASSED
     alpaca_env: str = "paper"            # "paper" (fake money) | "live" (REAL money)
     place_orders: bool = False           # submit approved deliberation orders to Alpaca
     enable_live_trading: bool = False    # extra gate: must be on to use env="live"

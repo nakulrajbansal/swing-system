@@ -51,7 +51,8 @@ class LiveResult:
 
 class PaperTradingEngine:
     def __init__(self, store: PITStore, sector_map: dict, config: SystemConfig | None = None,
-                 client: LLMClient | None = None, starting_equity: float = 100_000.0):
+                 client: LLMClient | None = None, starting_equity: float = 100_000.0,
+                 edges: list | None = None):
         self.store = store
         self.sector_map = sector_map
         self.cfg = config or DEFAULT_CONFIG
@@ -63,9 +64,11 @@ class PaperTradingEngine:
         self.start_equity = starting_equity
         self._pending_conviction: dict = {}
 
-        # Agent roster (model tiering per master §6).
+        # Agent roster (model tiering per master §6). `edges` lets a caller
+        # restrict to validation-passed edges (the live trading gate).
+        edge_classes = edges if edges is not None else ALL_FREE_EDGES
         m = self.cfg.models
-        self.specialists = [EdgeSpecialist(E(), self.client, m.framing) for E in ALL_FREE_EDGES]
+        self.specialists = [EdgeSpecialist(E(), self.client, m.framing) for E in edge_classes]
         self.orchestrator = Orchestrator(
             store, self.specialists,
             HypothesisAgent(self.client, m.synthesis),

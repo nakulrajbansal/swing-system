@@ -267,37 +267,141 @@ def fetch_edgar_submissions(cik: str, user_agent: str) -> pd.DataFrame:
 # A curated, liquid, multi-sector universe mapped to matching sector ETFs (used
 # as the abnormal-return benchmark). Tunable; the app exposes a size knob.
 LIVE_UNIVERSE: dict[str, list[str]] = {
-    "XLK": ["AAPL", "MSFT", "NVDA", "AVGO", "ORCL"],
-    "XLF": ["JPM", "BAC", "WFC", "GS", "MS"],
-    "XLE": ["XOM", "CVX", "COP", "SLB"],
-    "XLV": ["JNJ", "UNH", "PFE", "MRK", "ABBV"],
-    "XLY": ["AMZN", "TSLA", "HD", "MCD", "NKE"],
+    "XLK": ["AAPL", "MSFT", "NVDA", "AVGO", "ORCL", "CRM", "ADBE", "AMD", "CSCO", "ACN"],
+    "XLF": ["JPM", "BAC", "WFC", "GS", "MS", "C", "SCHW", "AXP", "BLK"],
+    "XLE": ["XOM", "CVX", "COP", "SLB", "EOG", "MPC"],
+    "XLV": ["JNJ", "UNH", "PFE", "MRK", "ABBV", "LLY", "TMO", "ABT"],
+    "XLY": ["AMZN", "TSLA", "HD", "MCD", "NKE", "LOW", "SBUX", "BKNG"],
+    "XLP": ["PG", "KO", "PEP", "COST", "WMT", "MDLZ"],
+    "XLI": ["CAT", "BA", "HON", "UPS", "GE", "RTX"],
+    "XLC": ["GOOGL", "META", "NFLX", "DIS", "TMUS"],
 }
 
 
 def live_symbols(n: int | None = None) -> list[str]:
-    """Flatten the universe to a ticker list, optionally capped at n."""
-    syms = [s for tickers in LIVE_UNIVERSE.values() for s in tickers]
-    return syms[:n] if n else syms
+    """Flatten the universe to a ticker list, optionally capped at n.
+
+    Round-robin across sectors so a small cap still spans sectors (diversity
+    matters for confluence and the sector-exposure cap).
+    """
+    cols = [list(t) for t in LIVE_UNIVERSE.values()]
+    out: list[str] = []
+    for i in range(max((len(c) for c in cols), default=0)):
+        for c in cols:
+            if i < len(c):
+                out.append(c[i])
+    return out[:n] if n else out
+
+
+_CIK_CACHE: dict[str, str] | None = None
+
+
+def fetch_cik_map(user_agent: str) -> dict[str, str]:
+    """Ticker -> zero-padded CIK from SEC's company_tickers.json (cached)."""
+    global _CIK_CACHE
+    if _CIK_CACHE is None:
+        import requests  # lazy
+        data = requests.get("https://www.sec.gov/files/company_tickers.json",
+                            headers={"User-Agent": user_agent}, timeout=30).json()
+        _CIK_CACHE = {v["ticker"]: str(v["cik_str"]).zfill(10) for v in data.values()}
+    return _CIK_CACHE
+
+
+def _parse_form4(xml_text: str) -> dict | None:
+    """Extract role / net purchase from a raw Form 4 XML. Returns None if not
+    a (net) purchase by an insider (edge 6 cares about cluster BUYING)."""
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(xml_text)
+    except Exception:
+        return None
+    rel = root.find("reportingOwner/reportingOwnerRelationship")
+    role = "Insider"
+    if rel is not None:
+        ot = rel.findtext("officerTitle")
+        if ot:
+            role = ot
+        elif (rel.findtext("isDirector") in ("1", "true")):
+            role = "Director"
+        elif (rel.findtext("isTenPercentOwner") in ("1", "true")):
+            role = "10%Owner"
+    bought_sh = bought_val = 0.0
+    for txn in root.findall(".//nonDerivativeTransaction"):
+        code = txn.findtext(".//transactionCoding/transactionCode")
+        if code != "P":                       # P = open-market purchase
+            continue
+        sh = float(txn.findtext(".//transactionShares/value") or 0)
+        px = float(txn.findtext(".//transactionPricePerShare/value") or 0)
+        bought_sh += sh
+        bought_val += sh * px
+    if bought_sh <= 0:
+        return None
+    return {"insider_role": role, "txn_code": "P", "shares": int(bought_sh),
+            "value": float(bought_val)}
+
+
+def fetch_edgar_for_symbol(symbol: str, cik: str, user_agent: str,
+                           since_days: int = 60, max_form4: int = 80):
+    """Recent EDGAR filings (8-K/10-K/10-Q) and insider PURCHASES (Form 4) for a
+    symbol, bounded to a recent window so per-filing fetches stay tractable."""
+    import requests  # lazy
+    h = {"User-Agent": user_agent}
+    cutoff = pd.Timestamp.now().normalize() - pd.Timedelta(days=since_days)
+    sub = requests.get(f"https://data.sec.gov/submissions/CIK{cik}.json",
+                       headers=h, timeout=30).json()
+    rec = sub["filings"]["recent"]
+    forms, accs = rec["form"], rec["accessionNumber"]
+    docs, dates = rec["primaryDocument"], rec["filingDate"]
+
+    filings, form4 = [], []
+    f4_count = 0
+    for form, acc, doc, d in zip(forms, accs, docs, dates):
+        fdate = pd.Timestamp(d)
+        if fdate < cutoff:
+            continue
+        avail = available_at_for_session(fdate)
+        if form in ("8-K", "10-K", "10-Q"):
+            filings.append({
+                "symbol": symbol, "cik": cik, "form_type": form, "available_at": avail,
+                "accession": acc, "doc_uri": doc,
+                "section_text_riskfactors": None, "section_text_mdna": None,
+            })
+        elif form == "4" and f4_count < max_form4:
+            f4_count += 1
+            raw = doc.split("/")[-1]
+            url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc.replace('-', '')}/{raw}"
+            try:
+                parsed = _parse_form4(requests.get(url, headers=h, timeout=30).text)
+            except Exception:
+                parsed = None
+            if parsed:
+                parsed.update({"symbol": symbol, "cik": cik, "available_at": avail})
+                form4.append(parsed)
+    return filings, form4
 
 
 class LiveLoader:
-    """Populate the PIT store with REAL free data (yfinance prices + corp actions).
+    """Populate the PIT store with REAL free data (yfinance prices + corp actions),
+    and — when an EDGAR user-agent is supplied — recent 8-K filings (edge 2) and
+    insider purchases from Form 4 (edge 6).
 
     Prices are stored RAW with their splits/dividends, so the point-in-time
-    as-of-T adjustment still holds on real data. Per-symbol fetch failures are
-    skipped with a note (network is best-effort). Filing/insider/news tables are
-    not populated here yet — those EDGAR document/XML parsers are a further step,
-    so on real data only the price-based edge (and the paper engine) have inputs.
+    as-of-T adjustment still holds on real data. EDGAR is fetched only for a
+    recent window (per-filing XML fetches are bounded). 10-K/10-Q risk/MD&A text
+    extraction (edge 1) and the economic-link graph (edge 7) remain future work,
+    so those edges still have no live inputs.
     """
 
     def __init__(self, store: PITStore, symbols: list[str] | None = None,
-                 start: str = "2016-01-01", end: str | None = None, emit=None):
+                 start: str = "2016-01-01", end: str | None = None, emit=None,
+                 edgar_user_agent: str | None = None, edgar_since_days: int = 60):
         self.store = store
         self.symbols = symbols or live_symbols()
         self.start = start
         self.end = end
         self.emit = emit or (lambda _m: None)
+        self.edgar_user_agent = edgar_user_agent
+        self.edgar_since_days = edgar_since_days
         self._sector = {sym: etf for etf, tickers in LIVE_UNIVERSE.items()
                         for sym in tickers}
 
@@ -334,5 +438,37 @@ class LiveLoader:
         self.store.write_constituents(pd.DataFrame({
             "symbol": stocks, "start_date": first_session, "end_date": pd.NaT,
         }))
-        self.emit(f"[live] loaded {len(stocks)} stocks + "
-                  f"{len(loaded) - len(stocks) + len(benchmarks)} benchmarks.")
+        bench_loaded = [s for s in loaded if s not in self._sector]
+        self.emit(f"[live] loaded {len(stocks)} stocks + {len(bench_loaded)} benchmarks.")
+
+        if self.edgar_user_agent:
+            self._load_edgar(stocks)
+
+    def _load_edgar(self, stocks: list[str]) -> None:
+        """Fetch recent 8-K (edge 2) + insider purchases (edge 6) from EDGAR."""
+        try:
+            cik_map = fetch_cik_map(self.edgar_user_agent)
+        except Exception as exc:
+            self.emit(f"[edgar] skipped (CIK map fetch failed: {exc})")
+            return
+        all_filings, all_form4, n_buys = [], [], 0
+        for i, sym in enumerate(stocks, 1):
+            cik = cik_map.get(sym)
+            if not cik:
+                continue
+            self.emit(f"[edgar] {sym} ({i}/{len(stocks)}) ...")
+            try:
+                filings, form4 = fetch_edgar_for_symbol(
+                    sym, cik, self.edgar_user_agent, since_days=self.edgar_since_days)
+            except Exception as exc:
+                self.emit(f"[edgar] skip {sym}: {type(exc).__name__}: {exc}")
+                continue
+            all_filings.extend(filings)
+            all_form4.extend(form4)
+            n_buys += len(form4)
+        if all_filings:
+            self.store.write_filings(pd.DataFrame(all_filings))
+        if all_form4:
+            self.store.write_form4(pd.DataFrame(all_form4))
+        self.emit(f"[edgar] loaded {len(all_filings)} filings (8-K/10-K/10-Q) and "
+                  f"{n_buys} insider-purchase records (last {self.edgar_since_days}d).")
