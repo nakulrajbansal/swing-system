@@ -20,6 +20,7 @@ The cardinal PIT rule is unchanged: every written row carries a tz-aware UTC
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 import numpy as np
@@ -340,10 +341,37 @@ def _parse_form4(xml_text: str) -> dict | None:
             "value": float(bought_val)}
 
 
+def _clean_filing_text(html: str, cap_chars: int = 400_000) -> str:
+    """Strip a filing's HTML to plain, whitespace-collapsed text (capped).
+
+    Whole-document text — used by edge 1, which measures how much a filing
+    CHANGED vs the prior comparable filing. We deliberately avoid fragile
+    Item-1A/Item-7 section parsing (the first header match is usually the table
+    of contents, not the body); whole-filing change is a stable proxy.
+    """
+    t = re.sub(r"<[^>]+>", " ", html[: cap_chars * 3])
+    t = re.sub(r"&[a-z]+;|&#\d+;", " ", t)
+    return re.sub(r"\s+", " ", t).strip()[:cap_chars]
+
+
+def _fetch_filing_text(cik: str, acc: str, doc: str, user_agent: str) -> str:
+    import requests  # lazy
+    raw = doc.split("/")[-1]
+    url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc.replace('-', '')}/{raw}"
+    return _clean_filing_text(requests.get(url, headers={"User-Agent": user_agent},
+                                           timeout=60).text)
+
+
 def fetch_edgar_for_symbol(symbol: str, cik: str, user_agent: str,
-                           since_days: int = 60, max_form4: int = 80):
-    """Recent EDGAR filings (8-K/10-K/10-Q) and insider PURCHASES (Form 4) for a
-    symbol, bounded to a recent window so per-filing fetches stay tractable."""
+                           since_days: int = 60, max_form4: int = 80,
+                           periodic_text: int = 2):
+    """Recent EDGAR data for a symbol:
+      * 8-K (edge 2) in the recent window (metadata only),
+      * insider PURCHASES from Form 4 (edge 6) in the window (raw-XML parsed),
+      * the most recent `periodic_text` 10-K/10-Q filings WITH cleaned full text
+        (edge 1 needs the latest + the prior comparable filing to diff, even if
+        the prior one predates the window).
+    """
     import requests  # lazy
     h = {"User-Agent": user_agent}
     cutoff = pd.Timestamp.now().normalize() - pd.Timedelta(days=since_days)
@@ -354,19 +382,28 @@ def fetch_edgar_for_symbol(symbol: str, cik: str, user_agent: str,
     docs, dates = rec["primaryDocument"], rec["filingDate"]
 
     filings, form4 = [], []
-    f4_count = 0
+    f4_count, periodic_count = 0, 0
     for form, acc, doc, d in zip(forms, accs, docs, dates):
         fdate = pd.Timestamp(d)
-        if fdate < cutoff:
-            continue
         avail = available_at_for_session(fdate)
-        if form in ("8-K", "10-K", "10-Q"):
+        if form in ("10-K", "10-Q") and periodic_count < periodic_text:
+            periodic_count += 1
+            try:
+                text = _fetch_filing_text(cik, acc, doc, user_agent)
+            except Exception:
+                text = None
+            filings.append({
+                "symbol": symbol, "cik": cik, "form_type": form, "available_at": avail,
+                "accession": acc, "doc_uri": doc,
+                "section_text_riskfactors": text, "section_text_mdna": None,
+            })
+        elif form == "8-K" and fdate >= cutoff:
             filings.append({
                 "symbol": symbol, "cik": cik, "form_type": form, "available_at": avail,
                 "accession": acc, "doc_uri": doc,
                 "section_text_riskfactors": None, "section_text_mdna": None,
             })
-        elif form == "4" and f4_count < max_form4:
+        elif form == "4" and fdate >= cutoff and f4_count < max_form4:
             f4_count += 1
             raw = doc.split("/")[-1]
             url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc.replace('-', '')}/{raw}"
@@ -386,10 +423,11 @@ class LiveLoader:
     insider purchases from Form 4 (edge 6).
 
     Prices are stored RAW with their splits/dividends, so the point-in-time
-    as-of-T adjustment still holds on real data. EDGAR is fetched only for a
-    recent window (per-filing XML fetches are bounded). 10-K/10-Q risk/MD&A text
-    extraction (edge 1) and the economic-link graph (edge 7) remain future work,
-    so those edges still have no live inputs.
+    as-of-T adjustment still holds on real data. EDGAR is fetched for a recent
+    window (8-K, Form 4) plus the two latest 10-K/10-Q filings WITH cleaned full
+    text (edge 1 = whole-filing change). The economic-link graph (edge 7) remains
+    future work (no free structured supplier/customer source), so it has no live
+    inputs yet.
     """
 
     def __init__(self, store: PITStore, symbols: list[str] | None = None,

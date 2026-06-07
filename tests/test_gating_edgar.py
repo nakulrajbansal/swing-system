@@ -41,6 +41,14 @@ def test_parse_form4_ignores_sales():
     assert loader._parse_form4("<not-xml") is None
 
 
+def test_clean_filing_text_strips_html():
+    html = "<html><body><p>Risk &amp; Factors</p><div>Item 1A  text</div></body></html>"
+    t = loader._clean_filing_text(html)
+    assert "<" not in t and ">" not in t
+    assert "Risk" in t and "Item 1A" in t
+    assert "  " not in t            # whitespace collapsed
+
+
 def test_gating_roundtrip_and_filter(tmp_path, monkeypatch):
     import app.gating as gating
     from app.config import AppConfig
