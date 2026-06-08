@@ -458,6 +458,114 @@ def run_filing_validation(cfg: AppConfig, emit: Emit) -> dict:
             "passed": sorted(prev)}
 
 
+def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
+    """Advisory mode: run the full AI-agent pipeline (specialists -> confluence ->
+    Hypothesis -> Skeptic -> Portfolio Manager) on the live universe and output
+    RECOMMENDED entries/exits with the agents' reasoning. NO orders are placed.
+
+    Ungated (shows ideas across all edges) and read-only. Uses the real LLM when
+    Anthropic credits are present; otherwise the deterministic agents.
+    """
+    import dataclasses
+    import datetime
+
+    from harness.data import calendar as cal
+    from harness.data.loader import available_at_for_session
+    from harness.signals import ALL_FREE_EDGES
+    from system.data_plane.indicators import last_atr
+    from system.risk.governor import GovernorContext, RiskGovernor
+    from system.run_live import PaperTradingEngine
+    from system.config import DEFAULT_CONFIG
+
+    cfg.apply_to_env()
+    with _run_logger(emit, "recommendations") as (log, _path):
+        client, real_llm = _resolve_client(cfg, log)
+        log("[mode] RECOMMENDATIONS ONLY - the AI agents analyze and suggest; "
+            "NO orders are placed.")
+        if real_llm:
+            log("[mode] using the real LLM agents (spends a bounded amount of credits).")
+
+        if cfg.data_source == "live":
+            today = datetime.date.today().isoformat()
+            if str(cfg.end_date) < today:
+                cfg = dataclasses.replace(cfg, end_date=today)
+
+        def _pick(record, agent):
+            return next((e["payload"] for e in record if e["agent"] == agent), {})
+
+        recs, considered = [], []
+        with _redirect(log):
+            store, sector_map = _build_store(cfg, log)
+            engine = PaperTradingEngine(store, sector_map, client=client,
+                                        starting_equity=float(cfg.starting_equity),
+                                        edges=list(ALL_FREE_EDGES))   # ungated
+            session = engine._last_session()
+            T = available_at_for_session(session)
+            log(f"\n[scan] session {session.date()} | {len(engine.universe)} names | "
+                f"agents: {'real LLM' if real_llm else 'deterministic'}")
+            cycle = engine.orchestrator.run_cycle(T)
+            gov = RiskGovernor(DEFAULT_CONFIG)
+
+            for cand in cycle.candidates:
+                record = cycle.deliberation.get(cand.symbol, [])
+                hyp, crit, pm = (_pick(record, "hypothesis"), _pick(record, "skeptic"),
+                                 _pick(record, "portfolio_manager"))
+                considered.append((cand.symbol, pm.get("action", "pass"),
+                                   pm.get("decisive_factor", "")))
+                if pm.get("action") not in {"enter", "adjust"}:
+                    continue
+                px = engine.panels.get(cand.symbol)
+                if px is None or session not in px.index:
+                    continue
+                ref = float(px.loc[session, "close"])
+                atr = last_atr(px.loc[px.index <= session].reset_index())
+                ctx = GovernorContext(equity=float(cfg.starting_equity), reference_price=ref,
+                                      atr_value=atr if atr == atr else 0.0,
+                                      sector=sector_map.get(cand.symbol, "?"))
+                ticket = gov.evaluate(cand.symbol, "enter", ctx)
+                hold = int(hyp.get("expected_hold_days", 10) or 10)
+                sessions = cal.sessions(session, session + pd.Timedelta(days=hold * 2 + 14))
+                exit_on = sessions[min(hold, len(sessions) - 1)].date().isoformat()
+                recs.append({
+                    "symbol": cand.symbol, "families": cand.families,
+                    "entry": round(ref, 2),
+                    "stop": round(float(ticket.stop), 2) if ticket.stop else None,
+                    "target": round(float(ticket.target), 2) if ticket.target else None,
+                    "shares_at_ref_equity": ticket.shares if ticket.approved else 0,
+                    "hold_days": hold, "exit_by": exit_on,
+                    "conviction": round(float(pm.get("final_conviction", 0)), 2),
+                    "thesis": hyp.get("mechanism", ""),
+                    "skeptic": crit.get("verdict", "?"),
+                    "decisive_factor": pm.get("decisive_factor", ""),
+                })
+
+        # --- report ---
+        log("\n" + "=" * 60)
+        log(f"TRADE RECOMMENDATIONS  ({session.date()})  -- advisory only, no orders")
+        log("=" * 60)
+        if not recs:
+            log("No high-conviction recommendations today (agents declined / "
+                "confluence not satisfied). The disciplined default is to do nothing.")
+        for r in recs:
+            log(f"\n  RECOMMEND BUY {r['symbol']}  (families {r['families']}, "
+                f"conviction {r['conviction']})")
+            log(f"    entry ~{r['entry']}   stop {r['stop']}   target {r['target']}")
+            log(f"    hold ~{r['hold_days']} sessions  ->  exit by {r['exit_by']}")
+            log(f"    size @ ${float(cfg.starting_equity):,.0f}: {r['shares_at_ref_equity']} sh "
+                f"(1% risk)")
+            log(f"    thesis: {r['thesis'][:200]}")
+            log(f"    skeptic verdict: {r['skeptic']}   |   decisive: {r['decisive_factor'][:120]}")
+        if considered and not recs:
+            log("\n  considered (and passed):")
+            for sym, act, why in considered:
+                log(f"    {sym}: {act} - {why[:90]}")
+        calls = getattr(client, "calls", 0)
+        if real_llm:
+            log(f"\n[cost] LLM calls this run: {calls}")
+        log(f"\n[done] {len(recs)} recommendation(s).")
+    return {"session": str(session.date()), "recommendations": recs}
+
+
 def run_momentum_trade(cfg: AppConfig, emit: Emit) -> dict:
     """Simple momentum swing on Alpaca: each run (1) exits any tracked position
     held to its stipulated date, then (2) enters the strongest-momentum name if

@@ -15,7 +15,7 @@ from app import APP_NAME, APP_VERSION
 from app.config import SECRET_FIELDS, AppConfig
 from app.runner import (check_alpaca, run_deliberation, run_filing_validation,
                         run_insider_validation, run_momentum_trade, run_paper,
-                        run_reddit_scan, run_validation)
+                        run_recommendations, run_reddit_scan, run_validation)
 
 # (field, label, kind)  kind: "secret" | "text" | "int" | "float" | "choice"
 _FIELDS = [
@@ -124,36 +124,44 @@ class SwingApp:
         self.status.pack(side="left", padx=12)
 
     def _build_run(self, parent):
+        # Primary actions.
         bar = ttk.Frame(parent)
-        bar.pack(fill="x", padx=12, pady=12)
+        bar.pack(fill="x", padx=12, pady=(12, 4))
+        self.btn_recs = ttk.Button(bar, text="★ Find trade recommendations",
+                                   command=lambda: self._start(run_recommendations))
+        self.btn_recs.pack(side="left", padx=(0, 8))
         self.btn_momentum = ttk.Button(bar, text="Momentum trade (enter/exit)",
                                        command=lambda: self._start(run_momentum_trade))
         self.btn_momentum.pack(side="left", padx=(0, 8))
         self.btn_reddit = ttk.Button(bar, text="Reddit scan",
                                      command=lambda: self._start(run_reddit_scan))
         self.btn_reddit.pack(side="left", padx=(0, 8))
-        self.btn_val = ttk.Button(bar, text="Run validation harness",
-                                  command=lambda: self._start(run_validation))
-        self.btn_val.pack(side="left")
-        self.btn_paper = ttk.Button(bar, text="Run paper trading",
-                                    command=lambda: self._start(run_paper))
-        self.btn_paper.pack(side="left", padx=8)
-        self.btn_delib = ttk.Button(bar, text="Run live deliberation (1 day, LLM)",
+        self.btn_delib = ttk.Button(bar, text="Live deliberation (gated)",
                                     command=lambda: self._start(run_deliberation))
         self.btn_delib.pack(side="left", padx=(0, 8))
-        self.btn_alpaca = ttk.Button(bar, text="Check Alpaca connection",
-                                     command=lambda: self._start(check_alpaca))
-        self.btn_alpaca.pack(side="left", padx=(0, 8))
-        self.btn_hist = ttk.Button(bar, text="Validate history: insider",
-                                   command=lambda: self._start(run_insider_validation))
-        self.btn_hist.pack(side="left", padx=(0, 8))
-        self.btn_filings = ttk.Button(bar, text="Validate history: filings",
-                                      command=lambda: self._start(run_filing_validation))
-        self.btn_filings.pack(side="left", padx=(0, 8))
-        ttk.Button(bar, text="Clear output", command=self._clear).pack(side="left")
-        ttk.Button(bar, text="Open logs folder", command=self._open_logs).pack(side="left", padx=8)
         self.spinner = ttk.Label(bar, text="", foreground="#27a")
         self.spinner.pack(side="left", padx=12)
+
+        # Tools / validation.
+        bar2 = ttk.Frame(parent)
+        bar2.pack(fill="x", padx=12, pady=(0, 8))
+        self.btn_val = ttk.Button(bar2, text="Validation harness",
+                                  command=lambda: self._start(run_validation))
+        self.btn_val.pack(side="left", padx=(0, 8))
+        self.btn_paper = ttk.Button(bar2, text="Paper backtest",
+                                    command=lambda: self._start(run_paper))
+        self.btn_paper.pack(side="left", padx=(0, 8))
+        self.btn_hist = ttk.Button(bar2, text="Validate history: insider",
+                                   command=lambda: self._start(run_insider_validation))
+        self.btn_hist.pack(side="left", padx=(0, 8))
+        self.btn_filings = ttk.Button(bar2, text="Validate history: filings",
+                                      command=lambda: self._start(run_filing_validation))
+        self.btn_filings.pack(side="left", padx=(0, 8))
+        self.btn_alpaca = ttk.Button(bar2, text="Check Alpaca",
+                                     command=lambda: self._start(check_alpaca))
+        self.btn_alpaca.pack(side="left", padx=(0, 8))
+        ttk.Button(bar2, text="Clear", command=self._clear).pack(side="left", padx=(0, 8))
+        ttk.Button(bar2, text="Open logs", command=self._open_logs).pack(side="left")
 
         self.out = scrolledtext.ScrolledText(parent, wrap="word", height=26,
                                              font=("Consolas", 9))
@@ -234,6 +242,7 @@ class SwingApp:
 
     def _set_busy(self, busy: bool):
         state = "disabled" if busy else "normal"
+        self.btn_recs.config(state=state)
         self.btn_momentum.config(state=state)
         self.btn_reddit.config(state=state)
         self.btn_val.config(state=state)

@@ -77,7 +77,7 @@ class AnthropicClient(LLMClient):
             "description": f"Return the {schema_hint} JSON object.",
             "input_schema": {"type": "object", "additionalProperties": True},
         }
-        resp = self._client.messages.create(
+        kwargs = dict(
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
@@ -89,6 +89,15 @@ class AnthropicClient(LLMClient):
             messages=[{"role": "user",
                        "content": json.dumps(payload, default=str, sort_keys=True)}],
         )
+        try:
+            resp = self._client.messages.create(**kwargs)
+        except Exception as exc:
+            # Some models (e.g. Opus 4.8) reject `temperature`; retry without it.
+            if "temperature" in str(exc).lower() and "temperature" in kwargs:
+                kwargs.pop("temperature")
+                resp = self._client.messages.create(**kwargs)
+            else:
+                raise
         for block in resp.content:
             if getattr(block, "type", None) == "tool_use":
                 return dict(block.input)
