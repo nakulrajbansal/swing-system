@@ -16,6 +16,7 @@ import pandas as pd
 from system.agents.specialists import EdgeSpecialist
 from system.config import SystemConfig
 from system.confluence import Candidate, run_confluence
+from system.data_plane.evidence import assemble_evidence
 from system.data_plane.indicators import last_atr
 from system.schemas import Envelope, RiskDecision, SpecialistRead
 
@@ -79,21 +80,41 @@ class Orchestrator:
         record: list[dict] = []
         passcard = RiskDecision(cand.symbol, "pass", 0.0, decisive_factor="fail-safe PASS")
 
+        # Give the agents the real, domain-specific evidence their expertise needs.
+        evidence = assemble_evidence(view, cand.symbol)
+        confluence = {"n_families": cand.n_families,
+                      "combined_score": cand.combined_score,
+                      "strong_single": cand.strong_single,
+                      "edges": cand.edge_ids}
+
         try:
             hyp = self._with_retry(self.hypothesis, {
-                "symbol": cand.symbol,
-                "confluence": {"n_families": cand.n_families,
-                               "combined_score": cand.combined_score,
-                               "strong_single": cand.strong_single},
-                "edge_ids": cand.edge_ids, "evidence_refs": cand.evidence_refs})
+                "symbol": cand.symbol, "confluence": confluence,
+                "edge_ids": cand.edge_ids, "evidence_refs": cand.evidence_refs,
+                "evidence": evidence})
             record.append(self._env(cand.symbol, self.hypothesis, asdict(hyp)))
 
             crit = self._with_retry(self.skeptic, {
-                "symbol": cand.symbol,
+                "symbol": cand.symbol, "evidence": evidence,
+                "thesis": asdict(hyp),
                 "max_corr_to_book": 0.0,
                 "min_read_confidence": cand.min_confidence,
                 "priced_in": 0.0})
             record.append(self._env(cand.symbol, self.skeptic, asdict(crit)))
+
+            # Consensus step: on a survivable objection (caution), the proposer
+            # gets one rebuttal before the PM arbitrates (master §8 flow).
+            rebuttal = ""
+            if crit.verdict == "caution" and hyp.decision == "propose":
+                try:
+                    reb = self.hypothesis.rebut({
+                        "symbol": cand.symbol, "thesis": asdict(hyp),
+                        "objection": crit.strongest, "evidence": evidence})
+                    rebuttal = reb.get("rebuttal", "") if isinstance(reb, dict) else str(reb)
+                    record.append(self._env(cand.symbol, self.hypothesis,
+                                            {"rebuttal": rebuttal}))
+                except Exception:
+                    rebuttal = ""
 
             px = self.price_lookup(cand.symbol, view)
             price = float(px["close"].iloc[-1]) if len(px) else 0.0
@@ -102,7 +123,9 @@ class Orchestrator:
             decision = self._with_retry(self.pm, {
                 "symbol": cand.symbol,
                 "hypothesis": asdict(hyp),
-                "critique": {"verdict": crit.verdict, "max_severity": crit.max_severity()},
+                "critique": {"verdict": crit.verdict, "max_severity": crit.max_severity(),
+                             "strongest": crit.strongest},
+                "rebuttal": rebuttal, "evidence": evidence,
                 "price": price, "atr": atr if atr == atr else 0.0})  # NaN guard
             record.append(self._env(cand.symbol, self.pm, asdict(decision)))
             return decision, record

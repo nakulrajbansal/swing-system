@@ -42,12 +42,18 @@ class Edge01Filing:
 
     def score(self, view, symbol: str, date: pd.Timestamp) -> dict:
         filings = view.filings(symbol)
-        filings = filings[filings["form_type"].isin(PERIODIC)]
-        filings = filings.sort_values("available_at")
-        if len(filings) < 2:
+        filings = filings[filings["form_type"].isin(PERIODIC)].sort_values("available_at")
+        if len(filings) < 1:
             return {"raw_score": 0.0, "confidence": 0.2,
-                    "evidence": {"reason": "no prior filing to diff"}}
-        cur, prev = filings.iloc[-1], filings.iloc[-2]
+                    "evidence": {"reason": "no filing"}}
+        cur = filings.iloc[-1]
+        # Compare like-for-like: prior filing of the SAME form type (10-Q vs prior
+        # 10-Q), not 10-Q vs 10-K which is a length artifact, not a real change.
+        same = filings[filings["form_type"] == cur["form_type"]]
+        if len(same) < 2:
+            return {"raw_score": 0.0, "confidence": 0.2,
+                    "evidence": {"reason": "no prior same-type filing to diff"}}
+        prev = same.iloc[-2]
 
         def _len(row) -> int:
             return len(_tokens(row["section_text_riskfactors"])) + \

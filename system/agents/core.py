@@ -8,7 +8,7 @@ pipeline runs offline; with a real client the same prompts/schemas drive an LLM.
 from __future__ import annotations
 
 from system.agents.base import Agent
-from system.agents.prompts import HYPOTHESIS, PORTFOLIO_MANAGER, SKEPTIC
+from system.agents.prompts import HYPOTHESIS, PORTFOLIO_MANAGER, REBUTTAL, SKEPTIC
 from system.schemas import Critique, Objection, RiskDecision, TradeHypothesis
 
 
@@ -17,6 +17,30 @@ def _f(raw: dict, key: str, default=0.0) -> float:
         return float(raw.get(key, default))
     except (TypeError, ValueError):
         return float(default)
+
+
+def _mechanism_from_evidence(ev: dict, n_fam: int) -> str:
+    """Build a readable, evidence-grounded thesis (deterministic stand-in)."""
+    bits = []
+    t = ev.get("technicals", {})
+    if t.get("pct_below_52wk_high") is not None and t["pct_below_52wk_high"] > -6:
+        bits.append(f"price within {abs(t['pct_below_52wk_high']):.0f}% of its 52-week high")
+    if t.get("momentum_6mo_pct"):
+        bits.append(f"{t['momentum_6mo_pct']:+.0f}% 6-month momentum")
+    fl = ev.get("filings", {})
+    if fl.get("text_change_vs_prior_pct"):
+        bits.append(f"latest {fl.get('latest_periodic', {}).get('form', 'filing')} text "
+                    f"changed {fl['text_change_vs_prior_pct']:+.0f}% vs the prior")
+    if fl.get("recent_8k_count"):
+        bits.append(f"{fl['recent_8k_count']} recent 8-K event(s)")
+    ins = ev.get("insider", {}).get("recent_purchases", [])
+    if ins:
+        bits.append(f"{len(ins)} insider purchase(s)")
+    if not bits:
+        return (f"Cross-family confluence ({n_fam} families) signals under-reaction; "
+                "expect drift over the swing window.")
+    return ("Confluence of " + "; ".join(bits)
+            + " suggests under-reaction; expect continuation/drift over the 2-20 day window.")
 
 
 class HypothesisAgent(Agent):
@@ -32,14 +56,12 @@ class HypothesisAgent(Agent):
         n_fam = int(conf.get("n_families", 0))
         strong = bool(conf.get("strong_single", False))
         combined = float(conf.get("combined_score", 0.0))
-        edges = inputs.get("edge_ids", [])
 
         if n_fam >= 2 or strong:
+            mechanism = _mechanism_from_evidence(inputs.get("evidence", {}), n_fam)
             conviction = min(0.85, 0.45 + 0.12 * n_fam + 0.2 * combined)
             return TradeHypothesis(
-                symbol=symbol, decision="propose",
-                mechanism=f"Cross-family confluence ({n_fam} families: {edges}) "
-                          "signals under-reaction; expect drift over the swing window.",
+                symbol=symbol, decision="propose", mechanism=mechanism,
                 evidence_refs=list(inputs.get("evidence_refs", [])),
                 expected_hold_days=10, invalidation="thesis catalyst reverses or "
                 "price closes below the protective stop",
@@ -47,6 +69,16 @@ class HypothesisAgent(Agent):
         return TradeHypothesis(
             symbol=symbol, decision="decline", mechanism="", evidence_refs=[],
             expected_hold_days=10, invalidation="", raw_conviction=0.3)
+
+    def rebut(self, inputs: dict) -> dict:
+        """One rebuttal to the skeptic's strongest objection (consensus step)."""
+        if self.client.deterministic:
+            return {"rebuttal": "The objection is a general base-rate caution, not "
+                    "specific to this name; the concrete signals in the evidence "
+                    "still support a bounded-risk entry."}
+        raw = self.client.complete(REBUTTAL, inputs, "Rebuttal", model=self.model,
+                                   max_tokens=200, temperature=self.temperature)
+        return {"rebuttal": str(raw.get("rebuttal", ""))}
 
     def parse(self, raw: dict, inputs: dict) -> TradeHypothesis:
         return TradeHypothesis(
@@ -128,8 +160,10 @@ class PortfolioManagerAgent(Agent):
             return decision_pass
 
         max_sev = float(crit.get("max_severity", 0.0))
+        # A rebuttal that addressed the objection softens (not erases) its weight.
+        penalty = 0.35 if inputs.get("rebuttal") else 0.5
         # final_conviction is LOWER than the proposer's whenever objections stand.
-        final = float(hyp["raw_conviction"]) * (1.0 - 0.5 * max_sev)
+        final = float(hyp["raw_conviction"]) * (1.0 - penalty * max_sev)
         if final < 0.55:
             decision_pass.final_conviction = final
             decision_pass.decisive_factor = "conviction below entry threshold after critique"
