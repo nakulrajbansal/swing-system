@@ -66,9 +66,12 @@ class PaperTradingEngine:
 
         # Agent roster (model tiering per master §6). `edges` lets a caller
         # restrict to validation-passed edges (the live trading gate).
+        # Specialists are deterministic signal generators (a fast, free scan);
+        # the LLM does its reasoning in the deliberation trio over assembled
+        # evidence — so the agents that reason cite real domain data.
         edge_classes = edges if edges is not None else ALL_FREE_EDGES
         m = self.cfg.models
-        self.specialists = [EdgeSpecialist(E(), self.client, m.framing) for E in edge_classes]
+        self.specialists = [EdgeSpecialist(E(), MockLLMClient(), m.framing) for E in edge_classes]
         self.orchestrator = Orchestrator(
             store, self.specialists,
             HypothesisAgent(self.client, m.synthesis),

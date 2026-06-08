@@ -36,6 +36,8 @@ class AppConfig:
 
     # --- run parameters (the deterministic/synthetic pipeline that is wired) ---
     data_source: str = "synthetic"       # "synthetic" (wired) | "live" (reserved)
+    ticker: str = ""                     # if set, recommendations analyze ONLY this stock
+    verbose_agents: bool = True          # show each agent's prompt/inputs/output + consensus
     n_symbols: int = 8
     start_date: str = "2019-01-02"
     end_date: str = "2023-12-29"

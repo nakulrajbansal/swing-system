@@ -458,13 +458,91 @@ def run_filing_validation(cfg: AppConfig, emit: Emit) -> dict:
             "passed": sorted(prev)}
 
 
+def _short(obj, n: int = 300) -> str:
+    import json
+    s = obj if isinstance(obj, str) else json.dumps(obj, default=str, ensure_ascii=False)
+    return s if len(s) <= n else s[:n] + " ..."
+
+
+def _step_out(transcript: dict, agent: str) -> dict:
+    return next((s["output"] for s in transcript.get("steps", []) if s["agent"] == agent), {})
+
+
+def _print_transcript(log: Emit, symbol: str, transcript: dict, verbose: bool) -> None:
+    """Print the full deliberation: evidence given, then each agent's prompt,
+    inputs, and output (so it is not a black box)."""
+    ev = transcript.get("evidence", {})
+    log(f"\n----- EVIDENCE GIVEN TO THE AGENTS  ({symbol}) -----")
+    log(f"  technicals: {_short(ev.get('technicals', {}), 400)}")
+    fl = dict(ev.get("filings", {}))
+    snippet = fl.pop("risk_text_snippet", None)
+    log(f"  filings: {_short(fl, 400)}")
+    if snippet and verbose:
+        log(f"  risk-factor text (snippet): {snippet[:450]} ...")
+    log(f"  insider: {_short(ev.get('insider', {}), 300)}")
+    if ev.get("recent_news"):
+        log(f"  news: {ev.get('recent_news')}")
+    log(f"\n----- AGENT DELIBERATION  ({symbol}) -----")
+    for st in transcript.get("steps", []):
+        log(f"\n  >>> AGENT: {st['agent']}  (model {st.get('model', '-')})")
+        if verbose and st.get("system_prompt"):
+            log(f"      PROMPT:  {_short(st['system_prompt'], 600)}")
+            log(f"      INPUTS:  {_short(st.get('inputs', {}), 400)}")
+        log(f"      OUTPUT:  {_short(st.get('output', {}), 600)}")
+
+
+def _build_ticker_store(cfg: AppConfig, ticker: str, emit: Emit):
+    """A focused PIT store for ONE symbol (prices ~2y + EDGAR), for single-ticker
+    analysis — even a symbol outside the standard universe."""
+    import datetime
+
+    from harness.data.loader import (LIVE_UNIVERSE, fetch_cik_map, fetch_edgar_for_symbol,
+                                     fetch_prices_yahoo)
+    from harness.data.pit_store import PITStore
+
+    today = datetime.date.today()
+    start = (today - datetime.timedelta(days=520)).isoformat()
+    cache = CONFIG_DIR / "data_store" / f"ticker_{ticker}_{today.isoformat()}"
+    store = PITStore(cache)
+    if not (cache / "prices.parquet").exists():
+        emit(f"[data] fetching prices for {ticker} ...")
+        prices, actions = fetch_prices_yahoo(ticker, start, today.isoformat())
+        if prices.empty:
+            raise RuntimeError(f"no price data for {ticker!r} (check the symbol).")
+        store.write_prices(prices)
+        if not actions.empty:
+            store.write_corp_actions(actions)
+        store.write_constituents(pd.DataFrame({"symbol": [ticker],
+                                               "start_date": [prices["date"].min()],
+                                               "end_date": [pd.NaT]}))
+        if cfg.edgar_user_agent:
+            try:
+                cik = fetch_cik_map(cfg.edgar_user_agent).get(ticker)
+                if cik:
+                    emit(f"[edgar] fetching filings for {ticker} ...")
+                    filings, form4 = fetch_edgar_for_symbol(
+                        ticker, cik, cfg.edgar_user_agent, since_days=90, periodic_text=2)
+                    if filings:
+                        store.write_filings(pd.DataFrame(filings))
+                    if form4:
+                        store.write_form4(pd.DataFrame(form4))
+                else:
+                    emit(f"[edgar] no CIK for {ticker}; skipping filings.")
+            except Exception as exc:
+                emit(f"[edgar] skipped: {exc}")
+    else:
+        emit(f"[data] using cached data for {ticker}.")
+    sector = next((etf for etf, tk in LIVE_UNIVERSE.items() if ticker in tk), "SPY")
+    return store, {ticker: sector}
+
+
 def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
     """Advisory mode: run the full AI-agent pipeline (specialists -> confluence ->
-    Hypothesis -> Skeptic -> Portfolio Manager) on the live universe and output
-    RECOMMENDED entries/exits with the agents' reasoning. NO orders are placed.
+    Hypothesis -> Skeptic -> rebuttal -> Portfolio Manager) and output RECOMMENDED
+    entries/exits with the agents' FULL reasoning shown. NO orders are placed.
 
-    Ungated (shows ideas across all edges) and read-only. Uses the real LLM when
-    Anthropic credits are present; otherwise the deterministic agents.
+    If cfg.ticker is set, analyze just that one stock; otherwise scan the universe.
+    Ungated and read-only; uses the real LLM when Anthropic credits are present.
     """
     import dataclasses
     import datetime
@@ -480,6 +558,8 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
     cfg.apply_to_env()
     with _run_logger(emit, "recommendations") as (log, _path):
         client, real_llm = _resolve_client(cfg, log)
+        verbose = bool(cfg.verbose_agents)
+        ticker = (cfg.ticker or "").strip().upper()
         log("[mode] RECOMMENDATIONS ONLY - the AI agents analyze and suggest; "
             "NO orders are placed.")
         if real_llm:
@@ -490,26 +570,38 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
             if str(cfg.end_date) < today:
                 cfg = dataclasses.replace(cfg, end_date=today)
 
-        def _pick(record, agent):
-            return next((e["payload"] for e in record if e["agent"] == agent), {})
-
         recs, considered = [], []
         with _redirect(log):
-            store, sector_map = _build_store(cfg, log)
+            if ticker:
+                store, sector_map = _build_ticker_store(cfg, ticker, log)
+            else:
+                store, sector_map = _build_store(cfg, log)
             engine = PaperTradingEngine(store, sector_map, client=client,
                                         starting_equity=float(cfg.starting_equity),
                                         edges=list(ALL_FREE_EDGES))   # ungated
             session = engine._last_session()
             T = available_at_for_session(session)
-            log(f"\n[scan] session {session.date()} | {len(engine.universe)} names | "
-                f"agents: {'real LLM' if real_llm else 'deterministic'}")
-            cycle = engine.orchestrator.run_cycle(T)
             gov = RiskGovernor(DEFAULT_CONFIG)
+            mode = "real LLM" if real_llm else "deterministic"
 
-            for cand in cycle.candidates:
-                record = cycle.deliberation.get(cand.symbol, [])
-                hyp, crit, pm = (_pick(record, "hypothesis"), _pick(record, "skeptic"),
-                                 _pick(record, "portfolio_manager"))
+            if ticker:
+                log(f"\n[analyze] {ticker} | session {session.date()} | agents: {mode}")
+                cand, _decision, transcript = engine.orchestrator.deliberate_symbol(T, ticker)
+                items = [(cand, transcript)]
+            else:
+                log(f"\n[scan] session {session.date()} | {len(engine.universe)} names | "
+                    f"agents: {mode}")
+                cycle = engine.orchestrator.run_cycle(T)
+                items = [(c, cycle.deliberation.get(c.symbol, {})) for c in cycle.candidates]
+                if not items:
+                    log("[scan] confluence surfaced no candidates "
+                        "(set a Ticker to force analysis of a specific name).")
+
+            for cand, transcript in items:
+                _print_transcript(log, cand.symbol, transcript, verbose)
+                hyp = _step_out(transcript, "hypothesis")
+                crit = _step_out(transcript, "skeptic")
+                pm = _step_out(transcript, "portfolio_manager")
                 considered.append((cand.symbol, pm.get("action", "pass"),
                                    pm.get("decisive_factor", "")))
                 if pm.get("action") not in {"enter", "adjust"}:
@@ -539,26 +631,24 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
                     "decisive_factor": pm.get("decisive_factor", ""),
                 })
 
-        # --- report ---
+        # --- recommendation summary ---
         log("\n" + "=" * 60)
         log(f"TRADE RECOMMENDATIONS  ({session.date()})  -- advisory only, no orders")
         log("=" * 60)
         if not recs:
-            log("No high-conviction recommendations today (agents declined / "
-                "confluence not satisfied). The disciplined default is to do nothing.")
+            log("No BUY recommendation (the agents' consensus was to PASS).")
         for r in recs:
             log(f"\n  RECOMMEND BUY {r['symbol']}  (families {r['families']}, "
                 f"conviction {r['conviction']})")
             log(f"    entry ~{r['entry']}   stop {r['stop']}   target {r['target']}")
             log(f"    hold ~{r['hold_days']} sessions  ->  exit by {r['exit_by']}")
-            log(f"    size @ ${float(cfg.starting_equity):,.0f}: {r['shares_at_ref_equity']} sh "
-                f"(1% risk)")
-            log(f"    thesis: {r['thesis'][:200]}")
-            log(f"    skeptic verdict: {r['skeptic']}   |   decisive: {r['decisive_factor'][:120]}")
-        if considered and not recs:
-            log("\n  considered (and passed):")
+            log(f"    size @ ${float(cfg.starting_equity):,.0f}: {r['shares_at_ref_equity']} sh (1% risk)")
+            log(f"    thesis: {r['thesis'][:240]}")
+            log(f"    skeptic verdict: {r['skeptic']}   |   decisive: {r['decisive_factor'][:140]}")
+        if considered:
+            log("\n  consensus per name:")
             for sym, act, why in considered:
-                log(f"    {sym}: {act} - {why[:90]}")
+                log(f"    {sym}: {act.upper()} - {why[:110]}")
         calls = getattr(client, "calls", 0)
         if real_llm:
             log(f"\n[cost] LLM calls this run: {calls}")
@@ -876,8 +966,8 @@ def run_deliberation(cfg: AppConfig, emit: Emit) -> dict:
             log(f"\n=== CANDIDATE: {cand.symbol} ===")
             log(f"  families={cand.families}  edges={cand.edge_ids}  "
                 f"score={cand.combined_score:.2f}  strong_single={cand.strong_single}")
-            for env in cycle.deliberation.get(cand.symbol, []):
-                log(f"  [{env['agent']}] {_fmt_payload(env['agent'], env['payload'])}")
+            for st in cycle.deliberation.get(cand.symbol, {}).get("steps", []):
+                log(f"  [{st['agent']}] {_fmt_payload(st['agent'], st['output'])}")
 
         # Two-key view: what the Risk Governor would actually approve/size today.
         log("\n[two-key] Risk Governor sizing of any ENTER decisions:")

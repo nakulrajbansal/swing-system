@@ -29,6 +29,7 @@ _FIELDS = [
     ("reddit_username", "Reddit username (script app)", "text"),
     ("reddit_password", "Reddit password (script app)", "secret"),
     ("data_source", "Data source", "choice"),
+    ("ticker", "Analyze one ticker (blank = scan universe)", "text"),
     ("n_symbols", "Universe size (symbols)", "int"),
     ("start_date", "Start date (YYYY-MM-DD)", "text"),
     ("end_date", "End date (YYYY-MM-DD)", "text"),
@@ -99,6 +100,9 @@ class SwingApp:
         self.vars["only_validated_edges"] = tk.BooleanVar(value=self.cfg.only_validated_edges)
         ttk.Checkbutton(toggles, text="Only trade validated edges (run validation first)",
                         variable=self.vars["only_validated_edges"]).pack(anchor="w")
+        self.vars["verbose_agents"] = tk.BooleanVar(value=self.cfg.verbose_agents)
+        ttk.Checkbutton(toggles, text="Show full agent reasoning (prompts, inputs, outputs)",
+                        variable=self.vars["verbose_agents"]).pack(anchor="w")
         self.vars["place_orders"] = tk.BooleanVar(value=self.cfg.place_orders)
         ttk.Checkbutton(toggles, text="Place approved orders on Alpaca (live deliberation)",
                         variable=self.vars["place_orders"]).pack(anchor="w")
@@ -181,6 +185,7 @@ class SwingApp:
             d[field] = val
         d["use_llm_agents"] = bool(self.vars["use_llm_agents"].get())
         d["only_validated_edges"] = bool(self.vars["only_validated_edges"].get())
+        d["verbose_agents"] = bool(self.vars["verbose_agents"].get())
         d["place_orders"] = bool(self.vars["place_orders"].get())
         d["enable_live_trading"] = bool(self.vars["enable_live_trading"].get())
         return AppConfig(**d)
