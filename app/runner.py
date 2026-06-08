@@ -536,6 +536,93 @@ def _build_ticker_store(cfg: AppConfig, ticker: str, emit: Emit):
     return store, {ticker: sector}
 
 
+def _assess_technicals(t: dict) -> list[str]:
+    if not t.get("available"):
+        return ["  (insufficient price history)"]
+    out = [f"  price: ${t.get('price')}"]
+    out.append("  trend: above 200-DMA (uptrend) [GOOD]" if t.get("above_200dma")
+               else "  trend: below 200-DMA (downtrend) [BAD]")
+    m = t.get("momentum_6mo_pct")
+    if m is not None:
+        tag = "[GOOD]" if m > 10 else "[BAD]" if m < -10 else "[neutral]"
+        out.append(f"  6-month momentum: {m:+.0f}% {tag}")
+    p = t.get("pct_below_52wk_high")
+    if p is not None:
+        tag = "[GOOD: near highs]" if p > -10 else "[BAD: far below]" if p < -30 else "[neutral]"
+        out.append(f"  vs 52-week high: {p:+.0f}% {tag}")
+    rsi = t.get("rsi14")
+    if rsi is not None:
+        tag = "[overbought]" if rsi > 70 else "[oversold]" if rsi < 30 else "[neutral]"
+        out.append(f"  RSI(14): {rsi:.0f} {tag}")
+    if t.get("atr_pct_of_price") is not None:
+        out.append(f"  volatility: ATR is {t['atr_pct_of_price']:.1f}% of price")
+    return out
+
+
+def _assess_filings(f: dict, insider: dict) -> list[str]:
+    out = []
+    if f.get("available"):
+        lp = f.get("latest_periodic", {})
+        if lp:
+            out.append(f"  latest report: {lp.get('form')} filed {lp.get('date')}")
+        if f.get("text_change_vs_prior_pct") is not None:
+            out.append(f"  filing-text change vs prior {lp.get('form', '')}: "
+                       f"{f['text_change_vs_prior_pct']:+.0f}% "
+                       "[large change can flag new risks]")
+        out.append(f"  recent 8-K events: {f.get('recent_8k_count', 0)} "
+                   f"(last {f.get('last_8k_date')})")
+    else:
+        out.append("  no recent filings available")
+    buys = (insider or {}).get("recent_purchases", [])
+    if buys:
+        tot = sum(b.get("value", 0) for b in buys)
+        out.append(f"  insider buying: {len(buys)} purchase(s), ~${tot:,.0f} "
+                   "[GOOD: informed buying]")
+    else:
+        out.append("  insider buying: none recently [neutral]")
+    return out
+
+
+def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
+                      rec: dict | None, equity: float) -> None:
+    """Readable scorecard: technicals, filings, what's good/bad, the agents'
+    reasoning, the buy/no-buy verdict, and the trade plan if it's a buy."""
+    hyp = _step_out(transcript, "hypothesis")
+    crit = _step_out(transcript, "skeptic")
+    pm = _step_out(transcript, "portfolio_manager")
+    action = pm.get("action", "pass")
+    verdict = "BUY" if action in {"enter", "adjust"} else "DO NOT BUY (PASS)"
+    conv = pm.get("final_conviction")
+    conv_s = f"  (conviction {conv:.2f})" if isinstance(conv, (int, float)) else ""
+
+    log(f"\n{'=' * 60}")
+    log(f"ANALYSIS: {symbol}   ->   VERDICT: {verdict}{conv_s}")
+    log("=" * 60)
+    log("Technical picture:")
+    for ln in _assess_technicals(evidence.get("technicals", {})):
+        log(ln)
+    log("Filings & insider activity:")
+    for ln in _assess_filings(evidence.get("filings", {}), evidence.get("insider", {})):
+        log(ln)
+    log("Why this verdict:")
+    if hyp.get("decision") == "propose" and str(hyp.get("mechanism", "")).strip() not in ("", "None"):
+        log(f"  bull thesis: {str(hyp.get('mechanism'))[:300]}")
+    else:
+        log("  bull thesis: the strategist declined to propose a thesis.")
+    log(f"  main risk (skeptic): {str(crit.get('strongest', '-'))[:200]} "
+        f"(verdict: {crit.get('verdict', '-')})")
+    log(f"  decision rationale (PM): {str(pm.get('decisive_factor', '-'))[:300]}")
+    if rec:
+        e, s, tg = rec["entry"], rec["stop"], rec["target"]
+        sp = f"{(s / e - 1) * 100:+.1f}%" if (e and s) else "?"
+        tp = f"{(tg / e - 1) * 100:+.1f}%" if (e and tg) else "?"
+        rr = f"{abs((tg - e) / (e - s)):.1f}" if (e and s and tg and e != s) else "?"
+        log("Trade plan (advisory):")
+        log(f"  entry ~${e}   stop ${s} ({sp})   target ${tg} ({tp})   reward/risk {rr}:1")
+        log(f"  hold ~{rec['hold_days']} sessions  ->  exit by {rec['exit_by']}")
+        log(f"  size @ ${equity:,.0f}: {rec['shares_at_ref_equity']} shares (1% account risk)")
+
+
 def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
     """Advisory mode: run the full AI-agent pipeline (specialists -> confluence ->
     Hypothesis -> Skeptic -> rebuttal -> Portfolio Manager) and output RECOMMENDED
@@ -604,32 +691,36 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
                 pm = _step_out(transcript, "portfolio_manager")
                 considered.append((cand.symbol, pm.get("action", "pass"),
                                    pm.get("decisive_factor", "")))
-                if pm.get("action") not in {"enter", "adjust"}:
-                    continue
-                px = engine.panels.get(cand.symbol)
-                if px is None or session not in px.index:
-                    continue
-                ref = float(px.loc[session, "close"])
-                atr = last_atr(px.loc[px.index <= session].reset_index())
-                ctx = GovernorContext(equity=float(cfg.starting_equity), reference_price=ref,
-                                      atr_value=atr if atr == atr else 0.0,
-                                      sector=sector_map.get(cand.symbol, "?"))
-                ticket = gov.evaluate(cand.symbol, "enter", ctx)
-                hold = int(hyp.get("expected_hold_days", 10) or 10)
-                sessions = cal.sessions(session, session + pd.Timedelta(days=hold * 2 + 14))
-                exit_on = sessions[min(hold, len(sessions) - 1)].date().isoformat()
-                recs.append({
-                    "symbol": cand.symbol, "families": cand.families,
-                    "entry": round(ref, 2),
-                    "stop": round(float(ticket.stop), 2) if ticket.stop else None,
-                    "target": round(float(ticket.target), 2) if ticket.target else None,
-                    "shares_at_ref_equity": ticket.shares if ticket.approved else 0,
-                    "hold_days": hold, "exit_by": exit_on,
-                    "conviction": round(float(pm.get("final_conviction", 0)), 2),
-                    "thesis": hyp.get("mechanism", ""),
-                    "skeptic": crit.get("verdict", "?"),
-                    "decisive_factor": pm.get("decisive_factor", ""),
-                })
+                rec = None
+                if pm.get("action") in {"enter", "adjust"}:
+                    px = engine.panels.get(cand.symbol)
+                    if px is not None and session in px.index:
+                        ref = float(px.loc[session, "close"])
+                        atr = last_atr(px.loc[px.index <= session].reset_index())
+                        ctx = GovernorContext(equity=float(cfg.starting_equity),
+                                              reference_price=ref,
+                                              atr_value=atr if atr == atr else 0.0,
+                                              sector=sector_map.get(cand.symbol, "?"))
+                        ticket = gov.evaluate(cand.symbol, "enter", ctx)
+                        hold = int(hyp.get("expected_hold_days", 10) or 10)
+                        sessions = cal.sessions(session,
+                                                session + pd.Timedelta(days=hold * 2 + 14))
+                        exit_on = sessions[min(hold, len(sessions) - 1)].date().isoformat()
+                        rec = {
+                            "symbol": cand.symbol, "families": cand.families,
+                            "entry": round(ref, 2),
+                            "stop": round(float(ticket.stop), 2) if ticket.stop else None,
+                            "target": round(float(ticket.target), 2) if ticket.target else None,
+                            "shares_at_ref_equity": ticket.shares if ticket.approved else 0,
+                            "hold_days": hold, "exit_by": exit_on,
+                            "conviction": round(float(pm.get("final_conviction", 0)), 2),
+                            "thesis": hyp.get("mechanism", ""),
+                            "skeptic": crit.get("verdict", "?"),
+                            "decisive_factor": pm.get("decisive_factor", ""),
+                        }
+                        recs.append(rec)
+                _analysis_summary(log, cand.symbol, transcript.get("evidence", {}),
+                                  transcript, rec, float(cfg.starting_equity))
 
         # --- recommendation summary ---
         log("\n" + "=" * 60)

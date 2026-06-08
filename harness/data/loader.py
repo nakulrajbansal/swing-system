@@ -438,17 +438,47 @@ def _parse_form4(xml_text: str) -> dict | None:
             "value": float(bought_val)}
 
 
-def _clean_filing_text(html: str, cap_chars: int = 400_000) -> str:
-    """Strip a filing's HTML to plain, whitespace-collapsed text (capped).
+_XBRL_WORDS = {"xbrli", "iso4217", "us-gaap", "dei", "utr", "srt", "false", "true",
+               "membergroup", "domain", "axis", "member"}
 
-    Whole-document text — used by edge 1, which measures how much a filing
-    CHANGED vs the prior comparable filing. We deliberately avoid fragile
-    Item-1A/Item-7 section parsing (the first header match is usually the table
-    of contents, not the body); whole-filing change is a stable proxy.
+
+def _looks_like_noise(tok: str) -> bool:
+    """True for inline-XBRL / metadata tokens that aren't readable prose."""
+    if ":" in tok:                                  # ns:name (us-gaap:Revenue, iso4217:USD)
+        return True
+    low = tok.lower().strip(".,;()[]")
+    if low in _XBRL_WORDS:
+        return True
+    alpha = sum(c.isalpha() for c in tok)
+    digit = sum(c.isdigit() for c in tok)
+    if digit and alpha == 0:                          # 0001734722, 2026-04-30, 189 (no letters)
+        return True
+    if len(tok) > 24 and alpha < len(tok) * 0.6:     # long identifier blobs
+        return True
+    return False
+
+
+def _clean_filing_text(html: str, cap_chars: int = 400_000) -> str:
+    """Strip a filing to readable narrative prose (capped).
+
+    SEC filings are inline-XBRL: tag-stripping alone leaves a header soup of
+    namespace tokens, contexts, dates and identifiers. We drop those so edge 1
+    and the Filings evidence see actual sentences, and start the text at the
+    first real narrative anchor when we can find one.
     """
-    t = re.sub(r"<[^>]+>", " ", html[: cap_chars * 3])
+    t = re.sub(r"(?is)<[^>]+>", " ", html)
     t = re.sub(r"&[a-z]+;|&#\d+;", " ", t)
-    return re.sub(r"\s+", " ", t).strip()[:cap_chars]
+    t = re.sub(r"https?://\S+", " ", t)
+    t = " ".join(tok for tok in t.split() if not _looks_like_noise(tok))
+    t = re.sub(r"\s+", " ", t).strip()
+    # Prefer to begin at the substantive body (skip cover-page boilerplate).
+    for anchor in (r"Risk Factors", r"Management.s Discussion",
+                   r"PART I", r"Item\s*1A", r"Item\s*2"):
+        m = re.search(anchor, t, re.I)
+        if m and m.start() < len(t) * 0.5:
+            t = t[m.start():]
+            break
+    return t[:cap_chars]
 
 
 def _fetch_filing_text(cik: str, acc: str, doc: str, user_agent: str) -> str:
