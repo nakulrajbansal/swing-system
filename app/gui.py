@@ -128,11 +128,25 @@ class SwingApp:
         self.status.pack(side="left", padx=12)
 
     def _build_run(self, parent):
+        # Single-ticker analysis: type a symbol and analyze just that name.
+        bar0 = ttk.Frame(parent)
+        bar0.pack(fill="x", padx=12, pady=(12, 4))
+        ttk.Label(bar0, text="Analyze one ticker:").pack(side="left")
+        self.ent_ticker = ttk.Entry(bar0, width=10)
+        self.ent_ticker.insert(0, self.cfg.ticker or "")
+        self.ent_ticker.pack(side="left", padx=(6, 8))
+        self.btn_ticker = ttk.Button(
+            bar0, text="Analyze this ticker",
+            command=lambda: self._analyze_ticker())
+        self.btn_ticker.pack(side="left")
+        ttk.Label(bar0, foreground="#888",
+                  text="  (uses the AI agents on just this stock)").pack(side="left")
+
         # Primary actions.
         bar = ttk.Frame(parent)
-        bar.pack(fill="x", padx=12, pady=(12, 4))
-        self.btn_recs = ttk.Button(bar, text="★ Find trade recommendations",
-                                   command=lambda: self._start(run_recommendations))
+        bar.pack(fill="x", padx=12, pady=(4, 4))
+        self.btn_recs = ttk.Button(bar, text="★ Find trade recommendations (scan)",
+                                   command=lambda: self._start(run_recommendations, ticker=""))
         self.btn_recs.pack(side="left", padx=(0, 8))
         self.btn_momentum = ttk.Button(bar, text="Momentum trade (enter/exit)",
                                        command=lambda: self._start(run_momentum_trade))
@@ -209,7 +223,15 @@ class SwingApp:
                 "Default to 'paper' until you have validated everything. Use the kill "
                 "switch / your Alpaca dashboard to halt.")
 
-    def _start(self, fn):
+    def _analyze_ticker(self):
+        sym = self.ent_ticker.get().strip().upper()
+        if not sym:
+            messagebox.showinfo("Ticker required",
+                                "Type a stock symbol (e.g. NVDA) to analyze.")
+            return
+        self._start(run_recommendations, ticker=sym)
+
+    def _start(self, fn, **overrides):
         if self.running:
             return
         try:
@@ -217,6 +239,8 @@ class SwingApp:
         except Exception as exc:
             messagebox.showerror("Invalid configuration", str(exc))
             return
+        for k, v in overrides.items():             # per-button config overrides
+            setattr(cfg, k, v)
         self.running = True
         self._set_busy(True)
         self._log(f"\n=== starting: {fn.__name__} ===")
@@ -247,6 +271,7 @@ class SwingApp:
 
     def _set_busy(self, busy: bool):
         state = "disabled" if busy else "normal"
+        self.btn_ticker.config(state=state)
         self.btn_recs.config(state=state)
         self.btn_momentum.config(state=state)
         self.btn_reddit.config(state=state)
