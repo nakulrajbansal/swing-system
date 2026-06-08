@@ -64,8 +64,13 @@ HYPOTHESIS = (
     "Reason from this concrete evidence: propose at most one thesis per name or "
     "decline. A valid thesis states a specific MECHANISM grounded in the evidence, "
     "an expected hold, explicit invalidation conditions, and a calibrated "
-    "raw_conviction (0.7 ~ 70% chance). Decline only when the evidence is genuinely "
-    "thin or conflicting — not for lack of effort. Return only the JSON schema."
+    "raw_conviction (0.7 ~ 70% chance). "
+    "DECISION COHERENCE (important): if you can state a concrete mechanism and "
+    "would actually hold the trade 2-20 days, set decision='propose' AND fill "
+    "mechanism, invalidation, expected_hold_days, and raw_conviction. Do NOT write "
+    "a full bullish thesis and then set decision='decline' — that is incoherent; "
+    "either commit (propose) or, if the evidence is genuinely thin or conflicting, "
+    "decline with a brief reason and a low conviction. Return only the JSON schema."
 )
 
 REBUTTAL = (

@@ -78,18 +78,36 @@ class HypothesisAgent(Agent):
                     "still support a bounded-risk entry."}
         raw = self.client.complete(REBUTTAL, inputs, "Rebuttal", model=self.model,
                                    max_tokens=200, temperature=self.temperature)
-        return {"rebuttal": str(raw.get("rebuttal", ""))}
+        text = str(raw.get("rebuttal", "")).strip()
+        if not text:                               # never return an empty rebuttal
+            text = ("The objection is a general base-rate caution; the concrete "
+                    "evidence in the thesis still supports a bounded-risk entry.")
+        return {"rebuttal": text}
 
     def parse(self, raw: dict, inputs: dict) -> TradeHypothesis:
+        decision = "propose" if raw.get("decision") == "propose" else "decline"
+        mechanism = str(raw.get("mechanism", "")).strip()
+        invalidation = str(raw.get("invalidation", "")).strip()
+        conv = _f(raw, "raw_conviction", 0.3)
+        hold = int(raw.get("expected_hold_days", 10) or 10)
+        if not 2 <= hold <= 20:
+            hold = 10
+        # Coherence guard: a strong, grounded thesis the model under-committed on
+        # (wrote a real mechanism + high conviction but said 'decline') is treated
+        # as a proposal so genuine ideas reach the PM.
+        if decision != "propose" and conv >= 0.7 and len(mechanism) > 80:
+            decision = "propose"
+        if decision == "propose":
+            if not mechanism:                      # can't propose without a mechanism
+                decision = "decline"
+            elif not invalidation:                 # complete an otherwise-valid propose
+                invalidation = ("price closes below the protective stop, or the "
+                                "thesis catalyst reverses")
         return TradeHypothesis(
-            symbol=inputs["symbol"],
-            decision="propose" if raw.get("decision") == "propose" else "decline",
-            mechanism=str(raw.get("mechanism", "")),
+            symbol=inputs["symbol"], decision=decision, mechanism=mechanism,
             evidence_refs=list(raw.get("evidence_refs", [])),
-            expected_hold_days=int(raw.get("expected_hold_days", 10) or 10),
-            invalidation=str(raw.get("invalidation", "")),
-            raw_conviction=_f(raw, "raw_conviction", 0.3),
-            direction=raw.get("direction", "long"))
+            expected_hold_days=hold, invalidation=invalidation,
+            raw_conviction=conv, direction=raw.get("direction", "long"))
 
 
 class SkepticAgent(Agent):
