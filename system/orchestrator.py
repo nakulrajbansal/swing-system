@@ -34,9 +34,10 @@ class CycleResult:
 class Orchestrator:
     def __init__(self, store, specialists: list[EdgeSpecialist], hypothesis,
                  skeptic, portfolio_manager, config: SystemConfig,
-                 price_lookup=None):
+                 price_lookup=None, analysts=None):
         self.store = store
         self.specialists = specialists
+        self.analysts = list(analysts or [])      # technical / fundamental analysts
         self.hypothesis = hypothesis
         self.skeptic = skeptic
         self.pm = portfolio_manager
@@ -119,14 +120,29 @@ class Orchestrator:
         transcript: dict = {"evidence": evidence, "steps": []}
 
         try:
+            # Domain analysts first: a visible technical read and fundamental read
+            # over the evidence, fed to the trio. Advisory — a failed analyst is
+            # skipped, it never fails the candidate.
+            analyst_reads = []
+            for an in self.analysts:
+                an_in = {"symbol": cand.symbol, "evidence": evidence}
+                try:
+                    out = asdict(an.run(an_in))
+                except Exception:
+                    continue
+                analyst_reads.append(out)
+                transcript["steps"].append(
+                    self._step(an, an.system_prompt, an_in, out))
+
             hyp_in = {"symbol": cand.symbol, "confluence": confluence,
                       "edge_ids": cand.edge_ids, "evidence_refs": cand.evidence_refs,
-                      "evidence": evidence}
+                      "analyst_reads": analyst_reads, "evidence": evidence}
             hyp = self._with_retry(self.hypothesis, hyp_in)
             transcript["steps"].append(
                 self._step(self.hypothesis, self.hypothesis.system_prompt, hyp_in, asdict(hyp)))
 
             crit_in = {"symbol": cand.symbol, "evidence": evidence, "thesis": asdict(hyp),
+                       "analyst_reads": analyst_reads,
                        "max_corr_to_book": 0.0, "min_read_confidence": cand.min_confidence,
                        "priced_in": 0.0}
             crit = self._with_retry(self.skeptic, crit_in)
@@ -157,6 +173,7 @@ class Orchestrator:
             pm_in = {"symbol": cand.symbol, "hypothesis": asdict(hyp),
                      "critique": {"verdict": crit.verdict, "max_severity": crit.max_severity(),
                                   "strongest": crit.strongest},
+                     "analyst_reads": analyst_reads,
                      "rebuttal": rebuttal, "evidence": evidence,
                      "price": price, "atr": atr if atr == atr else 0.0}
             decision = self._with_retry(self.pm, pm_in)

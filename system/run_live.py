@@ -21,6 +21,7 @@ import pandas as pd
 
 from harness.data.loader import available_at_for_session
 from harness.data.pit_store import PITStore
+from system.agents.analysts import FundamentalAnalyst, TechnicalAnalyst
 from system.agents.core import HypothesisAgent, PortfolioManagerAgent, SkepticAgent
 from system.agents.llm_client import LLMClient, MockLLMClient
 from system.agents.specialists import EdgeSpecialist
@@ -72,12 +73,16 @@ class PaperTradingEngine:
         edge_classes = edges if edges is not None else ALL_FREE_EDGES
         m = self.cfg.models
         self.specialists = [EdgeSpecialist(E(), MockLLMClient(), m.framing) for E in edge_classes]
+        # Visible domain analysts (cheap tier) that reason over the evidence and
+        # feed the trio. They use the real client when one is supplied.
+        self.analysts = [TechnicalAnalyst(self.client, m.framing),
+                         FundamentalAnalyst(self.client, m.framing)]
         self.orchestrator = Orchestrator(
             store, self.specialists,
             HypothesisAgent(self.client, m.synthesis),
             SkepticAgent(self.client, m.adversarial),
             PortfolioManagerAgent(self.client, m.adversarial),
-            self.cfg, price_lookup=self._price_lookup)
+            self.cfg, price_lookup=self._price_lookup, analysts=self.analysts)
 
         # Fully-adjusted panels (outcomes/fills replay realized bars).
         last = available_at_for_session(self._last_session()) + pd.Timedelta(days=1)

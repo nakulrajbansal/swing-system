@@ -464,6 +464,16 @@ def _short(obj, n: int = 300) -> str:
     return s if len(s) <= n else s[:n] + " ..."
 
 
+def _sent(text, n: int = 900) -> str:
+    """Trim to a whole sentence (never mid-word) so the summary reads cleanly."""
+    s = str(text or "").strip()
+    if len(s) <= n:
+        return s
+    cut = s[:n]
+    dot = max(cut.rfind(". "), cut.rfind("; "))
+    return (cut[:dot + 1] if dot > n * 0.5 else cut.rsplit(" ", 1)[0]) + " ..."
+
+
 def _step_out(transcript: dict, agent: str) -> dict:
     return next((s["output"] for s in transcript.get("steps", []) if s["agent"] == agent), {})
 
@@ -488,7 +498,7 @@ def _print_transcript(log: Emit, symbol: str, transcript: dict, verbose: bool) -
         if verbose and st.get("system_prompt"):
             log(f"      PROMPT:  {_short(st['system_prompt'], 600)}")
             log(f"      INPUTS:  {_short(st.get('inputs', {}), 400)}")
-        log(f"      OUTPUT:  {_short(st.get('output', {}), 600)}")
+        log(f"      OUTPUT:  {_short(st.get('output', {}), 1600)}")
 
 
 def _build_ticker_store(cfg: AppConfig, ticker: str, emit: Emit):
@@ -587,6 +597,8 @@ def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
                       rec: dict | None, equity: float) -> None:
     """Readable scorecard: technicals, filings, what's good/bad, the agents'
     reasoning, the buy/no-buy verdict, and the trade plan if it's a buy."""
+    tech = _step_out(transcript, "technical_analyst")
+    fund = _step_out(transcript, "fundamental_analyst")
     hyp = _step_out(transcript, "hypothesis")
     crit = _step_out(transcript, "skeptic")
     pm = _step_out(transcript, "portfolio_manager")
@@ -594,6 +606,18 @@ def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
     verdict = "BUY" if action in {"enter", "adjust"} else "DO NOT BUY (PASS)"
     conv = pm.get("final_conviction")
     conv_s = f"  (conviction {conv:.2f})" if isinstance(conv, (int, float)) else ""
+
+    def _panel(label: str, r: dict) -> None:
+        if not r:
+            return
+        log(f"  {label} analyst: {str(r.get('stance', '?')).upper()} "
+            f"(score {r.get('score', '?')})")
+        if r.get("assessment"):
+            log(f"    {_sent(r['assessment'], 400)}")
+        for g in (r.get("positives") or [])[:4]:
+            log(f"    + {g}")
+        for b in (r.get("concerns") or [])[:4]:
+            log(f"    - {b}")
 
     log(f"\n{'=' * 60}")
     log(f"ANALYSIS: {symbol}   ->   VERDICT: {verdict}{conv_s}")
@@ -604,14 +628,23 @@ def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
     log("Filings & insider activity:")
     for ln in _assess_filings(evidence.get("filings", {}), evidence.get("insider", {})):
         log(ln)
+    if tech or fund:
+        log("Analyst reads:")
+        _panel("Technical", tech)
+        _panel("Fundamental", fund)
     log("Why this verdict:")
     if hyp.get("decision") == "propose" and str(hyp.get("mechanism", "")).strip() not in ("", "None"):
-        log(f"  bull thesis: {str(hyp.get('mechanism'))[:300]}")
+        log(f"  bull thesis: {_sent(hyp.get('mechanism'), 900)}")
     else:
-        log("  bull thesis: the strategist declined to propose a thesis.")
-    log(f"  main risk (skeptic): {str(crit.get('strongest', '-'))[:200]} "
+        log("  bull thesis: the strategist declined to propose a thesis "
+            "(the bull case was not strong enough to commit to).")
+    log(f"  main risk (skeptic): {_sent(crit.get('strongest', '-'), 400)} "
         f"(verdict: {crit.get('verdict', '-')})")
-    log(f"  decision rationale (PM): {str(pm.get('decisive_factor', '-'))[:300]}")
+    log(f"  decision rationale (PM): {_sent(pm.get('decisive_factor', '-'), 900)}")
+    if action not in {"enter", "adjust"}:
+        log("  => PASS is the system's disciplined default: it recommends a BUY only "
+            "when a real edge survives the bear case. The positives above did not "
+            "outweigh the risks here.")
     if rec:
         e, s, tg = rec["entry"], rec["stop"], rec["target"]
         sp = f"{(s / e - 1) * 100:+.1f}%" if (e and s) else "?"
@@ -739,7 +772,7 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
         if considered:
             log("\n  consensus per name:")
             for sym, act, why in considered:
-                log(f"    {sym}: {act.upper()} - {why[:110]}")
+                log(f"    {sym}: {act.upper()} - {_sent(why, 280)}")
         calls = getattr(client, "calls", 0)
         if real_llm:
             log(f"\n[cost] LLM calls this run: {calls}")

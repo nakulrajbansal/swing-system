@@ -119,10 +119,23 @@ class SkepticAgent(Agent):
 
     def deterministic(self, inputs: dict) -> Critique:
         # Blinded: receives the candidate's evidence and open book, NOT the
-        # proposer's conviction.
-        objs = [Objection("base_rate",
-                          "documented edges decay; most signals do not pay net of costs",
-                          0.45)]
+        # proposer's conviction. Objections are grounded in the actual technicals
+        # so the critique is specific to this name (not a generic 'edges decay').
+        objs: list[Objection] = []
+        t = inputs.get("evidence", {}).get("technicals", {})
+        if t.get("available") and t.get("above_200dma") is False:
+            objs.append(Objection("trend",
+                                  "price is below the 200-DMA — buying into a downtrend", 0.6))
+        m = t.get("momentum_6mo_pct")
+        if isinstance(m, (int, float)) and m < -10:
+            objs.append(Objection("momentum", f"weak 6-month momentum ({m:+.0f}%)", 0.55))
+        p = t.get("pct_below_52wk_high")
+        if isinstance(p, (int, float)) and p < -30:
+            objs.append(Objection("drawdown",
+                                  f"{abs(p):.0f}% below the 52-week high — falling-knife risk", 0.55))
+        rsi = t.get("rsi14")
+        if isinstance(rsi, (int, float)) and rsi > 70:
+            objs.append(Objection("overbought", f"RSI {rsi:.0f} is overbought — poor entry", 0.5))
         corr = float(inputs.get("max_corr_to_book", 0.0))
         if corr > 0.6:
             objs.append(Objection("crowding",
@@ -134,24 +147,35 @@ class SkepticAgent(Agent):
         priced = float(inputs.get("priced_in", 0.0))
         if priced > 0.6:
             objs.append(Objection("priced_in", "catalyst likely already discounted", 0.5))
+        if not objs:                              # nothing specific stood out
+            objs.append(Objection("base_rate",
+                                  "documented edges decay; most signals do not pay net of costs",
+                                  0.4))
 
         crit = Critique(objections=objs, strongest=max(objs, key=lambda o: o.severity).detail,
                         verdict="clean")
-        m = crit.max_severity()
-        crit.verdict = "kill" if m >= 0.7 else "caution" if m >= 0.45 else "clean"
+        mx = crit.max_severity()
+        crit.verdict = "kill" if mx >= 0.7 else "caution" if mx >= 0.45 else "clean"
         return crit
 
     def parse(self, raw: dict, inputs: dict) -> Critique:
-        objs = [Objection(str(o.get("kind", "objection")), str(o.get("detail", "")),
-                          _f(o, "severity", 0.3))
-                for o in raw.get("objections", [])] or \
-            [Objection("base_rate", "edges decay", 0.4)]
+        objs: list[Objection] = []
+        for o in raw.get("objections", []) or []:
+            if isinstance(o, dict):
+                objs.append(Objection(str(o.get("kind", "objection")),
+                                      str(o.get("detail", "")).strip() or "objection",
+                                      _f(o, "severity", 0.4)))
+            elif str(o).strip():                  # a bare string objection
+                objs.append(Objection("objection", str(o).strip(), 0.4))
+        if not objs:
+            # The model returned no structured objections — fall back to an
+            # evidence-grounded critique rather than a canned one-liner.
+            objs = self.deterministic(inputs).objections
         verdict = raw.get("verdict", "caution")
         if verdict not in {"kill", "caution", "clean"}:
             verdict = "caution"
-        return Critique(objections=objs,
-                        strongest=str(raw.get("strongest", objs[0].detail)),
-                        verdict=verdict)
+        strongest = str(raw.get("strongest") or max(objs, key=lambda o: o.severity).detail)
+        return Critique(objections=objs, strongest=strongest, verdict=verdict)
 
 
 class PortfolioManagerAgent(Agent):

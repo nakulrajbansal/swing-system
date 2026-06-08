@@ -64,6 +64,24 @@ class TechRead:
 
 
 @dataclass
+class AnalystRead:
+    """A written, swing-trade-oriented read from a domain analyst (technical or
+    fundamental). Shown verbatim in the deliberation and fed to the trio."""
+    domain: str                       # "technical" | "fundamental"
+    stance: str                       # "bullish" | "neutral" | "bearish"
+    score: float                      # 0..1 strength of the LONG case
+    assessment: str
+    positives: list[str] = field(default_factory=list)
+    concerns: list[str] = field(default_factory=list)
+
+    def validate(self) -> "AnalystRead":
+        _clamp01(self.score, "score")
+        if self.stance not in {"bullish", "neutral", "bearish"}:
+            self.stance = "neutral"
+        return self
+
+
+@dataclass
 class CatalystRead:
     items: list[dict]                 # [{type, bias, materiality, timing, status, record_id}]
     narrative: str
