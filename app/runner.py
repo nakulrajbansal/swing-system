@@ -375,6 +375,80 @@ def run_insider_validation(cfg: AppConfig, emit: Emit) -> dict:
             "passed": sorted(prev)}
 
 
+def run_filing_validation(cfg: AppConfig, emit: Emit) -> dict:
+    """Validate the FILING-TEXT edge (edge 1) on REAL history: fetch each stock's
+    last N 10-K/10-Q filings with cleaned full text, build a cached store with
+    prices, and validate how filing-text change predicts abnormal returns.
+    Updates only edge 1's status in the gate."""
+    from harness.data.loader import (LIVE_UNIVERSE, LiveLoader, fetch_cik_map,
+                                     fetch_edgar_for_symbol, live_symbols)
+    from harness.data.pit_store import PITStore
+    from harness.report.report import edge_scorecard, format_scorecard
+    from harness.signals import Edge01Filing
+    from harness.study.costs import CostModel
+    from harness.study.event_study import run_event_study
+    from app.gating import load_validated, save_validated
+
+    cfg.apply_to_env()
+    with _run_logger(emit, "filing-validation") as (log, _path):
+        ua = cfg.edgar_user_agent
+        if not ua:
+            log("[error] EDGAR User-Agent required (set it on the Configuration tab).")
+            return {"passed": []}
+
+        syms = live_symbols(int(cfg.n_symbols))
+        n = int(cfg.filing_history_count)
+        cache = CONFIG_DIR / "data_store" / f"filing_val_{len(syms)}_{n}"
+        store = PITStore(cache)
+
+        with _redirect(log):
+            if not (cache / "prices.parquet").exists():
+                start = (pd.Timestamp.now() - pd.Timedelta(days=365 * 5)).date().isoformat()
+                log(f"[hist] fetching prices for {len(syms)} symbols from {start} ...")
+                LiveLoader(store, symbols=syms, start=start, end=None, emit=log).load_all()
+            else:
+                log("[hist] using cached prices.")
+            if not (cache / "filings.parquet").exists():
+                cm = fetch_cik_map(ua)
+                rows = []
+                for i, s in enumerate(syms, 1):
+                    cik = cm.get(s)
+                    if not cik:
+                        continue
+                    log(f"[hist] filings {s} ({i}/{len(syms)}) ...")
+                    try:
+                        filings, _ = fetch_edgar_for_symbol(s, cik, ua, since_days=0,
+                                                            periodic_text=n)
+                    except Exception as exc:
+                        log(f"[hist] skip {s}: {type(exc).__name__}: {exc}")
+                        continue
+                    rows.extend(filings)
+                if rows:
+                    store.write_filings(pd.DataFrame(rows))
+                log(f"[hist] periodic filings loaded: {len(rows)}")
+            else:
+                log("[hist] using cached filings.")
+
+            sector_map = {s: etf for etf, tk in LIVE_UNIVERSE.items() for s in tk}
+            oos = (pd.Timestamp.now() - pd.Timedelta(days=365)).date().isoformat()
+            sig = Edge01Filing()
+            log(f"[edge] studying {sig.edge_id} on real history ...")
+            res = run_event_study(store, sig, sector_map, costs=CostModel(), oos_start=oos)
+            card = edge_scorecard(res)
+            log(format_scorecard(card))
+
+        prev = set(load_validated().get("passed") or [])
+        if card["verdict"] == "PASS":
+            prev.add(sig.edge_id)
+        else:
+            prev.discard(sig.edge_id)
+        save_validated(sorted(prev), "live-historical")
+        log(f"\n[gate] edge 1 verdict: {card['verdict']} ({card['n_events']} events). "
+            f"Gate now allows: {sorted(prev) or 'none'}.")
+    return {"verdict": card["verdict"], "n_events": card["n_events"],
+            "passed": sorted(prev)}
+
+
 def run_paper(cfg: AppConfig, emit: Emit) -> dict:
     """Run the end-to-end paper-trading engine; return a result summary."""
     from system.run_live import PaperTradingEngine

@@ -13,8 +13,8 @@ from tkinter import messagebox, scrolledtext, ttk
 
 from app import APP_NAME, APP_VERSION
 from app.config import SECRET_FIELDS, AppConfig
-from app.runner import (check_alpaca, run_deliberation, run_insider_validation,
-                        run_paper, run_validation)
+from app.runner import (check_alpaca, run_deliberation, run_filing_validation,
+                        run_insider_validation, run_paper, run_validation)
 
 # (field, label, kind)  kind: "secret" | "text" | "int" | "float" | "choice"
 _FIELDS = [
@@ -31,6 +31,7 @@ _FIELDS = [
     ("starting_equity", "Starting equity ($)", "float"),
     ("oos_start", "Out-of-sample start (YYYY-MM-DD)", "text"),
     ("insider_history_quarters", "Insider history (quarters)", "int"),
+    ("filing_history_count", "Filing history (count)", "int"),
 ]
 
 # Allowed values for "choice" fields.
@@ -129,9 +130,12 @@ class SwingApp:
         self.btn_alpaca = ttk.Button(bar, text="Check Alpaca connection",
                                      command=lambda: self._start(check_alpaca))
         self.btn_alpaca.pack(side="left", padx=(0, 8))
-        self.btn_hist = ttk.Button(bar, text="Validate on history (insider)",
+        self.btn_hist = ttk.Button(bar, text="Validate history: insider",
                                    command=lambda: self._start(run_insider_validation))
         self.btn_hist.pack(side="left", padx=(0, 8))
+        self.btn_filings = ttk.Button(bar, text="Validate history: filings",
+                                      command=lambda: self._start(run_filing_validation))
+        self.btn_filings.pack(side="left", padx=(0, 8))
         ttk.Button(bar, text="Clear output", command=self._clear).pack(side="left")
         ttk.Button(bar, text="Open logs folder", command=self._open_logs).pack(side="left", padx=8)
         self.spinner = ttk.Label(bar, text="", foreground="#27a")
@@ -221,6 +225,7 @@ class SwingApp:
         self.btn_delib.config(state=state)
         self.btn_alpaca.config(state=state)
         self.btn_hist.config(state=state)
+        self.btn_filings.config(state=state)
         self.spinner.config(text="running…" if busy else "")
 
     def _log(self, line: str):

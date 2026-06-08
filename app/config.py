@@ -38,6 +38,7 @@ class AppConfig:
     starting_equity: float = 100_000.0
     oos_start: str = "2022-01-01"
     insider_history_quarters: int = 12   # SEC bulk insider quarters for historical validation
+    filing_history_count: int = 12       # periodic 10-K/10-Q filings per stock for edge-1 validation
 
     # --- feature toggles (default safe) ---
     use_llm_agents: bool = False         # experimental; spends tokens if a key is set
