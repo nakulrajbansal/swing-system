@@ -23,6 +23,15 @@ Emit = Callable[[str], None]
 # Every run is persisted here so it can be inspected afterwards.
 LOGS_DIR = CONFIG_DIR / "logs"
 
+REDDIT_PROMPT = (
+    "You are a social-media sentiment analyst for equities. From the Reddit post "
+    "titles provided about ONE ticker, judge the crowd's directional sentiment, "
+    "your calibrated conviction (0-1), the key themes in a short phrase, and "
+    "whether the discussion is substantive or hype. Ignore joke price targets. "
+    'Return ONLY a JSON object: {"sentiment":"bullish|bearish|neutral", '
+    '"conviction":0.0-1.0, "themes":"...", "quality":"substantive|hype|mixed"}.'
+)
+
 
 @contextlib.contextmanager
 def _run_logger(emit: Emit, kind: str):
@@ -578,6 +587,76 @@ def run_momentum_trade(cfg: AppConfig, emit: Emit) -> dict:
         save_positions(state)
         log(f"\n[done] momentum cycle complete. Open positions: {sorted(tracked)}.")
     return {"entered": result_entry, "open": sorted(tracked)}
+
+
+def run_reddit_scan(cfg: AppConfig, emit: Emit) -> dict:
+    """Analyze Reddit with our model: fetch recent finance-subreddit posts, count
+    universe-ticker mentions (buzz), then have the LLM judge sentiment/conviction
+    on the most-mentioned names. Needs Reddit API credentials; uses the model when
+    Anthropic credits are present (else reports buzz only)."""
+    from harness.data import reddit as rd
+    from harness.data.loader import live_symbols
+    from system.config import DEFAULT_CONFIG
+
+    cfg.apply_to_env()
+    with _run_logger(emit, "reddit") as (log, _path):
+        if not (cfg.reddit_client_id and cfg.reddit_client_secret):
+            log("[error] Reddit API credentials required. Create a (free) app at "
+                "https://www.reddit.com/prefs/apps -> 'create app' -> type 'script', "
+                "then set Reddit client id + secret (and your Reddit username/password "
+                "for a script app) on the Configuration tab and Save.")
+            return {}
+        ua = f"swing-system:reddit-scan:1.0 (by /u/{cfg.reddit_username or 'anon'})"
+        try:
+            token = rd.get_token(cfg.reddit_client_id, cfg.reddit_client_secret, ua,
+                                 cfg.reddit_username or None, cfg.reddit_password or None)
+        except Exception as exc:
+            log(f"[error] {exc}")
+            return {}
+        log("[reddit] authenticated; fetching posts ...")
+        posts = rd.fetch_posts(token, ua, limit=100)
+        log(f"[reddit] {len(posts)} posts across {len(rd.DEFAULT_SUBREDDITS)} subreddits.")
+
+        universe = live_symbols(int(cfg.n_symbols))
+        mentions = rd.extract_mentions(posts, universe)
+        if not mentions:
+            log("[reddit] no universe tickers mentioned in the current posts.")
+            return {"mentions": {}}
+        ranked = sorted(mentions.items(),
+                        key=lambda kv: (kv[1]["count"], kv[1]["comments"]), reverse=True)
+        log("\n[buzz] universe tickers mentioned (by post count):")
+        for t, e in ranked[:15]:
+            log(f"  {t}: {e['count']} posts, {e['score']} upvotes, {e['comments']} comments")
+
+        client, real_llm = _resolve_client(cfg, log)
+        topk = ranked[: int(cfg.reddit_top_k)]
+        analyzed = []
+        log("\n[model] analyzing sentiment on the top mentioned tickers ...")
+        for t, e in topk:
+            titles = "\n".join(f"- ({p['subreddit']}, {p['score']} up) {p['title']}"
+                               for p in e["posts"])
+            if not real_llm:
+                log(f"  {t}: (LLM off — buzz only; add Anthropic credits for sentiment)")
+                analyzed.append({"ticker": t, "count": e["count"], "sentiment": None})
+                continue
+            try:
+                out = client.complete(REDDIT_PROMPT, {"ticker": t, "reddit_posts": titles},
+                                      "RedditSentiment", model=DEFAULT_CONFIG.models.framing,
+                                      max_tokens=300)
+            except Exception as exc:
+                log(f"  {t}: model error - {exc}")
+                continue
+            sent = out.get("sentiment", "?")
+            conv = out.get("conviction", "?")
+            log(f"  {t}: sentiment={sent} conviction={conv} quality={out.get('quality','?')} "
+                f"| {str(out.get('themes',''))[:110]}")
+            analyzed.append({"ticker": t, "count": e["count"], **out})
+
+        calls = getattr(client, "calls", 0)
+        if real_llm:
+            log(f"\n[cost] LLM calls this scan: {calls}")
+        log(f"[done] reddit scan: {len(mentions)} tickers mentioned; analyzed top {len(topk)}.")
+    return {"ranked": [(t, e["count"]) for t, e in ranked], "analyzed": analyzed}
 
 
 def run_paper(cfg: AppConfig, emit: Emit) -> dict:

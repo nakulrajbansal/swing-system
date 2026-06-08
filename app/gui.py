@@ -15,7 +15,7 @@ from app import APP_NAME, APP_VERSION
 from app.config import SECRET_FIELDS, AppConfig
 from app.runner import (check_alpaca, run_deliberation, run_filing_validation,
                         run_insider_validation, run_momentum_trade, run_paper,
-                        run_validation)
+                        run_reddit_scan, run_validation)
 
 # (field, label, kind)  kind: "secret" | "text" | "int" | "float" | "choice"
 _FIELDS = [
@@ -24,6 +24,10 @@ _FIELDS = [
     ("alpaca_secret", "Alpaca secret (broker)", "secret"),
     ("alpaca_env", "Alpaca environment", "choice"),
     ("edgar_user_agent", "EDGAR User-Agent (e.g. you@email.com)", "text"),
+    ("reddit_client_id", "Reddit client id", "secret"),
+    ("reddit_client_secret", "Reddit client secret", "secret"),
+    ("reddit_username", "Reddit username (script app)", "text"),
+    ("reddit_password", "Reddit password (script app)", "secret"),
     ("data_source", "Data source", "choice"),
     ("n_symbols", "Universe size (symbols)", "int"),
     ("start_date", "Start date (YYYY-MM-DD)", "text"),
@@ -35,6 +39,7 @@ _FIELDS = [
     ("filing_history_count", "Filing history (count)", "int"),
     ("momentum_hold_days", "Momentum hold (trading days)", "int"),
     ("momentum_max_positions", "Momentum max positions", "int"),
+    ("reddit_top_k", "Reddit: tickers to analyze", "int"),
 ]
 
 # Allowed values for "choice" fields.
@@ -124,6 +129,9 @@ class SwingApp:
         self.btn_momentum = ttk.Button(bar, text="Momentum trade (enter/exit)",
                                        command=lambda: self._start(run_momentum_trade))
         self.btn_momentum.pack(side="left", padx=(0, 8))
+        self.btn_reddit = ttk.Button(bar, text="Reddit scan",
+                                     command=lambda: self._start(run_reddit_scan))
+        self.btn_reddit.pack(side="left", padx=(0, 8))
         self.btn_val = ttk.Button(bar, text="Run validation harness",
                                   command=lambda: self._start(run_validation))
         self.btn_val.pack(side="left")
@@ -227,6 +235,7 @@ class SwingApp:
     def _set_busy(self, busy: bool):
         state = "disabled" if busy else "normal"
         self.btn_momentum.config(state=state)
+        self.btn_reddit.config(state=state)
         self.btn_val.config(state=state)
         self.btn_paper.config(state=state)
         self.btn_delib.config(state=state)

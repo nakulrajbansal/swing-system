@@ -18,7 +18,8 @@ CONFIG_DIR = Path.home() / ".swing_system"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 
 # Fields that are secrets — masked in the UI and never logged.
-SECRET_FIELDS = {"anthropic_api_key", "alpaca_key_id", "alpaca_secret"}
+SECRET_FIELDS = {"anthropic_api_key", "alpaca_key_id", "alpaca_secret",
+                 "reddit_client_id", "reddit_client_secret", "reddit_password"}
 
 
 @dataclass
@@ -28,6 +29,10 @@ class AppConfig:
     alpaca_key_id: str = ""              # live broker (gated)
     alpaca_secret: str = ""
     edgar_user_agent: str = ""           # required by SEC for EDGAR pulls
+    reddit_client_id: str = ""           # Reddit app (reddit.com/prefs/apps) for social scan
+    reddit_client_secret: str = ""
+    reddit_username: str = ""            # optional (enables the password grant)
+    reddit_password: str = ""
 
     # --- run parameters (the deterministic/synthetic pipeline that is wired) ---
     data_source: str = "synthetic"       # "synthetic" (wired) | "live" (reserved)
@@ -41,6 +46,7 @@ class AppConfig:
     filing_history_count: int = 12       # periodic 10-K/10-Q filings per stock for edge-1 validation
     momentum_hold_days: int = 10         # momentum swing: trading days to hold before exit
     momentum_max_positions: int = 1      # momentum swing: max concurrent positions
+    reddit_top_k: int = 10               # top mentioned tickers to analyze with the model
 
     # --- feature toggles (default safe) ---
     use_llm_agents: bool = False         # experimental; spends tokens if a key is set
