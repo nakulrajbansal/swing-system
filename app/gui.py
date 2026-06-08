@@ -14,7 +14,8 @@ from tkinter import messagebox, scrolledtext, ttk
 from app import APP_NAME, APP_VERSION
 from app.config import SECRET_FIELDS, AppConfig
 from app.runner import (check_alpaca, run_deliberation, run_filing_validation,
-                        run_insider_validation, run_paper, run_validation)
+                        run_insider_validation, run_momentum_trade, run_paper,
+                        run_validation)
 
 # (field, label, kind)  kind: "secret" | "text" | "int" | "float" | "choice"
 _FIELDS = [
@@ -32,6 +33,8 @@ _FIELDS = [
     ("oos_start", "Out-of-sample start (YYYY-MM-DD)", "text"),
     ("insider_history_quarters", "Insider history (quarters)", "int"),
     ("filing_history_count", "Filing history (count)", "int"),
+    ("momentum_hold_days", "Momentum hold (trading days)", "int"),
+    ("momentum_max_positions", "Momentum max positions", "int"),
 ]
 
 # Allowed values for "choice" fields.
@@ -118,6 +121,9 @@ class SwingApp:
     def _build_run(self, parent):
         bar = ttk.Frame(parent)
         bar.pack(fill="x", padx=12, pady=12)
+        self.btn_momentum = ttk.Button(bar, text="Momentum trade (enter/exit)",
+                                       command=lambda: self._start(run_momentum_trade))
+        self.btn_momentum.pack(side="left", padx=(0, 8))
         self.btn_val = ttk.Button(bar, text="Run validation harness",
                                   command=lambda: self._start(run_validation))
         self.btn_val.pack(side="left")
@@ -220,6 +226,7 @@ class SwingApp:
 
     def _set_busy(self, busy: bool):
         state = "disabled" if busy else "normal"
+        self.btn_momentum.config(state=state)
         self.btn_val.config(state=state)
         self.btn_paper.config(state=state)
         self.btn_delib.config(state=state)

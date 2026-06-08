@@ -39,6 +39,8 @@ class AppConfig:
     oos_start: str = "2022-01-01"
     insider_history_quarters: int = 12   # SEC bulk insider quarters for historical validation
     filing_history_count: int = 12       # periodic 10-K/10-Q filings per stock for edge-1 validation
+    momentum_hold_days: int = 10         # momentum swing: trading days to hold before exit
+    momentum_max_positions: int = 1      # momentum swing: max concurrent positions
 
     # --- feature toggles (default safe) ---
     use_llm_agents: bool = False         # experimental; spends tokens if a key is set

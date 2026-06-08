@@ -233,3 +233,25 @@ class AlpacaBroker(Broker):
         for o in self._req("GET", "/v2/orders?status=open"):
             if o.get("symbol") == symbol:
                 self._req("DELETE", f"/v2/orders/{o['id']}")
+
+    def submit_buy_with_stop(self, symbol, shares, limit, stop):
+        """Marketable-limit BUY with an attached protective STOP (no profit
+        target) — for a momentum ride exited on time rather than at a target."""
+        if shares <= 0:
+            return None
+        payload = {
+            "symbol": symbol, "qty": str(int(shares)), "side": "buy",
+            "type": "limit", "limit_price": round(float(limit), 2),
+            "time_in_force": "day", "order_class": "oto",
+            "stop_loss": {"stop_price": round(float(stop), 2)},
+        }
+        return self._req("POST", "/v2/orders", payload)
+
+    def close_position(self, symbol):
+        """Cancel any open orders for the symbol, then liquidate the position at
+        market (Alpaca DELETE /v2/positions/{symbol})."""
+        self.cancel_pending(symbol)
+        try:
+            return self._req("DELETE", f"/v2/positions/{symbol}")
+        except Exception:
+            return None

@@ -449,6 +449,137 @@ def run_filing_validation(cfg: AppConfig, emit: Emit) -> dict:
             "passed": sorted(prev)}
 
 
+def run_momentum_trade(cfg: AppConfig, emit: Emit) -> dict:
+    """Simple momentum swing on Alpaca: each run (1) exits any tracked position
+    held to its stipulated date, then (2) enters the strongest-momentum name if
+    there is capacity, risk-sized with a protective stop. The time exit is the
+    primary exit; the stop covers downside. Run daily (or schedule) so exits fire.
+
+    Note: momentum is NOT a validation-passed edge here; this is a deliberate,
+    mechanical strategy, not a statistically blessed one.
+    """
+    import datetime
+
+    from harness.data import calendar as cal
+    from harness.data.loader import LiveLoader, available_at_for_session, live_symbols
+    from harness.data.pit_store import PITStore
+    from harness.signals import Edge08Momentum
+    from system.config import DEFAULT_CONFIG
+    from system.data_plane.indicators import last_atr
+    from system.risk.governor import GovernorContext, RiskGovernor
+    from app.momentum import load_positions, save_positions
+
+    cfg.apply_to_env()
+    with _run_logger(emit, "momentum") as (log, _path):
+        if not (cfg.alpaca_key_id and cfg.alpaca_secret):
+            log("[error] Alpaca key id + secret required (Configuration tab).")
+            return {}
+        try:
+            broker = _alpaca_broker(cfg)
+            ok, reason = broker.is_tradable()
+            log(f"[alpaca] {cfg.alpaca_env.upper()} account: {reason}")
+            acct = broker.account()
+            equity = float(acct.get("equity") or acct.get("cash") or cfg.starting_equity)
+        except Exception as exc:
+            log(f"[error] Alpaca not usable: {exc}")
+            return {}
+        if not ok:
+            log("[error] account not tradable; aborting.")
+            return {}
+        if cfg.alpaca_env == "live":
+            log("[warn] LIVE (real-money) momentum trading.")
+
+        # Prices-only live store through today (momentum needs ~1y of history).
+        syms = live_symbols(int(cfg.n_symbols))
+        today = datetime.date.today()
+        start = (today - datetime.timedelta(days=500)).isoformat()
+        cache = CONFIG_DIR / "data_store" / f"momentum_{len(syms)}_{today.isoformat()}"
+        store = PITStore(cache)
+        loader = LiveLoader(store, symbols=syms, start=start, end=today.isoformat(), emit=log)
+        with _redirect(log):
+            if not (cache / "prices.parquet").exists():
+                log(f"[data] fetching prices for {len(syms)} symbols ...")
+                loader.load_all()
+        sector_map = loader.sector_map()
+        last = pd.to_datetime(store.read_table("prices")["date"]).max()
+        view = store.as_of(available_at_for_session(last))
+        d_today = last.date().isoformat()
+
+        env = cfg.alpaca_env
+        state = load_positions()
+        tracked = state.get(env, {})
+        live_pos = broker.positions()
+
+        # --- 1) EXITS ---
+        log("\n[exits] reviewing tracked positions ...")
+        for sym in list(tracked):
+            info = tracked[sym]
+            if sym not in live_pos:
+                log(f"  {sym}: already closed at broker (stop hit / manual). Untracking.")
+                tracked.pop(sym)
+            elif d_today >= info["exit_on"]:
+                log(f"  {sym}: held to {d_today} >= exit date {info['exit_on']} -> close at market.")
+                broker.close_position(sym)
+                tracked.pop(sym)
+            else:
+                log(f"  {sym}: holding (entered {info['entry_date']}, exit on {info['exit_on']}).")
+        if not tracked:
+            log("  (no open momentum positions)")
+
+        # --- 2) ENTRY ---
+        result_entry = None
+        if len(tracked) < int(cfg.momentum_max_positions):
+            ranked = []
+            for s in view.universe():
+                sc = Edge08Momentum().score(view, s, last)
+                if sc["raw_score"] > 0:
+                    ranked.append((s, sc["raw_score"], sc.get("evidence", {})))
+            ranked.sort(key=lambda x: x[1], reverse=True)
+            log("\n[scan] top momentum names:")
+            for s, sc, ev in ranked[:5]:
+                log(f"  {s}: score={sc:.3f}  {ev}")
+
+            pick = next((r for r in ranked if r[0] not in tracked and r[0] not in live_pos), None)
+            if pick is None:
+                log("[enter] no eligible momentum name to enter.")
+            else:
+                sym, score, ev = pick
+                px = view.prices(sym).set_index("date")
+                ref = float(px["close"].iloc[-1])
+                atr = last_atr(px.reset_index())
+                ctx = GovernorContext(equity=equity, reference_price=ref, atr_value=atr,
+                                      sector=sector_map.get(sym, "?"))
+                ticket = RiskGovernor(DEFAULT_CONFIG).evaluate(sym, "enter", ctx)
+                if not ticket.approved:
+                    log(f"[enter] {sym} rejected by Risk Governor: {ticket.reason}")
+                else:
+                    sessions = cal.sessions(last, last + pd.Timedelta(
+                        days=int(cfg.momentum_hold_days) * 2 + 14))
+                    hd = int(cfg.momentum_hold_days)
+                    exit_on = sessions[min(hd, len(sessions) - 1)].date().isoformat()
+                    band = 0.005
+                    try:
+                        o = broker.submit_buy_with_stop(sym, ticket.shares,
+                                                        limit=ref * (1 + band), stop=ticket.stop)
+                        tracked[sym] = {"entry_date": d_today, "exit_on": exit_on,
+                                        "shares": ticket.shares, "entry_price": ref}
+                        log(f"\n[enter] {sym} = strongest momentum (score {score:.3f}). "
+                            f"BUY {ticket.shares} sh @ ~{ref:.2f}, protective stop "
+                            f"{ticket.stop:.2f}; exit on {exit_on} ({hd} sessions). "
+                            f"Order id {o.get('id', '?')} status {o.get('status', '?')}.")
+                        result_entry = sym
+                    except Exception as exc:
+                        log(f"[enter] {sym}: order FAILED - {exc}")
+        else:
+            log(f"\n[enter] already at max momentum positions "
+                f"({len(tracked)}/{cfg.momentum_max_positions}); no new entry.")
+
+        state[env] = tracked
+        save_positions(state)
+        log(f"\n[done] momentum cycle complete. Open positions: {sorted(tracked)}.")
+    return {"entered": result_entry, "open": sorted(tracked)}
+
+
 def run_paper(cfg: AppConfig, emit: Emit) -> dict:
     """Run the end-to-end paper-trading engine; return a result summary."""
     from system.run_live import PaperTradingEngine
