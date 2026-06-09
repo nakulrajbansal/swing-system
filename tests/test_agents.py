@@ -66,6 +66,46 @@ def test_pm_enters_on_clean_high_conviction():
     assert d.action == "enter" and d.entry == 100.0 and d.stop < 100.0
 
 
+def test_analysts_read_fundamentals_deterministically():
+    from system.agents.analysts import (
+        FundamentalAnalyst, GrowthAnalyst, TechnicalAnalyst, ValuationAnalyst)
+
+    ev = {"technicals": {"available": True, "price": 100.0, "above_200dma": True,
+                         "momentum_6mo_pct": 20.0, "pct_below_52wk_high": -4.0, "rsi14": 60},
+          "fundamentals": {"available": True,
+                           "valuation": {"forward_pe": 12.0, "peg_ratio": 0.8,
+                                         "price_to_sales": 3.0, "analyst_target_price": 120.0},
+                           "growth": {"revenue_growth_pct": 22.0, "earnings_growth_pct": 30.0,
+                                      "implied_fwd_eps_growth_pct": 18.0,
+                                      "return_on_equity_pct": 25.0, "profit_margin_pct": 20.0}},
+          "filings": {"available": False}, "insider": {"recent_purchases": []}}
+    inp = {"symbol": "AAA", "evidence": ev}
+
+    tech = TechnicalAnalyst(CLIENT, M.framing).run(inp)
+    val = ValuationAnalyst(CLIENT, M.framing).run(inp)
+    grow = GrowthAnalyst(CLIENT, M.framing).run(inp)
+    fund = FundamentalAnalyst(CLIENT, M.framing).run(inp)
+
+    assert tech.stance == "bullish" and 0 <= tech.score <= 1
+    assert val.stance == "bullish"          # cheap P/E + PEG<1 + upside to target
+    assert grow.stance == "bullish"         # strong growth + guided up
+    assert fund.domain == "fundamental"
+    # Missing fundamentals -> neutral, never crashes.
+    empty = ValuationAnalyst(CLIENT, M.framing).run(
+        {"symbol": "AAA", "evidence": {"fundamentals": {"available": False}}})
+    assert empty.stance == "neutral"
+
+
+def test_rebuttal_fallback_is_substantive_not_dismissive():
+    agent = HypothesisAgent(CLIENT, M.synthesis)
+    out = agent.rebut({"thesis": {"mechanism": "Uptrend continuation with cheap valuation",
+                                  "invalidation": "close below 200-DMA"},
+                       "objection": "edges decay"})
+    text = out["rebuttal"].lower()
+    assert "uptrend continuation" in text          # engages the actual mechanism
+    assert "general base-rate caution" not in text  # not the old dismissive canned line
+
+
 def test_orchestrator_fails_to_pass(synth_store):
     # An agent that always raises must yield a PASS decision, never a trade.
     from system.orchestrator import Orchestrator

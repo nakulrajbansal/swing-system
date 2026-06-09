@@ -21,7 +21,12 @@ import pandas as pd
 
 from harness.data.loader import available_at_for_session
 from harness.data.pit_store import PITStore
-from system.agents.analysts import FundamentalAnalyst, TechnicalAnalyst
+from system.agents.analysts import (
+    FundamentalAnalyst,
+    GrowthAnalyst,
+    TechnicalAnalyst,
+    ValuationAnalyst,
+)
 from system.agents.core import HypothesisAgent, PortfolioManagerAgent, SkepticAgent
 from system.agents.llm_client import LLMClient, MockLLMClient
 from system.agents.specialists import EdgeSpecialist
@@ -76,7 +81,9 @@ class PaperTradingEngine:
         # Visible domain analysts (cheap tier) that reason over the evidence and
         # feed the trio. They use the real client when one is supplied.
         self.analysts = [TechnicalAnalyst(self.client, m.framing),
-                         FundamentalAnalyst(self.client, m.framing)]
+                         FundamentalAnalyst(self.client, m.framing),
+                         ValuationAnalyst(self.client, m.framing),
+                         GrowthAnalyst(self.client, m.framing)]
         self.orchestrator = Orchestrator(
             store, self.specialists,
             HypothesisAgent(self.client, m.synthesis),

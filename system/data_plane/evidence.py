@@ -31,16 +31,32 @@ def _technicals(view, symbol: str) -> dict:
     rsi = ind.rsi(close, 14).dropna()
     sma200 = ind.sma(close, 200).dropna()
     mom126 = float(last / close.iloc[-126] - 1) if len(close) > 126 else None
-    return {
+    pct_high = round((last / high52 - 1) * 100, 1) if high52 else None
+    pct_low = round((last / low52 - 1) * 100, 1) if low52 else None
+    mom = round(mom126 * 100, 1) if mom126 is not None else None
+    out = {
         "available": True,
         "price": round(last, 2),
-        "pct_below_52wk_high": round((last / high52 - 1) * 100, 1) if high52 else None,
-        "pct_above_52wk_low": round((last / low52 - 1) * 100, 1) if low52 else None,
-        "momentum_6mo_pct": round(mom126 * 100, 1) if mom126 is not None else None,
+        "pct_below_52wk_high": pct_high,
+        "pct_above_52wk_low": pct_low,
+        "momentum_6mo_pct": mom,
         "atr_pct_of_price": round(atr / last * 100, 1) if last else None,
         "rsi14": round(float(rsi.iloc[-1]), 0) if len(rsi) else None,
         "above_200dma": bool(len(sma200) and last > float(sma200.iloc[-1])),
     }
+    # Plausibility guard: implausible single-name moves usually mean a bad source
+    # series (missed split, vendor error), not a real opportunity. Flag it so the
+    # agents and the user discount the read instead of theorizing on noise.
+    warns = []
+    if mom is not None and abs(mom) > 150:
+        warns.append(f"6-month move {mom:+.0f}% is implausibly large")
+    if pct_low is not None and pct_low > 400:
+        warns.append(f"{pct_low:+.0f}% above the 52-week low is implausibly large")
+    if out["atr_pct_of_price"] is not None and out["atr_pct_of_price"] > 20:
+        warns.append(f"ATR {out['atr_pct_of_price']:.0f}% of price is implausibly high")
+    if warns:
+        out["data_quality_warning"] = "; ".join(warns) + " - likely bad price data; treat with caution"
+    return out
 
 
 def _filings(view, symbol: str) -> dict:
@@ -86,6 +102,64 @@ def _insider(view, symbol: str) -> dict:
     }
 
 
+def _f(row, key):
+    v = row.get(key)
+    if v is None:
+        return None
+    try:
+        fv = float(v)
+        return None if fv != fv else round(fv, 3)
+    except (TypeError, ValueError):
+        return v
+
+
+def _fundamentals(view, symbol: str) -> dict:
+    """Latest PIT-visible valuation / growth / guidance snapshot for the symbol.
+
+    forward_pe and forward_eps embed the analyst-consensus forward view (a proxy
+    for company guidance); target_mean_price is the Street's price guidance. The
+    valuation and growth analysts reason over this block.
+    """
+    fund = view.fundamentals(symbol) if hasattr(view, "fundamentals") else None
+    if fund is None or fund.empty:
+        return {"available": False}
+    r = fund.sort_values("available_at").iloc[-1].to_dict()
+    price = _f(r, "price") or None
+    tgt = _f(r, "target_mean_price")
+    fwd_eps, tr_eps = _f(r, "forward_eps"), _f(r, "trailing_eps")
+    implied_eps_growth = None
+    if fwd_eps is not None and tr_eps not in (None, 0):
+        implied_eps_growth = round((fwd_eps / tr_eps - 1) * 100, 1)
+    return {
+        "available": True,
+        "valuation": {
+            "trailing_pe": _f(r, "trailing_pe"),
+            "forward_pe": _f(r, "forward_pe"),
+            "price_to_sales": _f(r, "price_to_sales"),
+            "price_to_book": _f(r, "price_to_book"),
+            "peg_ratio": _f(r, "peg_ratio"),
+            "ev_to_ebitda": _f(r, "ev_to_ebitda"),
+            "analyst_target_price": tgt,
+        },
+        "growth": {
+            "revenue_growth_pct": round(_f(r, "revenue_growth") * 100, 1)
+            if _f(r, "revenue_growth") is not None else None,
+            "earnings_growth_pct": round(_f(r, "earnings_growth") * 100, 1)
+            if _f(r, "earnings_growth") is not None else None,
+            "earnings_q_growth_pct": round(_f(r, "earnings_q_growth") * 100, 1)
+            if _f(r, "earnings_q_growth") is not None else None,
+            "trailing_eps": tr_eps,
+            "forward_eps_guidance": fwd_eps,
+            "implied_fwd_eps_growth_pct": implied_eps_growth,
+            "profit_margin_pct": round(_f(r, "profit_margin") * 100, 1)
+            if _f(r, "profit_margin") is not None else None,
+            "return_on_equity_pct": round(_f(r, "return_on_equity") * 100, 1)
+            if _f(r, "return_on_equity") is not None else None,
+        },
+        "analyst_recommendation": r.get("recommendation"),
+    }
+
+
 def _news(view, symbol: str) -> list[str]:
     n = view.news(symbol)
     if n.empty:
@@ -99,6 +173,7 @@ def assemble_evidence(view, symbol: str) -> dict:
         "symbol": symbol,
         "as_of": str(view.asof_date.date()),
         "technicals": _technicals(view, symbol),
+        "fundamentals": _fundamentals(view, symbol),
         "filings": _filings(view, symbol),
         "insider": _insider(view, symbol),
         "recent_news": _news(view, symbol),

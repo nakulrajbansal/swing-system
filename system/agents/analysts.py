@@ -12,7 +12,12 @@ drives the LLM.
 from __future__ import annotations
 
 from system.agents.base import Agent
-from system.agents.prompts import FUNDAMENTAL_ANALYST, TECHNICAL_ANALYST
+from system.agents.prompts import (
+    FUNDAMENTAL_ANALYST,
+    GROWTH_ANALYST,
+    TECHNICAL_ANALYST,
+    VALUATION_ANALYST,
+)
 from system.schemas import AnalystRead
 
 
@@ -127,4 +132,107 @@ class FundamentalAnalyst(Agent):
         score = _f(raw, "score", 0.5)
         stance = str(raw.get("stance") or _stance(score))
         return AnalystRead("fundamental", stance, score, str(raw.get("assessment", "")).strip(),
+                           _lst(raw.get("positives")), _lst(raw.get("concerns")))
+
+
+class ValuationAnalyst(Agent):
+    name = "valuation_analyst"
+    schema_name = "AnalystRead"
+
+    def __init__(self, client, model):
+        super().__init__(client, model, VALUATION_ANALYST, max_tokens=600)
+
+    def deterministic(self, inputs: dict) -> AnalystRead:
+        fu = inputs.get("evidence", {}).get("fundamentals", {})
+        if not fu.get("available"):
+            return AnalystRead("valuation", "neutral", 0.5,
+                               "No valuation multiples available.", [], ["no fundamentals data"])
+        v = fu.get("valuation", {})
+        pos, con, score = [], [], 0.5
+        fpe = v.get("forward_pe")
+        if isinstance(fpe, (int, float)):
+            if fpe <= 0:
+                con.append("negative forward earnings (no meaningful P/E)")
+            elif fpe < 15:
+                pos.append(f"low forward P/E ({fpe:.0f}x) - inexpensive"); score += 0.12
+            elif fpe > 35:
+                con.append(f"rich forward P/E ({fpe:.0f}x) - expensive"); score -= 0.12
+        peg = v.get("peg_ratio")
+        if isinstance(peg, (int, float)) and peg > 0:
+            if peg < 1:
+                pos.append(f"PEG {peg:.2f} (<1) - cheap vs its growth"); score += 0.1
+            elif peg > 2:
+                con.append(f"PEG {peg:.2f} (>2) - expensive vs its growth"); score -= 0.1
+        tgt = v.get("analyst_target_price")
+        px = inputs.get("evidence", {}).get("technicals", {}).get("price")
+        if isinstance(tgt, (int, float)) and isinstance(px, (int, float)) and px:
+            up = (tgt / px - 1) * 100
+            if up > 10:
+                pos.append(f"analyst target ${tgt:.0f} is {up:+.0f}% above price"); score += 0.08
+            elif up < -5:
+                con.append(f"price is above the analyst target ${tgt:.0f} ({up:+.0f}%)"); score -= 0.08
+        ps = v.get("price_to_sales")
+        if isinstance(ps, (int, float)) and ps > 20:
+            con.append(f"very high price/sales ({ps:.0f}x)")
+        score = max(0.0, min(1.0, score))
+        assess = (f"Forward P/E {fpe if fpe is not None else 'n/a'}, "
+                  f"PEG {peg if peg is not None else 'n/a'}, "
+                  f"P/S {ps if ps is not None else 'n/a'}.")
+        return AnalystRead("valuation", _stance(score), score, assess, pos, con)
+
+    def parse(self, raw: dict, inputs: dict) -> AnalystRead:
+        score = _f(raw, "score", 0.5)
+        stance = str(raw.get("stance") or _stance(score))
+        return AnalystRead("valuation", stance, score, str(raw.get("assessment", "")).strip(),
+                           _lst(raw.get("positives")), _lst(raw.get("concerns")))
+
+
+class GrowthAnalyst(Agent):
+    name = "growth_analyst"
+    schema_name = "AnalystRead"
+
+    def __init__(self, client, model):
+        super().__init__(client, model, GROWTH_ANALYST, max_tokens=600)
+
+    def deterministic(self, inputs: dict) -> AnalystRead:
+        fu = inputs.get("evidence", {}).get("fundamentals", {})
+        if not fu.get("available"):
+            return AnalystRead("growth", "neutral", 0.5,
+                               "No growth/guidance data available.", [], ["no fundamentals data"])
+        g = fu.get("growth", {})
+        pos, con, score = [], [], 0.5
+        rg = g.get("revenue_growth_pct")
+        if isinstance(rg, (int, float)):
+            if rg > 15:
+                pos.append(f"strong revenue growth ({rg:+.0f}%)"); score += 0.12
+            elif rg < 0:
+                con.append(f"revenue is shrinking ({rg:+.0f}%)"); score -= 0.12
+        eg = g.get("earnings_growth_pct")
+        if isinstance(eg, (int, float)):
+            if eg > 15:
+                pos.append(f"strong earnings growth ({eg:+.0f}%)"); score += 0.1
+            elif eg < 0:
+                con.append(f"earnings are declining ({eg:+.0f}%)"); score -= 0.1
+        ig = g.get("implied_fwd_eps_growth_pct")
+        if isinstance(ig, (int, float)):
+            if ig > 5:
+                pos.append(f"forward EPS guidance above trailing ({ig:+.0f}%) - guided up"); score += 0.12
+            elif ig < -5:
+                con.append(f"forward EPS guidance below trailing ({ig:+.0f}%) - guided down"); score -= 0.12
+        roe = g.get("return_on_equity_pct")
+        if isinstance(roe, (int, float)) and roe > 20:
+            pos.append(f"high return on equity ({roe:.0f}%)")
+        pm = g.get("profit_margin_pct")
+        if isinstance(pm, (int, float)) and pm < 0:
+            con.append(f"unprofitable (margin {pm:+.0f}%)"); score -= 0.05
+        score = max(0.0, min(1.0, score))
+        assess = (f"Revenue growth {rg if rg is not None else 'n/a'}%, earnings growth "
+                  f"{eg if eg is not None else 'n/a'}%, forward-EPS guidance "
+                  f"{('+' + str(ig) + '%') if isinstance(ig, (int, float)) else 'n/a'} vs trailing.")
+        return AnalystRead("growth", _stance(score), score, assess, pos, con)
+
+    def parse(self, raw: dict, inputs: dict) -> AnalystRead:
+        score = _f(raw, "score", 0.5)
+        stance = str(raw.get("stance") or _stance(score))
+        return AnalystRead("growth", stance, score, str(raw.get("assessment", "")).strip(),
                            _lst(raw.get("positives")), _lst(raw.get("concerns")))

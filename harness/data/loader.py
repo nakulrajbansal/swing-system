@@ -235,6 +235,66 @@ def fetch_prices_yahoo(symbol: str, start: str, end: str | None = None):
     return prices, corp
 
 
+def fetch_fundamentals_yahoo(symbol: str, available_at: pd.Timestamp | None = None) -> pd.DataFrame:
+    """A contemporaneous fundamentals snapshot from Yahoo (valuation multiples,
+    growth, and forward/guidance estimates). No API key.
+
+    Returns a 1-row store-ready frame. ``available_at`` stamps when the snapshot
+    becomes visible; callers in live mode pass the latest session's availability
+    so the snapshot is PIT-visible at that decision (a backtest with an earlier T
+    still won't see it). Forward P/E and forward EPS embed the analyst-consensus
+    forward view (a standing proxy for company guidance); the analyst mean target
+    price is the Street's price guidance. Returns empty on any failure (agents
+    degrade gracefully to 'no fundamentals')."""
+    import yfinance as yf  # lazy
+
+    stamp = available_at if available_at is not None else pd.Timestamp.now("UTC")
+    stamp = pd.Timestamp(stamp)
+    if stamp.tz is None:
+        stamp = stamp.tz_localize("UTC")
+
+    try:
+        info = yf.Ticker(symbol).get_info()
+    except Exception:
+        try:
+            info = yf.Ticker(symbol).info
+        except Exception:
+            info = {}
+    if not info:
+        return pd.DataFrame(columns=["symbol", "available_at"])
+
+    def g(*keys):
+        for k in keys:
+            v = info.get(k)
+            if v is not None and not (isinstance(v, float) and v != v):
+                return float(v) if isinstance(v, (int, float)) else v
+        return None
+
+    row = {
+        "symbol": symbol,
+        "available_at": stamp,
+        "trailing_pe": g("trailingPE"),
+        "forward_pe": g("forwardPE"),
+        "price_to_sales": g("priceToSalesTrailing12Months"),
+        "price_to_book": g("priceToBook"),
+        "peg_ratio": g("trailingPegRatio", "pegRatio"),
+        "ev_to_ebitda": g("enterpriseToEbitda"),
+        "revenue_growth": g("revenueGrowth"),
+        "earnings_growth": g("earningsGrowth"),
+        "earnings_q_growth": g("earningsQuarterlyGrowth"),
+        "trailing_eps": g("trailingEps"),
+        "forward_eps": g("forwardEps"),
+        "profit_margin": g("profitMargins"),
+        "gross_margin": g("grossMargins"),
+        "return_on_equity": g("returnOnEquity"),
+        "target_mean_price": g("targetMeanPrice"),
+        "recommendation": g("recommendationKey"),
+        "sector": g("sector"),
+        "industry": g("industry"),
+    }
+    return pd.DataFrame([row])
+
+
 def fetch_edgar_submissions(cik: str, user_agent: str) -> pd.DataFrame:
     """EDGAR submissions index -> store-ready filings rows (metadata only).
 
@@ -606,8 +666,30 @@ class LiveLoader:
         bench_loaded = [s for s in loaded if s not in self._sector]
         self.emit(f"[live] loaded {len(stocks)} stocks + {len(bench_loaded)} benchmarks.")
 
+        self._load_fundamentals(stocks)
         if self.edgar_user_agent:
             self._load_edgar(stocks)
+
+    def _load_fundamentals(self, stocks: list[str]) -> None:
+        """Contemporaneous valuation/growth snapshot for the universe (best-effort).
+
+        Stamped at the latest session's availability so the snapshot is PIT-visible
+        at a live decision about the latest session."""
+        last_session = pd.to_datetime(self.store.read_table("prices")["date"]).max()
+        stamp = available_at_for_session(last_session)
+        rows = []
+        for i, sym in enumerate(stocks, 1):
+            self.emit(f"[fundamentals] {sym} ({i}/{len(stocks)}) ...")
+            try:
+                df = fetch_fundamentals_yahoo(sym, available_at=stamp)
+            except Exception as exc:
+                self.emit(f"[fundamentals] skip {sym}: {type(exc).__name__}: {exc}")
+                continue
+            if not df.empty:
+                rows.append(df)
+        if rows:
+            self.store.write_fundamentals(pd.concat(rows, ignore_index=True))
+            self.emit(f"[fundamentals] loaded {len(rows)} snapshots.")
 
     def _load_edgar(self, stocks: list[str]) -> None:
         """Fetch recent 8-K (edge 2) + insider purchases (edge 6) from EDGAR."""

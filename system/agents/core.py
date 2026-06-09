@@ -71,18 +71,42 @@ class HypothesisAgent(Agent):
             expected_hold_days=10, invalidation="", raw_conviction=0.3)
 
     def rebut(self, inputs: dict) -> dict:
-        """One rebuttal to the skeptic's strongest objection (consensus step)."""
+        """One rebuttal to the skeptic's strongest objection (consensus step).
+
+        A weak, generic rebuttal makes the PM (correctly) discount the thesis, so
+        the fallback here must be substantive — it engages the thesis's own
+        mechanism rather than waving the objection away as a 'base-rate caution'.
+        """
         if self.client.deterministic:
-            return {"rebuttal": "The objection is a general base-rate caution, not "
-                    "specific to this name; the concrete signals in the evidence "
-                    "still support a bounded-risk entry."}
-        raw = self.client.complete(REBUTTAL, inputs, "Rebuttal", model=self.model,
-                                   max_tokens=200, temperature=self.temperature)
-        text = str(raw.get("rebuttal", "")).strip()
-        if not text:                               # never return an empty rebuttal
-            text = ("The objection is a general base-rate caution; the concrete "
-                    "evidence in the thesis still supports a bounded-risk entry.")
+            return {"rebuttal": self._fallback_rebuttal(inputs)}
+        try:
+            raw = self.client.complete(REBUTTAL, inputs, "Rebuttal", model=self.model,
+                                       max_tokens=300, temperature=self.temperature)
+            text = str(raw.get("rebuttal") or raw.get("text") or "").strip()
+        except Exception:
+            text = ""
+        if not text:                               # never return an empty/weak rebuttal
+            text = self._fallback_rebuttal(inputs)
         return {"rebuttal": text}
+
+    @staticmethod
+    def _fallback_rebuttal(inputs: dict) -> str:
+        """Evidence-grounded rebuttal built from the thesis when the model is
+        offline or returns nothing — engages the specific objection, not boilerplate."""
+        thesis = inputs.get("thesis", {})
+        mech = str(thesis.get("mechanism", "")).strip()
+        obj = str(inputs.get("objection", "")).strip()
+        inval = str(thesis.get("invalidation", "")).strip()
+        parts = []
+        if mech and mech.lower() != "none":
+            parts.append(f"The core mechanism still holds: {mech[:240]}")
+        if inval and inval.lower() != "none":
+            parts.append(f"and the stated invalidation ({inval[:140]}) caps the "
+                         "downside the objection raises")
+        if not parts:
+            return ("Conceding the point: without a concrete mechanism the objection "
+                    f"stands ({obj[:160]}).")
+        return ". ".join(parts) + "."
 
     def parse(self, raw: dict, inputs: dict) -> TradeHypothesis:
         decision = "propose" if raw.get("decision") == "propose" else "decline"

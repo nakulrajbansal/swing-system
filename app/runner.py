@@ -484,6 +484,8 @@ def _print_transcript(log: Emit, symbol: str, transcript: dict, verbose: bool) -
     ev = transcript.get("evidence", {})
     log(f"\n----- EVIDENCE GIVEN TO THE AGENTS  ({symbol}) -----")
     log(f"  technicals: {_short(ev.get('technicals', {}), 400)}")
+    if ev.get("fundamentals", {}).get("available"):
+        log(f"  fundamentals: {_short(ev.get('fundamentals', {}), 500)}")
     fl = dict(ev.get("filings", {}))
     snippet = fl.pop("risk_text_snippet", None)
     log(f"  filings: {_short(fl, 400)}")
@@ -507,7 +509,7 @@ def _build_ticker_store(cfg: AppConfig, ticker: str, emit: Emit):
     import datetime
 
     from harness.data.loader import (LIVE_UNIVERSE, fetch_cik_map, fetch_edgar_for_symbol,
-                                     fetch_prices_yahoo)
+                                     fetch_fundamentals_yahoo, fetch_prices_yahoo)
     from harness.data.pit_store import PITStore
 
     today = datetime.date.today()
@@ -542,6 +544,18 @@ def _build_ticker_store(cfg: AppConfig, ticker: str, emit: Emit):
                 emit(f"[edgar] skipped: {exc}")
     else:
         emit(f"[data] using cached data for {ticker}.")
+    # Fundamentals can be missing on a price cache built before this was added —
+    # fetch them if absent so the valuation/growth agents always have data.
+    if store.read_table("fundamentals").empty:
+        try:
+            emit(f"[data] fetching fundamentals for {ticker} ...")
+            from harness.data.loader import available_at_for_session
+            last = pd.to_datetime(store.read_table("prices")["date"]).max()
+            fund = fetch_fundamentals_yahoo(ticker, available_at=available_at_for_session(last))
+            if not fund.empty:
+                store.write_fundamentals(fund)
+        except Exception as exc:
+            emit(f"[data] fundamentals skipped: {exc}")
     sector = next((etf for etf, tk in LIVE_UNIVERSE.items() if ticker in tk), "SPY")
     return store, {ticker: sector}
 
@@ -593,12 +607,49 @@ def _assess_filings(f: dict, insider: dict) -> list[str]:
     return out
 
 
+def _assess_fundamentals(fu: dict) -> list[str]:
+    if not fu.get("available"):
+        return ["  (no valuation/growth data available)"]
+    v, g = fu.get("valuation", {}), fu.get("growth", {})
+    out = []
+
+    def tag_pe(pe):
+        return "[cheap]" if 0 < pe < 15 else "[expensive]" if pe > 35 else "[fair]"
+    if isinstance(v.get("forward_pe"), (int, float)):
+        out.append(f"  forward P/E: {v['forward_pe']:.1f} {tag_pe(v['forward_pe'])}")
+    if isinstance(v.get("peg_ratio"), (int, float)):
+        peg = v["peg_ratio"]
+        out.append(f"  PEG: {peg:.2f} "
+                   f"{'[cheap vs growth]' if 0 < peg < 1 else '[expensive vs growth]' if peg > 2 else '[fair]'}")
+    if isinstance(v.get("price_to_sales"), (int, float)):
+        out.append(f"  price/sales: {v['price_to_sales']:.1f}")
+    if isinstance(v.get("analyst_target_price"), (int, float)):
+        out.append(f"  analyst target price: ${v['analyst_target_price']:.0f}")
+    if isinstance(g.get("revenue_growth_pct"), (int, float)):
+        rg = g["revenue_growth_pct"]
+        out.append(f"  revenue growth: {rg:+.0f}% "
+                   f"{'[GOOD]' if rg > 15 else '[BAD]' if rg < 0 else '[neutral]'}")
+    if isinstance(g.get("earnings_growth_pct"), (int, float)):
+        eg = g["earnings_growth_pct"]
+        out.append(f"  earnings growth: {eg:+.0f}% "
+                   f"{'[GOOD]' if eg > 15 else '[BAD]' if eg < 0 else '[neutral]'}")
+    if isinstance(g.get("implied_fwd_eps_growth_pct"), (int, float)):
+        ig = g["implied_fwd_eps_growth_pct"]
+        gtag = "[guided up]" if ig > 5 else "[guided down]" if ig < -5 else "[flat]"
+        out.append(f"  forward EPS guidance vs trailing: {ig:+.0f}% {gtag}")
+    if fu.get("analyst_recommendation"):
+        out.append(f"  street rating: {fu['analyst_recommendation']}")
+    return out or ["  (fundamentals present but sparse)"]
+
+
 def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
                       rec: dict | None, equity: float) -> None:
-    """Readable scorecard: technicals, filings, what's good/bad, the agents'
-    reasoning, the buy/no-buy verdict, and the trade plan if it's a buy."""
+    """Readable scorecard: technicals, valuation/growth, filings, what's good/bad,
+    the agents' reasoning, the buy/no-buy verdict, and the trade plan if a buy."""
     tech = _step_out(transcript, "technical_analyst")
     fund = _step_out(transcript, "fundamental_analyst")
+    val = _step_out(transcript, "valuation_analyst")
+    grow = _step_out(transcript, "growth_analyst")
     hyp = _step_out(transcript, "hypothesis")
     crit = _step_out(transcript, "skeptic")
     pm = _step_out(transcript, "portfolio_manager")
@@ -610,8 +661,9 @@ def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
     def _panel(label: str, r: dict) -> None:
         if not r:
             return
-        log(f"  {label} analyst: {str(r.get('stance', '?')).upper()} "
-            f"(score {r.get('score', '?')})")
+        sc = r.get("score")
+        sc_s = f"{sc:.2f}" if isinstance(sc, (int, float)) else "?"
+        log(f"  {label} analyst: {str(r.get('stance', '?')).upper()} (score {sc_s})")
         if r.get("assessment"):
             log(f"    {_sent(r['assessment'], 400)}")
         for g in (r.get("positives") or [])[:4]:
@@ -622,16 +674,24 @@ def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
     log(f"\n{'=' * 60}")
     log(f"ANALYSIS: {symbol}   ->   VERDICT: {verdict}{conv_s}")
     log("=" * 60)
+    dq = evidence.get("technicals", {}).get("data_quality_warning")
+    if dq:
+        log(f"!! DATA QUALITY WARNING: {dq}")
     log("Technical picture:")
     for ln in _assess_technicals(evidence.get("technicals", {})):
+        log(ln)
+    log("Valuation & growth:")
+    for ln in _assess_fundamentals(evidence.get("fundamentals", {})):
         log(ln)
     log("Filings & insider activity:")
     for ln in _assess_filings(evidence.get("filings", {}), evidence.get("insider", {})):
         log(ln)
-    if tech or fund:
+    if tech or fund or val or grow:
         log("Analyst reads:")
         _panel("Technical", tech)
         _panel("Fundamental", fund)
+        _panel("Valuation", val)
+        _panel("Growth", grow)
     log("Why this verdict:")
     if hyp.get("decision") == "propose" and str(hyp.get("mechanism", "")).strip() not in ("", "None"):
         log(f"  bull thesis: {_sent(hyp.get('mechanism'), 900)}")

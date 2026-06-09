@@ -96,6 +96,15 @@ TABLES: dict[str, _TableSpec] = {
         instant_cols=("available_at",),
         dedupe=("symbol", "available_at", "headline"),
     ),
+    # A contemporaneous fundamentals snapshot (valuation multiples + growth +
+    # forward/guidance estimates). available_at gates it like any event row, so a
+    # snapshot fetched today is invisible to a historical backtest (no leak); a
+    # live decision about "today" sees it. Extra numeric columns are optional.
+    "fundamentals": _TableSpec(
+        required=("symbol", "available_at"),
+        instant_cols=("available_at",),
+        dedupe=("symbol", "available_at"),
+    ),
 }
 
 # Event tables (governed by `available_at <= T`) and their PIT time column.
@@ -219,6 +228,9 @@ class PITStore:
     def write_news(self, df: pd.DataFrame) -> None:
         self._write("news", df)
 
+    def write_fundamentals(self, df: pd.DataFrame) -> None:
+        self._write("fundamentals", df)
+
     # -- the single PIT entry point ---------------------------------------
     def as_of(self, T) -> "AsOfView":
         ts = pd.Timestamp(T)
@@ -282,6 +294,9 @@ class AsOfView:
 
     def links(self, focal_symbol: str | None = None) -> pd.DataFrame:
         return self._event("links", "focal_symbol", focal_symbol)
+
+    def fundamentals(self, symbol: str | None = None) -> pd.DataFrame:
+        return self._event("fundamentals", "symbol", symbol)
 
     # -- universe / membership --------------------------------------------
     def constituents(self) -> pd.DataFrame:
