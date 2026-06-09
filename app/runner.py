@@ -268,6 +268,16 @@ def _build_live_store(cfg: AppConfig, emit: Emit):
         emit(f"[data] LIVE: fetching real data for {len(syms)} symbols "
              f"({'with' if ua else 'without'} EDGAR) - first run is slow ...")
         loader.load_all()
+    # Backfill fundamentals if a price cache predates fundamentals support, so the
+    # valuation/growth analysts always have data in the scan path too.
+    if store.read_table("fundamentals").empty:
+        stocks = store.read_table("constituents")["symbol"].tolist()
+        if stocks:
+            emit(f"[data] backfilling fundamentals for {len(stocks)} symbols ...")
+            try:
+                loader._load_fundamentals(stocks)
+            except Exception as exc:
+                emit(f"[data] fundamentals backfill skipped: {exc}")
     emit("[data] live universe ready (REAL market prices + corporate actions"
          f"{' + EDGAR 8-K/insider' if ua else ''}).")
     if not ua:
