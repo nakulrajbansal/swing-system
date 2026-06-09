@@ -18,8 +18,8 @@ from app import APP_NAME, APP_VERSION
 from app.config import SECRET_FIELDS, AppConfig
 from app.runner import (check_alpaca, run_deliberation, run_filing_validation,
                         run_insider_validation, run_momentum_trade, run_paper,
-                        run_recommendations, run_reddit_scan, run_screen,
-                        run_strategy_backtest, run_validation)
+                        run_portfolio_status, run_recommendations, run_reddit_scan,
+                        run_screen, run_strategy_backtest, run_validation)
 
 # (field, label, kind)  kind: "secret" | "text" | "int" | "float" | "choice"
 _FIELDS = [
@@ -416,6 +416,9 @@ class SwingApp:
         self.btn_filings = ttk.Button(bar2, text="Validate history: filings",
                                       command=lambda: self._start(run_filing_validation))
         self.btn_filings.pack(side="left", padx=(0, 8))
+        self.btn_portfolio = ttk.Button(bar2, text="Paper portfolio (P&L)",
+                                        command=lambda: self._start(run_portfolio_status))
+        self.btn_portfolio.pack(side="left", padx=(0, 8))
         self.btn_alpaca = ttk.Button(bar2, text="Check Alpaca",
                                      command=lambda: self._start(check_alpaca))
         self.btn_alpaca.pack(side="left", padx=(0, 8))
@@ -591,6 +594,7 @@ class SwingApp:
         self.btn_paper.config(state=state)
         self.btn_delib.config(state=state)
         self.btn_alpaca.config(state=state)
+        self.btn_portfolio.config(state=state)
         self.btn_hist.config(state=state)
         self.btn_filings.config(state=state)
         self.spinner.config(text="● running…" if busy else "● ready")

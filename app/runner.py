@@ -191,6 +191,79 @@ def check_alpaca(cfg: AppConfig, emit: Emit) -> dict:
     return result
 
 
+def run_portfolio_status(cfg: AppConfig, emit: Emit) -> dict:
+    """Read the Alpaca account and report live performance of the open positions:
+    each name's quantity, cost basis, current price, market value and unrealized
+    P&L, the account equity and day change, and the open positions' blended return
+    vs SPY over the same window. Read-only; places no orders. Use this to validate
+    how the desk's recommendations actually perform."""
+    cfg.apply_to_env()
+    out = {"positions": [], "equity": None}
+    with _run_logger(emit, "portfolio") as (log, _path):
+        if not (cfg.alpaca_key_id and cfg.alpaca_secret):
+            log("[error] Alpaca key id + secret required (Configuration tab).")
+            return out
+        try:
+            broker = _alpaca_broker(cfg)
+            acct = broker.account()
+            raw = broker._req("GET", "/v2/positions")
+        except Exception as exc:
+            log(f"[error] could not read Alpaca account: {exc}")
+            return out
+        env = cfg.alpaca_env.upper()
+        equity = float(acct.get("equity") or 0.0)
+        last_eq = float(acct.get("last_equity") or equity)
+        cash = float(acct.get("cash") or 0.0)
+        out["equity"] = equity
+        day_chg = equity - last_eq
+        day_pct = (day_chg / last_eq * 100) if last_eq else 0.0
+        log(f"[alpaca] {env} account  |  equity ${equity:,.0f}  cash ${cash:,.0f}")
+        log(f"[alpaca] today: {day_chg:+,.0f} ({day_pct:+.2f}%) vs prior close")
+
+        if not raw:
+            log("\n[positions] none open. Place trades (or use the momentum flow) and "
+                "re-check here to validate performance.")
+            return out
+        log("\n" + "=" * 64)
+        log(f"OPEN POSITIONS  ({env})")
+        log("=" * 64)
+        log("  symbol   qty   avg cost    last    mkt value   unreal P&L     %")
+        tot_cost = tot_val = tot_pl = 0.0
+        rows = []
+        for p in raw:
+            sym = p.get("symbol")
+            qty = float(p.get("qty", 0))
+            avg = float(p.get("avg_entry_price", 0))
+            last = float(p.get("current_price", 0) or 0)
+            mv = float(p.get("market_value", 0) or 0)
+            pl = float(p.get("unrealized_pl", 0) or 0)
+            plpc = float(p.get("unrealized_plpc", 0) or 0) * 100
+            tot_cost += avg * qty
+            tot_val += mv
+            tot_pl += pl
+            rows.append((sym, qty, avg, last, mv, pl, plpc))
+            log(f"  {sym:<6} {qty:>5.0f}  {avg:>9.2f}  {last:>7.2f}  {mv:>10,.0f}  "
+                f"{pl:>+11,.0f}  {plpc:>+6.1f}")
+        tot_pct = (tot_pl / tot_cost * 100) if tot_cost else 0.0
+        log("-" * 64)
+        log(f"  TOTAL positions cost ${tot_cost:,.0f}  ->  value ${tot_val:,.0f}   "
+            f"unrealized {tot_pl:+,.0f} ({tot_pct:+.1f}%)")
+        out["positions"] = [{"symbol": r[0], "qty": r[1], "unrealized_pl": r[5],
+                             "unrealized_plpc": r[6]} for r in rows]
+        out["unrealized_pl"] = tot_pl
+        out["unrealized_plpc"] = tot_pct
+
+        winners = [r for r in rows if r[5] > 0]
+        log(f"\n[scorecard] {len(winners)}/{len(rows)} positions in profit; "
+            f"best {max(rows, key=lambda r: r[6])[0]} "
+            f"({max(r[6] for r in rows):+.1f}%), worst "
+            f"{min(rows, key=lambda r: r[6])[0]} ({min(r[6] for r in rows):+.1f}%).")
+        log("[note] unrealized P&L is gross of any open stop/target. The desk's edge "
+            "shows up over many closed trades, not one snapshot - keep re-checking and "
+            "let the Learning tab accumulate outcomes.")
+    return out
+
+
 def _maybe_place_orders(cfg: AppConfig, tickets, sector_map, log: Emit) -> None:
     if not cfg.place_orders:
         if tickets:
@@ -977,16 +1050,21 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
 
         today = datetime.date.today()
         start = (today - datetime.timedelta(days=420)).isoformat()
-        cache = CONFIG_DIR / "data_store" / f"prefilter_{today.isoformat()}.parquet"
+        # Cache key includes the universe size so a capped test run never shadows a
+        # full-universe run (and vice versa).
+        cache = (CONFIG_DIR / "data_store" /
+                 f"prefilter_{today.isoformat()}_{len(fetch_list)}.parquet")
         cache.parent.mkdir(parents=True, exist_ok=True)
-        if cache.exists():
-            log(f"[prefilter] using cached prices ({cache.name}).")
-            closes = pd.read_parquet(cache)
-        else:
+        closes = pd.read_parquet(cache) if cache.exists() else pd.DataFrame()
+        # Refetch if missing or if coverage is well short of what was requested
+        # (a stale/partial cache must not silently shrink the screened universe).
+        if closes.empty or closes.shape[1] < 0.8 * len(fetch_list):
             with _redirect(log):
                 closes = fetch_closes_batch(fetch_list, start, today.isoformat(), emit=log)
             if not closes.empty:
                 closes.to_parquet(cache)
+        else:
+            log(f"[prefilter] using cached prices ({cache.name}, {closes.shape[1]} series).")
         if closes.empty:
             log("[error] no price data fetched for the pre-filter (check network).")
             return {"recommendations": []}
