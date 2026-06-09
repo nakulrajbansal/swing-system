@@ -235,6 +235,44 @@ def fetch_prices_yahoo(symbol: str, start: str, end: str | None = None):
     return prices, corp
 
 
+def fetch_closes_batch(symbols: list[str], start: str, end: str | None = None,
+                       emit=print) -> pd.DataFrame:
+    """Adjusted daily closes for many symbols in ONE batched request.
+
+    For the cheap, fast pre-filter only (ranking the whole universe) — NOT for the
+    PIT store. Auto-adjusted is fine here because ranking is a live screen, not a
+    backtest. Returns a wide DataFrame indexed by date, columns = symbols (missing
+    names dropped). Chunked to stay within Yahoo's limits.
+    """
+    import yfinance as yf  # lazy
+
+    frames = []
+    chunk = 100
+    for i in range(0, len(symbols), chunk):
+        part = symbols[i:i + chunk]
+        emit(f"[prefilter] downloading prices {i + 1}-{i + len(part)} of {len(symbols)} ...")
+        try:
+            data = yf.download(part, start=start, end=end, auto_adjust=True,
+                               progress=False, threads=True, group_by="column")
+        except Exception as exc:
+            emit(f"[prefilter] chunk failed ({exc}); skipping")
+            continue
+        if data is None or len(data) == 0:
+            continue
+        # With multiple tickers, yfinance returns a column MultiIndex (field, ticker).
+        if isinstance(data.columns, pd.MultiIndex):
+            close = data["Close"] if "Close" in data.columns.get_level_values(0) else None
+        else:                                   # single ticker -> flat columns
+            close = data[["Close"]].rename(columns={"Close": part[0]})
+        if close is not None:
+            frames.append(close)
+    if not frames:
+        return pd.DataFrame()
+    out = pd.concat(frames, axis=1)
+    out = out.loc[:, ~out.columns.duplicated()]
+    return out.dropna(how="all")
+
+
 def fetch_fundamentals_yahoo(symbol: str, available_at: pd.Timestamp | None = None) -> pd.DataFrame:
     """A contemporaneous fundamentals snapshot from Yahoo (valuation multiples,
     growth, and forward/guidance estimates). No API key.

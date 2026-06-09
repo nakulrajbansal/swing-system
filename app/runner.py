@@ -893,6 +893,164 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
     return {"session": str(session.date()), "recommendations": recs}
 
 
+def _analyze_symbol(cfg: AppConfig, sym: str, client, real_llm: bool, mem, log: Emit):
+    """Full multi-agent deep-dive on one symbol (data + analysts + trio). Returns
+    (rec | None, pm_action, decisive). Used by the S&P 500 screen for each
+    shortlisted name and reused for ad-hoc analysis."""
+    from harness.data.loader import available_at_for_session
+    from harness.data import calendar as cal
+    from harness.signals import ALL_FREE_EDGES
+    from system.data_plane.indicators import last_atr
+    from system.risk.governor import GovernorContext, RiskGovernor
+    from system.run_live import PaperTradingEngine
+    from system.config import DEFAULT_CONFIG
+
+    store, sector_map = _build_ticker_store(cfg, sym, log)
+    engine = PaperTradingEngine(store, sector_map, client=client,
+                                starting_equity=float(cfg.starting_equity),
+                                edges=list(ALL_FREE_EDGES), memory=mem,
+                                auto_approve_lessons=cfg.auto_approve_lessons)
+    session = engine._last_session()
+    T = available_at_for_session(session)
+    cand, _decision, transcript = engine.orchestrator.deliberate_symbol(T, sym)
+    _print_transcript(log, sym, transcript, bool(cfg.verbose_agents))
+    hyp = _step_out(transcript, "hypothesis")
+    crit = _step_out(transcript, "skeptic")
+    pm = _step_out(transcript, "portfolio_manager")
+    rec = None
+    if pm.get("action") in {"enter", "adjust"}:
+        px = engine.panels.get(sym)
+        if px is not None and session in px.index:
+            ref = float(px.loc[session, "close"])
+            atr = last_atr(px.loc[px.index <= session].reset_index())
+            ctx = GovernorContext(equity=float(cfg.starting_equity), reference_price=ref,
+                                  atr_value=atr if atr == atr else 0.0,
+                                  sector=sector_map.get(sym, "?"))
+            ticket = RiskGovernor(DEFAULT_CONFIG).evaluate(sym, "enter", ctx)
+            hold = int(hyp.get("expected_hold_days", 10) or 10)
+            sessions = cal.sessions(session, session + pd.Timedelta(days=hold * 2 + 14))
+            exit_on = sessions[min(hold, len(sessions) - 1)].date().isoformat()
+            rec = {
+                "symbol": sym, "families": cand.families, "entry": round(ref, 2),
+                "stop": round(float(ticket.stop), 2) if ticket.stop else None,
+                "target": round(float(ticket.target), 2) if ticket.target else None,
+                "shares_at_ref_equity": ticket.shares if ticket.approved else 0,
+                "hold_days": hold, "exit_by": exit_on,
+                "conviction": round(float(pm.get("final_conviction", 0)), 2),
+                "thesis": hyp.get("mechanism", ""), "skeptic": crit.get("verdict", "?"),
+                "decisive_factor": pm.get("decisive_factor", ""),
+            }
+    _analysis_summary(log, sym, transcript.get("evidence", {}), transcript, rec,
+                      float(cfg.starting_equity))
+    return rec, pm.get("action", "pass"), pm.get("decisive_factor", "")
+
+
+def run_screen(cfg: AppConfig, emit: Emit) -> dict:
+    """Screen the S&P 500 to find what to buy, cheaply.
+
+    Funnel: (1) one batched price download for the whole universe; (2) a free,
+    deterministic pre-filter ranks every name by relative strength vs the market,
+    trend, momentum and overbought/extension; (3) only the top-K names get the
+    full, costly multi-agent deep-dive. LLM spend is bounded to K names regardless
+    of universe size. Advisory only; no orders are placed."""
+    import datetime
+
+    from harness.data.loader import fetch_closes_batch
+    from harness.data.pit_store import PITStore  # noqa: F401 (kept for parity)
+    from harness.data.sp500 import screen_universe
+    from app.screen import prescreen
+
+    cfg.apply_to_env()
+    with _run_logger(emit, "screen") as (log, _path):
+        client, real_llm = _resolve_client(cfg, log)
+        log("[mode] SCREEN S&P 500 - free pre-filter over the whole universe, then "
+            f"a full AI deep-dive on only the top {cfg.screen_top_k} (advisory; no orders).")
+        if real_llm:
+            log("[mode] using the real LLM agents for the shortlist (bounded spend).")
+
+        universe = screen_universe(cfg.screen_universe or None)
+        if "SPY" not in universe:
+            universe = universe + ["SPY"]            # benchmark for RS + regime
+        log(f"[universe] {len(universe)} names (S&P 500{' capped' if cfg.screen_universe else ''}).")
+
+        today = datetime.date.today()
+        start = (today - datetime.timedelta(days=420)).isoformat()
+        cache = CONFIG_DIR / "data_store" / f"prefilter_{today.isoformat()}.parquet"
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        if cache.exists():
+            log(f"[prefilter] using cached prices ({cache.name}).")
+            closes = pd.read_parquet(cache)
+        else:
+            with _redirect(log):
+                closes = fetch_closes_batch(universe, start, today.isoformat(), emit=log)
+            if not closes.empty:
+                closes.to_parquet(cache)
+        if closes.empty:
+            log("[error] no price data fetched for the pre-filter (check network).")
+            return {"recommendations": []}
+
+        ranked, regime = prescreen(closes, top=max(15, int(cfg.screen_top_k) * 3))
+        if regime.get("available"):
+            log(f"\n[regime] market is {regime['regime']} "
+                f"(SPY 6mo {regime['mom6_pct']:+.0f}%, "
+                f"{'above' if regime['above_200dma'] else 'below'} its 200-DMA).")
+            if not regime["above_200dma"]:
+                log("[regime] risk-off: be selective; favor cash and only the strongest "
+                    "relative-strength names survive the agents' bar.")
+        log(f"\n[leaderboard] top pre-filter names (of {len(closes.columns)} priced):")
+        log("  rank  symbol   score   RS_vs_mkt  6mo_mom  vs_high  RSI  trend")
+        for i, m in enumerate(ranked[:15], 1):
+            log(f"  {i:>4}  {m['symbol']:<6}  {m['score']:>5.2f}  "
+                f"{m['rs'] * 100:>+8.0f}%  {m['mom6'] * 100:>+6.0f}%  "
+                f"{m['dist_high'] * 100:>+6.0f}%  {m['rsi']:>3.0f}  "
+                f"{'up' if m['above_200dma'] else 'down'}")
+
+        top = ranked[: int(cfg.screen_top_k)]
+        log(f"\n[deep-dive] running the full AI agent panel on the top {len(top)} "
+            f"name(s): {', '.join(m['symbol'] for m in top)}")
+
+        mem = _load_memory(cfg, log)
+        _memb = (len(mem.entries), len(mem.outcomes)) if mem else (0, 0)
+        recs, considered = [], []
+        for m in top:
+            sym = m["symbol"]
+            log(f"\n{'#' * 60}\n# DEEP-DIVE: {sym}  (pre-filter score {m['score']:.2f}, "
+                f"RS {m['rs'] * 100:+.0f}%)\n{'#' * 60}")
+            try:
+                with _redirect(log):
+                    rec, action, decisive = _analyze_symbol(cfg, sym, client, real_llm, mem, log)
+            except Exception as exc:
+                log(f"[deep-dive] {sym} failed: {type(exc).__name__}: {exc}")
+                continue
+            considered.append((sym, action, decisive))
+            if rec:
+                recs.append(rec)
+
+        log("\n" + "=" * 60)
+        log(f"S&P 500 SCREEN RESULTS  ({today})  -- advisory only, no orders")
+        log("=" * 60)
+        if not recs:
+            log("No BUY among the shortlist (the agents passed on all of them).")
+        for r in sorted(recs, key=lambda x: x["conviction"], reverse=True):
+            log(f"\n  RECOMMEND BUY {r['symbol']}  (conviction {r['conviction']}, "
+                f"families {r['families']})")
+            log(f"    entry ~{r['entry']}   stop {r['stop']}   target {r['target']}")
+            log(f"    hold ~{r['hold_days']} sessions  ->  exit by {r['exit_by']}")
+            log(f"    size @ ${float(cfg.starting_equity):,.0f}: {r['shares_at_ref_equity']} sh")
+            log(f"    thesis: {_sent(r['thesis'], 240)}")
+        log("\n  shortlist verdicts:")
+        for sym, act, why in considered:
+            log(f"    {sym}: {act.upper()} - {_sent(why, 200)}")
+        if real_llm:
+            log(f"\n[cost] LLM calls this screen: {getattr(client, 'calls', 0)}")
+        _save_memory(cfg, mem, log, _memb)
+        log(f"\n[done] screened {len(closes.columns)} names; deep-dived {len(top)}; "
+            f"{len(recs)} BUY recommendation(s).")
+    return {"recommendations": recs,
+            "leaderboard": [(m["symbol"], m["score"]) for m in ranked[:15]],
+            "regime": regime}
+
+
 def run_momentum_trade(cfg: AppConfig, emit: Emit) -> dict:
     """Simple momentum swing on Alpaca: each run (1) exits any tracked position
     held to its stipulated date, then (2) enters the strongest-momentum name if

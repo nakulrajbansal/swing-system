@@ -18,7 +18,8 @@ from app import APP_NAME, APP_VERSION
 from app.config import SECRET_FIELDS, AppConfig
 from app.runner import (check_alpaca, run_deliberation, run_filing_validation,
                         run_insider_validation, run_momentum_trade, run_paper,
-                        run_recommendations, run_reddit_scan, run_validation)
+                        run_recommendations, run_reddit_scan, run_screen,
+                        run_validation)
 
 # (field, label, kind)  kind: "secret" | "text" | "int" | "float" | "choice"
 _FIELDS = [
@@ -44,6 +45,8 @@ _FIELDS = [
     ("momentum_hold_days", "Momentum hold (trading days)", "int"),
     ("momentum_max_positions", "Momentum max positions", "int"),
     ("reddit_top_k", "Reddit: tickers to analyze", "int"),
+    ("screen_top_k", "S&P 500 screen: deep-dive top K", "int"),
+    ("screen_universe", "S&P 500 screen: cap universe (0=all)", "int"),
 ]
 
 # Allowed values for "choice" fields.
@@ -62,20 +65,22 @@ _GROUPS = [
       "starting_equity", "oos_start"]),
     ("Strategy parameters",
      ["insider_history_quarters", "filing_history_count", "momentum_hold_days",
-      "momentum_max_positions", "reddit_top_k"]),
+      "momentum_max_positions", "reddit_top_k", "screen_top_k", "screen_universe"]),
 ]
 
-# -- palette (flat, modern, fintech-ish light theme + dark console) ----------
-BG = "#eef1f6"
-CARD = "#ffffff"
-INK = "#1e2a3a"
-MUTED = "#6b7a90"
-ACCENT = "#2f6df6"
-ACCENT_DK = "#1f54d6"
-OK = "#1aa260"
-BORDER = "#d7deea"
-CONSOLE_BG = "#0e1726"
-CONSOLE_FG = "#dbe4f0"
+# -- palette (dark, elegant "terminal": charcoal surfaces, one emerald accent) --
+BG = "#14171c"          # app background (charcoal)
+CARD = "#1b1f27"        # card / surface
+SURF2 = "#222733"       # raised controls (buttons, fields)
+INK = "#e6e9ef"         # primary text (off-white)
+MUTED = "#8b94a7"       # secondary text
+ACCENT = "#3fb27f"      # emerald accent (used sparingly)
+ACCENT_DK = "#34966b"
+ACCENT_INK = "#0e1216"  # text on the accent
+OK = "#57c98a"
+BORDER = "#2a3039"
+CONSOLE_BG = "#0f1216"  # near-black console
+CONSOLE_FG = "#cdd3de"
 
 
 class _ScrollFrame(ttk.Frame):
@@ -137,74 +142,87 @@ class SwingApp:
                 else "Menlo" if sys.platform == "darwin" else "DejaVu Sans Mono")
         self.f_base = tkfont.Font(family=fam, size=10)
         self.f_bold = tkfont.Font(family=fam, size=10, weight="bold")
-        self.f_section = tkfont.Font(family=fam, size=10, weight="bold")
-        self.f_title = tkfont.Font(family=fam, size=17, weight="bold")
+        self.f_section = tkfont.Font(family=fam, size=9, weight="bold")
+        self.f_title = tkfont.Font(family=fam, size=15, weight="bold")
         self.f_sub = tkfont.Font(family=fam, size=9)
         self.f_mono = tkfont.Font(family=mono, size=10)
+
+        # Dark-themed dropdown lists (tk Listbox inside ttk Combobox).
+        self.root.option_add("*TCombobox*Listbox.background", CARD)
+        self.root.option_add("*TCombobox*Listbox.foreground", INK)
+        self.root.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
+        self.root.option_add("*TCombobox*Listbox.selectForeground", ACCENT_INK)
 
         s = ttk.Style()
         try:
             s.theme_use("clam")
         except tk.TclError:
             pass
-        s.configure(".", background=BG, foreground=INK, font=self.f_base)
+        s.configure(".", background=BG, foreground=INK, font=self.f_base,
+                    fieldbackground=SURF2, bordercolor=BORDER)
         s.configure("TFrame", background=BG)
         s.configure("Card.TFrame", background=CARD)
-        s.configure("Header.TFrame", background=ACCENT)
+        s.configure("Header.TFrame", background=BG)
+        s.configure("Rule.TFrame", background=BORDER)
         s.configure("TLabel", background=BG, foreground=INK)
         s.configure("Card.TLabel", background=CARD, foreground=INK)
         s.configure("Muted.TLabel", background=CARD, foreground=MUTED, font=self.f_sub)
-        s.configure("Header.TLabel", background=ACCENT, foreground="#ffffff", font=self.f_title)
-        s.configure("HeaderSub.TLabel", background=ACCENT, foreground="#d8e4ff", font=self.f_sub)
+        s.configure("Header.TLabel", background=BG, foreground=INK, font=self.f_title)
+        s.configure("HeaderSub.TLabel", background=BG, foreground=MUTED, font=self.f_sub)
+        s.configure("Accent.TLabel", background=BG, foreground=ACCENT, font=self.f_sub)
         s.configure("Status.TLabel", background=BG, foreground=MUTED, font=self.f_sub)
         s.configure("OK.TLabel", background=BG, foreground=OK, font=self.f_sub)
 
-        s.configure("TButton", background="#ffffff", foreground=INK, bordercolor=BORDER,
-                    relief="flat", padding=(12, 7), font=self.f_base)
+        s.configure("TButton", background=SURF2, foreground=INK, bordercolor=BORDER,
+                    relief="flat", padding=(13, 8), font=self.f_base)
         s.map("TButton",
-              background=[("active", "#e9f0fd"), ("disabled", "#f1f3f7")],
-              foreground=[("disabled", "#aab3c2")],
+              background=[("active", "#2c333f"), ("disabled", "#191d24")],
+              foreground=[("disabled", "#5b6573")],
               bordercolor=[("active", ACCENT)])
-        s.configure("Accent.TButton", background=ACCENT, foreground="#ffffff",
+        s.configure("Accent.TButton", background=ACCENT, foreground=ACCENT_INK,
                     bordercolor=ACCENT, relief="flat", padding=(15, 9), font=self.f_bold)
         s.map("Accent.TButton",
-              background=[("active", ACCENT_DK), ("disabled", "#a9c0f3")],
-              foreground=[("disabled", "#eef2fb")])
+              background=[("active", ACCENT_DK), ("disabled", "#2c4a3d")],
+              foreground=[("disabled", "#7f8b85")])
 
         s.configure("TCheckbutton", background=CARD, foreground=INK, font=self.f_base)
         s.map("TCheckbutton", background=[("active", CARD)],
-              indicatorcolor=[("selected", ACCENT)])
-        s.configure("TEntry", fieldbackground="#ffffff", bordercolor=BORDER,
-                    relief="flat", padding=5)
+              foreground=[("disabled", MUTED)],
+              indicatorcolor=[("selected", ACCENT), ("!selected", SURF2)])
+        s.configure("TEntry", fieldbackground=SURF2, foreground=INK, bordercolor=BORDER,
+                    insertcolor=INK, relief="flat", padding=5)
         s.map("TEntry", bordercolor=[("focus", ACCENT)])
-        s.configure("TCombobox", fieldbackground="#ffffff", bordercolor=BORDER, padding=4)
-        s.map("TCombobox", fieldbackground=[("readonly", "#ffffff")],
-              bordercolor=[("focus", ACCENT)])
+        s.configure("TCombobox", fieldbackground=SURF2, foreground=INK, bordercolor=BORDER,
+                    arrowcolor=MUTED, padding=4)
+        s.map("TCombobox", fieldbackground=[("readonly", SURF2)],
+              foreground=[("readonly", INK)], bordercolor=[("focus", ACCENT)])
 
-        s.configure("TNotebook", background=BG, borderwidth=0, tabmargins=(8, 6, 8, 0))
-        s.configure("TNotebook.Tab", background="#dde4f0", foreground=MUTED,
+        s.configure("TNotebook", background=BG, borderwidth=0, tabmargins=(6, 6, 6, 0))
+        s.configure("TNotebook.Tab", background=BG, foreground=MUTED,
                     padding=(18, 9), font=self.f_base, borderwidth=0)
-        s.map("TNotebook.Tab", background=[("selected", CARD)],
-              foreground=[("selected", ACCENT)], expand=[("selected", (0, 0, 0, 0))])
+        s.map("TNotebook.Tab", background=[("selected", BG)],
+              foreground=[("selected", ACCENT), ("active", INK)])
 
         s.configure("TLabelframe", background=CARD, bordercolor=BORDER,
                     relief="solid", borderwidth=1)
-        s.configure("TLabelframe.Label", background=CARD, foreground=ACCENT,
+        s.configure("TLabelframe.Label", background=CARD, foreground=MUTED,
                     font=self.f_section)
-        s.configure("Vertical.TScrollbar", background="#cdd6e4", troughcolor=BG,
+        s.configure("Vertical.TScrollbar", background=SURF2, troughcolor=BG,
                     bordercolor=BG, arrowcolor=MUTED, relief="flat")
+        s.map("Vertical.TScrollbar", background=[("active", "#333b48")])
 
     # -- layout ------------------------------------------------------------
     def _build(self):
         header = ttk.Frame(self.root, style="Header.TFrame")
         header.pack(fill="x")
         inner = ttk.Frame(header, style="Header.TFrame")
-        inner.pack(fill="x", padx=18, pady=12)
-        ttk.Label(inner, text=APP_NAME, style="Header.TLabel").pack(side="left")
-        ttk.Label(inner, text=f"  v{APP_VERSION}", style="HeaderSub.TLabel").pack(
-            side="left", pady=(8, 0))
-        ttk.Label(inner, text="AI-native multi-agent swing desk",
-                  style="HeaderSub.TLabel").pack(side="right", pady=(8, 0))
+        inner.pack(fill="x", padx=20, pady=(14, 10))
+        ttk.Label(inner, text="◎  " + APP_NAME, style="Header.TLabel").pack(side="left")
+        ttk.Label(inner, text=f"   v{APP_VERSION}", style="HeaderSub.TLabel").pack(
+            side="left", pady=(6, 0))
+        ttk.Label(inner, text="AI swing desk", style="Accent.TLabel").pack(
+            side="right", pady=(6, 0))
+        ttk.Frame(header, style="Rule.TFrame", height=1).pack(fill="x")
 
         nb = ttk.Notebook(self.root)
         nb.pack(fill="both", expand=True, padx=10, pady=(8, 4))
@@ -312,8 +330,11 @@ class SwingApp:
         card1.pack(fill="x", padx=14, pady=6, ipady=6)
         bar = ttk.Frame(card1, style="Card.TFrame")
         bar.pack(fill="x", padx=8, pady=6)
-        self.btn_recs = ttk.Button(bar, text="★  Find trade recommendations (scan)",
-                                   style="Accent.TButton",
+        self.btn_screen = ttk.Button(bar, text="◎  Screen S&P 500 (find best)",
+                                     style="Accent.TButton",
+                                     command=lambda: self._start(run_screen))
+        self.btn_screen.pack(side="left", padx=(0, 8))
+        self.btn_recs = ttk.Button(bar, text="Scan core universe",
                                    command=lambda: self._start(run_recommendations, ticker=""))
         self.btn_recs.pack(side="left", padx=(0, 8))
         self.btn_momentum = ttk.Button(bar, text="Momentum trade (enter/exit)",
@@ -357,11 +378,11 @@ class SwingApp:
             fg=CONSOLE_FG, insertbackground=CONSOLE_FG, relief="flat", bd=0,
             padx=12, pady=10)
         self.out.pack(fill="both", expand=True, padx=4, pady=4)
-        self.out.tag_configure("err", foreground="#ff6b6b")
-        self.out.tag_configure("warn", foreground="#ffcc66")
-        self.out.tag_configure("ok", foreground="#5fd38a")
-        self.out.tag_configure("hl", foreground="#7aa2ff", font=self.f_mono)
-        self.out.tag_configure("dim", foreground="#8aa0bd")
+        self.out.tag_configure("err", foreground="#e06c6c")
+        self.out.tag_configure("warn", foreground="#d8a657")
+        self.out.tag_configure("ok", foreground="#57c98a")
+        self.out.tag_configure("hl", foreground="#7fa8e8", font=self.f_mono)
+        self.out.tag_configure("dim", foreground="#6f7b8e")
         self.out.configure(state="disabled")
 
         # Status / spinner bar.
@@ -516,6 +537,7 @@ class SwingApp:
     def _set_busy(self, busy: bool):
         state = "disabled" if busy else "normal"
         self.btn_ticker.config(state=state)
+        self.btn_screen.config(state=state)
         self.btn_recs.config(state=state)
         self.btn_momentum.config(state=state)
         self.btn_reddit.config(state=state)

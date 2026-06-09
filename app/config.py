@@ -49,6 +49,8 @@ class AppConfig:
     momentum_hold_days: int = 10         # momentum swing: trading days to hold before exit
     momentum_max_positions: int = 1      # momentum swing: max concurrent positions
     reddit_top_k: int = 10               # top mentioned tickers to analyze with the model
+    screen_top_k: int = 5                # S&P 500 screen: names that get the full AI deep-dive
+    screen_universe: int = 0             # 0 = full S&P 500; else cap to first N (testing)
 
     # --- feature toggles (default safe) ---
     use_llm_agents: bool = False         # experimental; spends tokens if a key is set
