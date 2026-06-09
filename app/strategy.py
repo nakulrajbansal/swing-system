@@ -132,6 +132,27 @@ def composite_score(m: dict, weights: dict | None = None,
     return round(s, 4)
 
 
+def diversify(ranked: list[dict], k: int, max_per_sector: int = 2) -> list[dict]:
+    """Pick the top-k for the deep-dive while capping names per sector, so a single
+    hot sector cannot monopolize the shortlist (breadth beats concentration). Falls
+    back to filling any remaining slots in score order if sectors run out."""
+    out, per = [], {}
+    for m in ranked:
+        sec = m.get("sector") or "?"
+        if per.get(sec, 0) >= max_per_sector:
+            continue
+        out.append(m)
+        per[sec] = per.get(sec, 0) + 1
+        if len(out) >= k:
+            return out
+    for m in ranked:                          # backfill if breadth left slots open
+        if m not in out:
+            out.append(m)
+            if len(out) >= k:
+                break
+    return out
+
+
 def construct_portfolio(recs: list[dict], equity: float, regime: dict | None = None,
                         max_name: float = 0.25, max_sector: float = 0.45) -> list[dict]:
     """Conviction-scaled portfolio with per-name / per-sector caps and a

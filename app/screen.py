@@ -41,11 +41,17 @@ def _metrics(close: pd.Series, bench_mom6: float) -> dict | None:
     sma200 = float(c.iloc[-200:].mean())
     win = c.iloc[-252:]
     high52 = float(win.max())
+    low52 = float(win.min())
     dist_high = last / high52 - 1 if high52 else 0.0
+    pct_above_low = last / low52 - 1 if low52 else 0.0
+    # Implausible single-name moves are almost always corrupt source data (bad
+    # split, vendor error), not real opportunities — flag so the ranker can drop
+    # them instead of wasting a deep-dive slot on garbage.
+    bad_data = abs(mom6) > 1.5 or pct_above_low > 4.0
     return {"price": round(last, 2), "mom6": mom6, "mom3": mom3,
             "above_200dma": last > sma200, "dist_high": dist_high,
             "rsi": _rsi(c), "rs": mom6 - bench_mom6,
-            "earnings_gap": strategy.earnings_gap_drift(c)}
+            "earnings_gap": strategy.earnings_gap_drift(c), "bad_data": bad_data}
 
 
 def market_regime(closes: pd.DataFrame, benchmark: str = BENCH) -> dict:
@@ -77,16 +83,20 @@ def prescreen(closes: pd.DataFrame, top: int = 25, benchmark: str = BENCH,
     if benchmark in closes.columns:
         bm = _metrics(closes[benchmark], 0.0)
         bench_mom6 = bm["mom6"] if bm else 0.0
-    rows = []
+    rows, dropped = [], 0
     for sym in closes.columns:
         if sym in skip:
             continue
         m = _metrics(closes[sym], bench_mom6)
         if m is None:
             continue
+        if m.get("bad_data"):                 # corrupt source data — never rank it
+            dropped += 1
+            continue
         m["symbol"] = sym
         m["sector"] = sector_of.get(sym)
         m["score"] = strategy.composite_score(m, w, sector_rs)
         rows.append(m)
     rows.sort(key=lambda r: r["score"], reverse=True)
+    regime["dropped_bad_data"] = dropped
     return rows[:top], regime

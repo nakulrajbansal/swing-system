@@ -67,6 +67,20 @@ def test_construct_portfolio_caps_and_regime_budget():
     assert off_inv <= 51
 
 
+def test_diversify_caps_per_sector():
+    ranked = [{"symbol": "A", "sector": "Tech", "score": 3.0},
+              {"symbol": "B", "sector": "Tech", "score": 2.9},
+              {"symbol": "C", "sector": "Tech", "score": 2.8},
+              {"symbol": "D", "sector": "Energy", "score": 2.5},
+              {"symbol": "E", "sector": "Health", "score": 2.0}]
+    top = strategy.diversify(ranked, 3, max_per_sector=2)
+    syms = [m["symbol"] for m in top]
+    assert syms == ["A", "B", "D"]              # 2 Tech max, then next sector
+    # backfill when breadth can't fill k
+    small = strategy.diversify(ranked[:3], 3, max_per_sector=1)
+    assert len(small) == 3                       # falls back to score order
+
+
 def test_walk_forward_backtest_runs_and_reports():
     idx = pd.date_range("2022-01-01", periods=500, freq="B")
     rng = np.random.default_rng(7)

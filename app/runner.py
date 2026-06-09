@@ -1080,6 +1080,10 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
                                    sector_of=sector_of())
 
         risk_off = regime.get("available") and not regime.get("above_200dma")
+        dropped = regime.get("dropped_bad_data", 0)
+        if dropped:
+            log(f"[prefilter] dropped {dropped} name(s) with implausible/corrupt "
+                "price data (kept out of the shortlist).")
         if regime.get("available"):
             log(f"\n[regime] market is {regime['regime']} (SPY 6mo "
                 f"{regime['mom6_pct']:+.0f}%, "
@@ -1113,7 +1117,10 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
         k = int(cfg.screen_top_k)
         if risk_off:
             k = max(2, k // 2)
-        top = [m for m in ranked[:k] if m["score"] > 0]
+        # Spread the shortlist across sectors (<=2 per sector) so one hot sector
+        # can't monopolize the deep-dive — breadth over concentration.
+        pool = [m for m in ranked if m["score"] > 0]
+        top = strategy.diversify(pool, k, max_per_sector=2)
         if not top:
             log("\n[deep-dive] no name cleared the pre-filter bar (score > 0) in this "
                 "regime; standing down. Default is to do nothing.")

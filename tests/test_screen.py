@@ -49,6 +49,16 @@ def test_prescreen_top_limit_and_short_series_dropped():
     assert "NEW" not in [r["symbol"] for r in ranked]
 
 
+def test_prescreen_drops_corrupt_data_names():
+    df = _frame()
+    # A name with an implausible 10x move (corrupt data) must be excluded.
+    bad = _series(50, 0.012, n=300, seed=9)      # ~huge cumulative move
+    df["BADX"] = bad
+    ranked, regime = prescreen(df, top=10)
+    assert "BADX" not in [r["symbol"] for r in ranked]
+    assert regime.get("dropped_bad_data", 0) >= 1
+
+
 def test_sp500_universe_is_broad():
     from harness.data.sp500 import screen_universe
     syms = screen_universe()
