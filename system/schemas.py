@@ -175,6 +175,12 @@ class Lesson:
     lesson: str
     thesis_correct: bool
     execution_quality: str
+    # Optional provenance (advisory; tagged with when the trade closed so recall
+    # can be filtered point-in-time and never leak a future outcome).
+    symbol: str = ""
+    as_of: str = ""               # ISO date the originating trade closed
+    pnl_pct: float = 0.0
+    conviction: float = 0.0
 
     def validate(self) -> "Lesson":
         return self

@@ -22,6 +22,11 @@ from system.data_plane.indicators import last_atr
 from system.schemas import Envelope, RiskDecision, SpecialistRead
 
 
+def setup_type_for(families) -> str:
+    """Stable key tying a deliberation to the lesson bucket it should recall."""
+    return "momentum_swing" if set(families or []) == {"E"} else "confluence_swing"
+
+
 @dataclass
 class CycleResult:
     cycle_id: str
@@ -34,7 +39,7 @@ class CycleResult:
 class Orchestrator:
     def __init__(self, store, specialists: list[EdgeSpecialist], hypothesis,
                  skeptic, portfolio_manager, config: SystemConfig,
-                 price_lookup=None, analysts=None):
+                 price_lookup=None, analysts=None, memory=None):
         self.store = store
         self.specialists = specialists
         self.analysts = list(analysts or [])      # technical / fundamental analysts
@@ -42,6 +47,7 @@ class Orchestrator:
         self.skeptic = skeptic
         self.pm = portfolio_manager
         self.cfg = config
+        self.memory = memory                      # LessonMemory (advisory recall), or None
         # price_lookup(symbol, view) -> adjusted OHLCV df; defaults to view.prices.
         self.price_lookup = price_lookup or (lambda sym, view: view.prices(sym))
 
@@ -119,6 +125,21 @@ class Orchestrator:
                       "edges": cand.edge_ids}
         transcript: dict = {"evidence": evidence, "steps": []}
 
+        # Recall accumulated, PIT-safe lessons + base-rate stats for this setup
+        # (advisory only; never visible after the decision session).
+        setup = setup_type_for(cand.families)
+        recalled = {}
+        if self.memory is not None:
+            try:
+                recalled = self.memory.advisory(setup, not_after=str(view.asof_date.date()))
+            except Exception:
+                recalled = {}
+        if recalled.get("lessons") or recalled.get("setup_stats", {}).get("count"):
+            transcript["steps"].append(
+                {"agent": "memory", "model": "-", "system_prompt": "",
+                 "inputs": {"setup_type": setup, "as_of": str(view.asof_date.date())},
+                 "output": recalled})
+
         try:
             # Domain analysts first: a visible technical read and fundamental read
             # over the evidence, fed to the trio. Advisory — a failed analyst is
@@ -136,7 +157,8 @@ class Orchestrator:
 
             hyp_in = {"symbol": cand.symbol, "confluence": confluence,
                       "edge_ids": cand.edge_ids, "evidence_refs": cand.evidence_refs,
-                      "analyst_reads": analyst_reads, "evidence": evidence}
+                      "analyst_reads": analyst_reads, "lessons": recalled,
+                      "evidence": evidence}
             hyp = self._with_retry(self.hypothesis, hyp_in)
             transcript["steps"].append(
                 self._step(self.hypothesis, self.hypothesis.system_prompt, hyp_in, asdict(hyp)))
@@ -173,7 +195,7 @@ class Orchestrator:
             pm_in = {"symbol": cand.symbol, "hypothesis": asdict(hyp),
                      "critique": {"verdict": crit.verdict, "max_severity": crit.max_severity(),
                                   "strongest": crit.strongest},
-                     "analyst_reads": analyst_reads,
+                     "analyst_reads": analyst_reads, "lessons": recalled,
                      "rebuttal": rebuttal, "evidence": evidence,
                      "price": price, "atr": atr if atr == atr else 0.0}
             decision = self._with_retry(self.pm, pm_in)

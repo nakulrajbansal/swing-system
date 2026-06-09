@@ -64,14 +64,26 @@ class ReflectionAgent(Agent):
     def deterministic(self, inputs: dict) -> Lesson:
         trade = inputs["trade"]
         pnl = float(trade.get("pnl", 0.0))
+        pnl_pct = float(trade.get("pnl_pct", 0.0))
         reason = trade.get("reason", "")
+        symbol = trade.get("symbol", "")
+        setup = trade.get("setup_type", "confluence_swing")
         thesis_correct = pnl > 0
         quality = "clean" if reason in {"target", "time"} else "stopped"
+        if thesis_correct:
+            lesson = (f"{setup} on {symbol} paid {pnl_pct:+.1f}% (exit: {reason}); "
+                      "the setup worked net of costs.")
+        elif reason == "stop":
+            lesson = (f"{setup} on {symbol} was stopped out ({pnl_pct:+.1f}%); the entry "
+                      "fought the trend or the stop was too tight — tighten the trigger.")
+        else:
+            lesson = (f"{setup} on {symbol} did not pay ({pnl_pct:+.1f}%, exit: {reason}); "
+                      "revisit the trigger or hold window for this setup.")
         return Lesson(
-            setup_type=trade.get("setup_type", "confluence_swing"),
-            lesson=("edge paid net of costs" if thesis_correct
-                    else "edge did not pay; revisit trigger or sizing"),
-            thesis_correct=thesis_correct, execution_quality=quality)
+            setup_type=setup, lesson=lesson,
+            thesis_correct=thesis_correct, execution_quality=quality,
+            symbol=symbol, as_of=trade.get("as_of", ""),
+            pnl_pct=round(pnl_pct, 2), conviction=float(trade.get("conviction", 0.0)))
 
 
 class ResearcherAgent(Agent):

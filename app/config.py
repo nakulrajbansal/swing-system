@@ -56,6 +56,8 @@ class AppConfig:
     alpaca_env: str = "paper"            # "paper" (fake money) | "live" (REAL money)
     place_orders: bool = False           # submit approved deliberation orders to Alpaca
     enable_live_trading: bool = False    # extra gate: must be on to use env="live"
+    learn_from_runs: bool = True         # reflect on closed trades + recall lessons across runs
+    auto_approve_lessons: bool = True    # new lessons are active immediately (else review first)
 
     # -- persistence -------------------------------------------------------
     @classmethod

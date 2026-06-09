@@ -17,6 +17,7 @@ from typing import Callable
 import pandas as pd
 
 from app.config import CONFIG_DIR, AppConfig
+from app.learning import load_memory, save_memory
 
 Emit = Callable[[str], None]
 
@@ -488,6 +489,31 @@ def _step_out(transcript: dict, agent: str) -> dict:
     return next((s["output"] for s in transcript.get("steps", []) if s["agent"] == agent), {})
 
 
+def _load_memory(cfg: AppConfig, log: Emit):
+    """Load the cross-run learning memory if learning is enabled (else None)."""
+    if not getattr(cfg, "learn_from_runs", True):
+        return None
+    mem = load_memory()
+    n_les = len(mem.entries)
+    n_out = len(mem.outcomes)
+    if n_les or n_out:
+        log(f"[memory] loaded {n_les} lesson(s) and {n_out} past outcome(s) "
+            "to inform the agents.")
+    else:
+        log("[memory] no prior lessons yet; the desk will learn from trades it closes.")
+    return mem
+
+
+def _save_memory(cfg: AppConfig, mem, log: Emit, before: tuple[int, int]):
+    if mem is None:
+        return
+    added = (len(mem.entries) - before[0], len(mem.outcomes) - before[1])
+    if added != (0, 0):
+        path = save_memory(mem)
+        log(f"[memory] learned {added[1]} new outcome(s)/{added[0]} lesson(s); "
+            f"saved to {path}")
+
+
 def _print_transcript(log: Emit, symbol: str, transcript: dict, verbose: bool) -> None:
     """Print the full deliberation: evidence given, then each agent's prompt,
     inputs, and output (so it is not a black box)."""
@@ -660,6 +686,7 @@ def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
     fund = _step_out(transcript, "fundamental_analyst")
     val = _step_out(transcript, "valuation_analyst")
     grow = _step_out(transcript, "growth_analyst")
+    recalled = _step_out(transcript, "memory")
     hyp = _step_out(transcript, "hypothesis")
     crit = _step_out(transcript, "skeptic")
     pm = _step_out(transcript, "portfolio_manager")
@@ -702,6 +729,17 @@ def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
         _panel("Fundamental", fund)
         _panel("Valuation", val)
         _panel("Growth", grow)
+    if recalled:
+        stats = recalled.get("setup_stats", {})
+        log("Learned from past trades (advisory):")
+        if stats.get("count"):
+            log(f"  base rate: {stats['count']} past similar trades, win rate "
+                f"{stats.get('win_rate_pct', 0):.0f}%, "
+                f"avg return {stats.get('avg_return_pct', 0):+.1f}%")
+        for les in (recalled.get("lessons") or [])[:3]:
+            log(f"  - {_sent(les, 220)}")
+        if not stats.get("count") and not recalled.get("lessons"):
+            log("  (no comparable past trades yet)")
     log("Why this verdict:")
     if hyp.get("decision") == "propose" and str(hyp.get("mechanism", "")).strip() not in ("", "None"):
         log(f"  bull thesis: {_sent(hyp.get('mechanism'), 900)}")
@@ -760,6 +798,8 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
             if str(cfg.end_date) < today:
                 cfg = dataclasses.replace(cfg, end_date=today)
 
+        mem = _load_memory(cfg, log)
+        _memb = (len(mem.entries), len(mem.outcomes)) if mem else (0, 0)
         recs, considered = [], []
         with _redirect(log):
             if ticker:
@@ -768,7 +808,9 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
                 store, sector_map = _build_store(cfg, log)
             engine = PaperTradingEngine(store, sector_map, client=client,
                                         starting_equity=float(cfg.starting_equity),
-                                        edges=list(ALL_FREE_EDGES))   # ungated
+                                        edges=list(ALL_FREE_EDGES),   # ungated
+                                        memory=mem,
+                                        auto_approve_lessons=cfg.auto_approve_lessons)
             session = engine._last_session()
             T = available_at_for_session(session)
             gov = RiskGovernor(DEFAULT_CONFIG)
@@ -846,6 +888,7 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
         calls = getattr(client, "calls", 0)
         if real_llm:
             log(f"\n[cost] LLM calls this run: {calls}")
+        _save_memory(cfg, mem, log, _memb)
         log(f"\n[done] {len(recs)} recommendation(s).")
     return {"session": str(session.date()), "recommendations": recs}
 
@@ -911,16 +954,44 @@ def run_momentum_trade(cfg: AppConfig, emit: Emit) -> dict:
         tracked = state.get(env, {})
         live_pos = broker.positions()
 
+        mem = _load_memory(cfg, log)
+        _memb = (len(mem.entries), len(mem.outcomes)) if mem else (0, 0)
+
+        def _learn_close(sym, info, reason):
+            if mem is None:
+                return
+            from system.agents.llm_client import MockLLMClient
+            from system.agents.meta import ReflectionAgent
+            from system.reflection.memory import TradeOutcome
+            try:
+                cur = float(view.prices(sym, adjust=True)["close"].iloc[-1])
+            except Exception:
+                return
+            entry_px = float(info.get("entry_price", cur) or cur)
+            pnl_pct = (cur / entry_px - 1) * 100.0 if entry_px else 0.0
+            mem.record_outcome(TradeOutcome("momentum_swing", sym, 0.0,
+                                            round(pnl_pct, 2), reason, d_today))
+            try:
+                les = ReflectionAgent(MockLLMClient(), DEFAULT_CONFIG.models.framing).run(
+                    {"trade": {"pnl": pnl_pct, "pnl_pct": pnl_pct, "reason": reason,
+                               "symbol": sym, "setup_type": "momentum_swing",
+                               "as_of": d_today, "conviction": 0.0}})
+                mem.add(les, human_reviewed=cfg.auto_approve_lessons)
+            except Exception:
+                pass
+
         # --- 1) EXITS ---
         log("\n[exits] reviewing tracked positions ...")
         for sym in list(tracked):
             info = tracked[sym]
             if sym not in live_pos:
                 log(f"  {sym}: already closed at broker (stop hit / manual). Untracking.")
+                _learn_close(sym, info, "stop")
                 tracked.pop(sym)
             elif d_today >= info["exit_on"]:
                 log(f"  {sym}: held to {d_today} >= exit date {info['exit_on']} -> close at market.")
                 broker.close_position(sym)
+                _learn_close(sym, info, "time")
                 tracked.pop(sym)
             else:
                 log(f"  {sym}: holding (entered {info['entry_date']}, exit on {info['exit_on']}).")
@@ -977,6 +1048,7 @@ def run_momentum_trade(cfg: AppConfig, emit: Emit) -> dict:
 
         state[env] = tracked
         save_positions(state)
+        _save_memory(cfg, mem, log, _memb)
         log(f"\n[done] momentum cycle complete. Open positions: {sorted(tracked)}.")
     return {"entered": result_entry, "open": sorted(tracked)}
 
@@ -1062,14 +1134,19 @@ def run_paper(cfg: AppConfig, emit: Emit) -> dict:
             log("[warn] real LLM over a multi-cycle backtest can make MANY calls "
                 "(capped at ANTHROPIC_MAX_CALLS) and spends tokens. The cheaper, "
                 "design-correct use is 'Run live deliberation' (a single day).")
+        mem = _load_memory(cfg, log)
+        _memb = (len(mem.entries), len(mem.outcomes)) if mem else (0, 0)
         t0 = time.time()
         with _redirect(log):
             store, sector_map = _build_store(cfg, log)
             log("[engine] starting paper-trading cycles (paper-only) ...")
             engine = PaperTradingEngine(store, sector_map, client=client,
-                                        starting_equity=float(cfg.starting_equity))
+                                        starting_equity=float(cfg.starting_equity),
+                                        memory=mem,
+                                        auto_approve_lessons=cfg.auto_approve_lessons)
             result = engine.run()
         log(f"\n[done] paper run finished in {time.time() - t0:.1f}s")
+        _save_memory(cfg, mem, log, _memb)
         log(f"[result] cycles={result.n_cycles}  "
             f"final_equity={result.final_equity:,.0f} ({result.total_return_pct:+.1f}%)  "
             f"trades={len(result.closed_trades)}")
@@ -1140,11 +1217,13 @@ def run_deliberation(cfg: AppConfig, emit: Emit) -> dict:
             return {"session": None, "candidates": [], "decisions": [], "llm_calls":
                     getattr(client, "calls", 0)}
 
+        mem = _load_memory(cfg, log)
         with _redirect(log):
             store, sector_map = _build_store(cfg, log)
             engine = PaperTradingEngine(store, sector_map, client=client,
                                         starting_equity=float(cfg.starting_equity),
-                                        edges=edges)
+                                        edges=edges, memory=mem,
+                                        auto_approve_lessons=cfg.auto_approve_lessons)
             session = engine._last_session()
             from harness.data.loader import available_at_for_session
             T = available_at_for_session(session)

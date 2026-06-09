@@ -29,6 +29,9 @@ from system.agents.analysts import (
 )
 from system.agents.core import HypothesisAgent, PortfolioManagerAgent, SkepticAgent
 from system.agents.llm_client import LLMClient, MockLLMClient
+from system.agents.meta import ReflectionAgent
+from system.orchestrator import setup_type_for
+from system.reflection.memory import LessonMemory, TradeOutcome
 from system.agents.specialists import EdgeSpecialist
 from system.config import DEFAULT_CONFIG, SystemConfig
 from system.data_plane.indicators import last_atr
@@ -58,7 +61,8 @@ class LiveResult:
 class PaperTradingEngine:
     def __init__(self, store: PITStore, sector_map: dict, config: SystemConfig | None = None,
                  client: LLMClient | None = None, starting_equity: float = 100_000.0,
-                 edges: list | None = None):
+                 edges: list | None = None, memory: LessonMemory | None = None,
+                 auto_approve_lessons: bool = True):
         self.store = store
         self.sector_map = sector_map
         self.cfg = config or DEFAULT_CONFIG
@@ -69,6 +73,13 @@ class PaperTradingEngine:
         self.killswitch = KillSwitch(self.cfg.kill)
         self.start_equity = starting_equity
         self._pending_conviction: dict = {}
+        self._pending_setup: dict = {}
+        # Learning: recall accumulated lessons at decision time and reflect on
+        # each closed trade. Reflection is deterministic (free) so a multi-cycle
+        # backtest never balloons LLM cost.
+        self.memory = memory
+        self.auto_approve_lessons = auto_approve_lessons
+        self.reflection = ReflectionAgent(MockLLMClient(), self.cfg.models.framing)
 
         # Agent roster (model tiering per master §6). `edges` lets a caller
         # restrict to validation-passed edges (the live trading gate).
@@ -89,7 +100,8 @@ class PaperTradingEngine:
             HypothesisAgent(self.client, m.synthesis),
             SkepticAgent(self.client, m.adversarial),
             PortfolioManagerAgent(self.client, m.adversarial),
-            self.cfg, price_lookup=self._price_lookup, analysts=self.analysts)
+            self.cfg, price_lookup=self._price_lookup, analysts=self.analysts,
+            memory=self.memory)
 
         # Fully-adjusted panels (outcomes/fills replay realized bars).
         last = available_at_for_session(self._last_session()) + pd.Timedelta(days=1)
@@ -141,7 +153,7 @@ class PaperTradingEngine:
                 self.broker.on_session_open(bars)
                 exits = self.broker.on_session(bars, time_stop_bars=20)
                 for f in exits:
-                    self._record_exit(f)
+                    self._record_exit(f, when=d)
 
             # 2. Mark equity for the fast loop.
             equity = self.broker.equity(self._marks(d))
@@ -171,6 +183,7 @@ class PaperTradingEngine:
     def _decide_and_submit(self, d, equity, daily, weekly):
         T = available_at_for_session(d)
         cycle = self.orchestrator.run_cycle(T)
+        families = {c.symbol: c.families for c in cycle.candidates}
         clusters = self._clusters(d)
         new_entries = 0
         for decision in cycle.decisions:
@@ -197,8 +210,9 @@ class PaperTradingEngine:
                     sym, ticket.shares, band_low=ticket.entry * (1 - band),
                     band_high=ticket.entry * (1 + band), stop=ticket.stop,
                     target=ticket.target, sector=self.sector_map.get(sym, "?"))
-                # remember conviction for calibration when the trade closes
+                # remember conviction + setup for reflection when the trade closes
                 self._pending_conviction[sym] = decision.final_conviction
+                self._pending_setup[sym] = setup_type_for(families.get(sym))
                 new_entries += 1
 
     # -- position / trade bookkeeping -------------------------------------
@@ -210,19 +224,45 @@ class PaperTradingEngine:
                                 self.sector_map.get(sym, "?"), marks.get(sym, p.entry)))
         return out
 
-    def _record_exit(self, fill):
+    def _record_exit(self, fill, when=None):
         trade = next((t for t in reversed(self.broker.closed_trades)
                       if t["symbol"] == fill.symbol), None)
         if trade:
             conv = self._pending_conviction.pop(fill.symbol, None)
+            setup = self._pending_setup.pop(fill.symbol, "confluence_swing")
             self.scorecard.record_trade(trade["pnl"], conv)
+            self._reflect(trade, setup, conv, when)
+
+    def _reflect(self, trade: dict, setup: str, conv, when):
+        """Turn a closed trade into a recorded outcome + an advisory lesson."""
+        if self.memory is None:
+            return
+        cost_basis = float(trade.get("entry", 0)) * int(trade.get("shares", 0))
+        pnl_pct = (float(trade["pnl"]) / cost_basis * 100.0) if cost_basis else 0.0
+        as_of = ""
+        if when is not None:
+            try:
+                as_of = str(pd.Timestamp(when).date())
+            except Exception:
+                as_of = ""
+        rec = {"pnl": trade["pnl"], "pnl_pct": pnl_pct, "reason": trade.get("reason", ""),
+               "symbol": trade["symbol"], "setup_type": setup, "as_of": as_of,
+               "conviction": float(conv or 0.0)}
+        self.memory.record_outcome(TradeOutcome(
+            setup_type=setup, symbol=trade["symbol"], conviction=float(conv or 0.0),
+            pnl_pct=round(pnl_pct, 2), reason=trade.get("reason", ""), as_of=as_of))
+        try:
+            lesson = self.reflection.run({"trade": rec})
+            self.memory.add(lesson, human_reviewed=self.auto_approve_lessons)
+        except Exception:
+            pass
 
     def _flatten(self, d):
         marks = self._marks(d)
         for sym in list(self.broker.positions()):
             f = self.broker.force_exit(sym, marks.get(sym, self.broker.positions()[sym].entry))
             if f:
-                self._record_exit(f)
+                self._record_exit(f, when=d)
 
     def _sessions(self, start, end) -> pd.DatetimeIndex:
         idx = None

@@ -211,12 +211,18 @@ class SwingApp:
 
         cfg_tab = ttk.Frame(nb)
         run_tab = ttk.Frame(nb)
+        lessons_tab = ttk.Frame(nb)
         nb.add(run_tab, text="  Run  ")
+        nb.add(lessons_tab, text="  Lessons  ")
         nb.add(cfg_tab, text="  Configuration  ")
         nb.select(run_tab)
 
         self._build_config(cfg_tab)
         self._build_run(run_tab)
+        self._build_lessons(lessons_tab)
+        nb.bind("<<NotebookTabChanged>>",
+                lambda e: self._refresh_lessons() if nb.tab(nb.select(), "text").strip()
+                == "Lessons" else None)
 
     def _add_fields(self, card, names):
         for i, name in enumerate(names):
@@ -259,6 +265,12 @@ class SwingApp:
         self.vars["place_orders"] = tk.BooleanVar(value=self.cfg.place_orders)
         ttk.Checkbutton(opts, text="Place approved orders on Alpaca (live deliberation)",
                         variable=self.vars["place_orders"]).pack(anchor="w", padx=8, pady=2)
+        self.vars["learn_from_runs"] = tk.BooleanVar(value=self.cfg.learn_from_runs)
+        ttk.Checkbutton(opts, text="Learn from runs (reflect on closed trades + recall lessons)",
+                        variable=self.vars["learn_from_runs"]).pack(anchor="w", padx=8, pady=2)
+        self.vars["auto_approve_lessons"] = tk.BooleanVar(value=self.cfg.auto_approve_lessons)
+        ttk.Checkbutton(opts, text="Auto-activate new lessons (else review them on the Lessons tab)",
+                        variable=self.vars["auto_approve_lessons"]).pack(anchor="w", padx=8, pady=2)
         self.vars["enable_live_trading"] = tk.BooleanVar(value=self.cfg.enable_live_trading)
         ttk.Checkbutton(opts, text="Enable LIVE (real-money) Alpaca env — extra gate",
                         variable=self.vars["enable_live_trading"],
@@ -360,6 +372,63 @@ class SwingApp:
         self._log(f"{APP_NAME} ready. Set a ticker and Analyze, or Find trade "
                   "recommendations. Configure keys on the Configuration tab.")
 
+    def _build_lessons(self, parent):
+        bar = ttk.Frame(parent)
+        bar.pack(fill="x", padx=14, pady=(12, 4))
+        ttk.Label(bar, text="What the desk has learned from closed trades "
+                  "(advisory; informs the agents on future runs).",
+                  style="Status.TLabel").pack(side="left")
+        ttk.Button(bar, text="Refresh", command=self._refresh_lessons).pack(side="right")
+        ttk.Button(bar, text="Approve all", style="Accent.TButton",
+                   command=self._approve_lessons).pack(side="right", padx=(0, 8))
+        ttk.Button(bar, text="Clear all", command=self._clear_lessons).pack(side="right", padx=(0, 8))
+
+        card = ttk.LabelFrame(parent, text=" Learning memory ")
+        card.pack(fill="both", expand=True, padx=14, pady=(4, 12))
+        self.lessons_out = scrolledtext.ScrolledText(
+            card, wrap="word", font=self.f_mono, bg=CONSOLE_BG, fg=CONSOLE_FG,
+            relief="flat", bd=0, padx=12, pady=10)
+        self.lessons_out.pack(fill="both", expand=True, padx=4, pady=4)
+        self.lessons_out.configure(state="disabled")
+        self._refresh_lessons()
+
+    def _refresh_lessons(self):
+        try:
+            from app.learning import load_memory, summarize
+            text = summarize(load_memory())
+        except Exception as exc:
+            text = f"(could not load learning memory: {exc})"
+        self.lessons_out.configure(state="normal")
+        self.lessons_out.delete("1.0", "end")
+        self.lessons_out.insert("end", text + "\n")
+        self.lessons_out.configure(state="disabled")
+
+    def _approve_lessons(self):
+        try:
+            from app.learning import load_memory, save_memory
+            mem = load_memory()
+            for e in mem.entries:
+                e.human_reviewed = True
+            save_memory(mem)
+        except Exception as exc:
+            messagebox.showerror("Approve failed", str(exc))
+            return
+        self._refresh_lessons()
+
+    def _clear_lessons(self):
+        if not messagebox.askyesno("Clear learning memory",
+                                   "Delete all accumulated lessons and trade outcomes? "
+                                   "This cannot be undone."):
+            return
+        try:
+            from app.learning import LEARNING_PATH
+            if LEARNING_PATH.exists():
+                LEARNING_PATH.unlink()
+        except Exception as exc:
+            messagebox.showerror("Clear failed", str(exc))
+            return
+        self._refresh_lessons()
+
     # -- actions -----------------------------------------------------------
     def _collect(self) -> AppConfig:
         d = {}
@@ -375,6 +444,8 @@ class SwingApp:
         d["verbose_agents"] = bool(self.vars["verbose_agents"].get())
         d["place_orders"] = bool(self.vars["place_orders"].get())
         d["enable_live_trading"] = bool(self.vars["enable_live_trading"].get())
+        d["learn_from_runs"] = bool(self.vars["learn_from_runs"].get())
+        d["auto_approve_lessons"] = bool(self.vars["auto_approve_lessons"].get())
         return AppConfig(**d)
 
     def _save(self):
