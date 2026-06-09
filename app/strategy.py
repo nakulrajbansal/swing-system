@@ -154,7 +154,7 @@ def diversify(ranked: list[dict], k: int, max_per_sector: int = 2) -> list[dict]
 
 
 def construct_portfolio(recs: list[dict], equity: float, regime: dict | None = None,
-                        max_name: float = 0.25, max_sector: float = 0.45) -> list[dict]:
+                        max_name: float = 0.25, max_sector: float = 0.65) -> list[dict]:
     """Conviction-scaled portfolio with per-name / per-sector caps and a
     regime-scaled gross-exposure budget. ``recs`` each need symbol, entry,
     conviction (and optionally sector). Returns sized allocations."""

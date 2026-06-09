@@ -264,6 +264,45 @@ def run_portfolio_status(cfg: AppConfig, emit: Emit) -> dict:
     return out
 
 
+def place_manual_order(cfg: AppConfig, order: dict, emit: Emit) -> dict:
+    """Submit ONE order chosen from the recommendations panel. `order` carries
+    symbol, qty, order_type ('market'|'limit'), limit_price, stop, target, and
+    attach_bracket. Paper by default; live requires the enable_live_trading gate."""
+    cfg.apply_to_env()
+    with _run_logger(emit, "order") as (log, _path):
+        if not (cfg.alpaca_key_id and cfg.alpaca_secret):
+            log("[error] Alpaca key id + secret required (Configuration tab).")
+            return {"ok": False}
+        if cfg.alpaca_env == "live" and not cfg.enable_live_trading:
+            log("[blocked] environment is LIVE but 'Enable live trading' is OFF. "
+                "Refusing to place a real-money order.")
+            return {"ok": False}
+        sym = order.get("symbol")
+        qty = int(order.get("qty") or 0)
+        otype = order.get("order_type", "market")
+        bracket = bool(order.get("attach_bracket"))
+        try:
+            broker = _alpaca_broker(cfg)
+            o = broker.submit_manual(
+                sym, qty, side="buy", order_type=otype,
+                limit_price=order.get("limit_price"),
+                stop=order.get("stop") if bracket else None,
+                target=order.get("target") if bracket else None)
+        except Exception as exc:
+            log(f"[error] order failed: {exc}")
+            return {"ok": False, "error": str(exc)}
+        if isinstance(o, dict) and o.get("error"):
+            log(f"[error] {o['error']}")
+            return {"ok": False, "error": o["error"]}
+        oid = (o or {}).get("id", "?")
+        status = (o or {}).get("status", "?")
+        px = f"limit ${order.get('limit_price')}" if otype == "limit" else "market"
+        log(f"[order] {cfg.alpaca_env.upper()}: BUY {qty} {sym} ({px}"
+            f"{', + stop/target' if bracket else ''}) submitted - id {oid}, status {status}.")
+        log("[order] check the Paper portfolio (P&L) button to see it once filled.")
+        return {"ok": True, "id": oid, "status": status}
+
+
 def _maybe_place_orders(cfg: AppConfig, tickets, sector_map, log: Emit) -> None:
     if not cfg.place_orders:
         if tickets:
@@ -587,29 +626,41 @@ def _save_memory(cfg: AppConfig, mem, log: Emit, before: tuple[int, int]):
             f"saved to {path}")
 
 
+_AGENT_ROLE = {
+    "memory": "Recalled lessons & base rates",
+    "technical_analyst": "Technical analyst", "fundamental_analyst": "Fundamental analyst",
+    "valuation_analyst": "Valuation analyst", "growth_analyst": "Growth analyst",
+    "hypothesis": "Strategist (thesis)", "skeptic": "Skeptic (bear case)",
+    "hypothesis_rebuttal": "Strategist (rebuttal)", "portfolio_manager": "Portfolio manager (decision)",
+}
+
+
 def _print_transcript(log: Emit, symbol: str, transcript: dict, verbose: bool) -> None:
-    """Print the full deliberation: evidence given, then each agent's prompt,
-    inputs, and output (so it is not a black box)."""
+    """Print the deliberation cleanly: the evidence, then each agent's role,
+    inputs and output (so it is not a black box) — formatted for scanning."""
     ev = transcript.get("evidence", {})
-    log(f"\n----- EVIDENCE GIVEN TO THE AGENTS  ({symbol}) -----")
-    log(f"  technicals: {_short(ev.get('technicals', {}), 400)}")
+    log(f"\n   EVIDENCE PROVIDED")
+    log(f"   {'-' * 56}")
+    log(f"   technicals    {_short(ev.get('technicals', {}), 360)}")
     if ev.get("fundamentals", {}).get("available"):
-        log(f"  fundamentals: {_short(ev.get('fundamentals', {}), 500)}")
+        log(f"   fundamentals  {_short(ev.get('fundamentals', {}), 460)}")
     fl = dict(ev.get("filings", {}))
     snippet = fl.pop("risk_text_snippet", None)
-    log(f"  filings: {_short(fl, 400)}")
+    log(f"   filings       {_short(fl, 360)}")
     if snippet and verbose:
-        log(f"  risk-factor text (snippet): {snippet[:450]} ...")
-    log(f"  insider: {_short(ev.get('insider', {}), 300)}")
+        log(f"   risk text     {snippet[:300]} ...")
+    log(f"   insider       {_short(ev.get('insider', {}), 260)}")
     if ev.get("recent_news"):
-        log(f"  news: {ev.get('recent_news')}")
-    log(f"\n----- AGENT DELIBERATION  ({symbol}) -----")
+        log(f"   news          {ev.get('recent_news')}")
+    log(f"\n   AGENT DELIBERATION")
+    log(f"   {'-' * 56}")
     for st in transcript.get("steps", []):
-        log(f"\n  >>> AGENT: {st['agent']}  (model {st.get('model', '-')})")
+        role = _AGENT_ROLE.get(st["agent"], st["agent"])
+        log(f"\n   > {role}  ({st.get('model', '-')})")
         if verbose and st.get("system_prompt"):
-            log(f"      PROMPT:  {_short(st['system_prompt'], 600)}")
-            log(f"      INPUTS:  {_short(st.get('inputs', {}), 400)}")
-        log(f"      OUTPUT:  {_short(st.get('output', {}), 1600)}")
+            log(f"       brief : {_short(st['system_prompt'], 160)}")
+            log(f"       input : {_short(st.get('inputs', {}), 300)}")
+        log(f"       output: {_short(st.get('output', {}), 1400)}")
 
 
 def _build_ticker_store(cfg: AppConfig, ticker: str, emit: Emit):
@@ -781,60 +832,65 @@ def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
         for b in (r.get("concerns") or [])[:4]:
             log(f"    - {b}")
 
-    log(f"\n{'=' * 60}")
-    log(f"ANALYSIS: {symbol}   ->   VERDICT: {verdict}{conv_s}")
-    log("=" * 60)
+    bar = "=" * 64
+    log(f"\n{bar}")
+    log(f"  {symbol}   {verdict}{conv_s}")
+    log(bar)
     dq = evidence.get("technicals", {}).get("data_quality_warning")
     if dq:
-        log(f"!! DATA QUALITY WARNING: {dq}")
-    log("Technical picture:")
+        log(f"  !! DATA QUALITY WARNING: {dq}\n")
+
+    def _h(title):
+        log(f"\n  {title}")
+        log(f"  {'-' * len(title)}")
+
+    _h("TECHNICAL PICTURE")
     for ln in _assess_technicals(evidence.get("technicals", {})):
         log(ln)
-    log("Valuation & growth:")
+    _h("VALUATION & GROWTH")
     for ln in _assess_fundamentals(evidence.get("fundamentals", {})):
         log(ln)
-    log("Filings & insider activity:")
+    _h("FILINGS & INSIDER")
     for ln in _assess_filings(evidence.get("filings", {}), evidence.get("insider", {})):
         log(ln)
     if tech or fund or val or grow:
-        log("Analyst reads:")
-        _panel("Technical", tech)
+        _h("ANALYST READS")
+        _panel("Technical  ", tech)
         _panel("Fundamental", fund)
-        _panel("Valuation", val)
-        _panel("Growth", grow)
+        _panel("Valuation  ", val)
+        _panel("Growth     ", grow)
     if recalled:
         stats = recalled.get("setup_stats", {})
-        log("Learned from past trades (advisory):")
+        _h("LEARNED FROM PAST TRADES (advisory)")
         if stats.get("count"):
-            log(f"  base rate: {stats['count']} past similar trades, win rate "
+            log(f"    base rate: {stats['count']} past similar trades, win rate "
                 f"{stats.get('win_rate_pct', 0):.0f}%, "
                 f"avg return {stats.get('avg_return_pct', 0):+.1f}%")
         for les in (recalled.get("lessons") or [])[:3]:
-            log(f"  - {_sent(les, 220)}")
+            log(f"    - {_sent(les, 220)}")
         if not stats.get("count") and not recalled.get("lessons"):
-            log("  (no comparable past trades yet)")
-    log("Why this verdict:")
+            log("    (no comparable past trades yet)")
+    _h("WHY THIS VERDICT")
     if hyp.get("decision") == "propose" and str(hyp.get("mechanism", "")).strip() not in ("", "None"):
-        log(f"  bull thesis: {_sent(hyp.get('mechanism'), 900)}")
+        log(f"    bull thesis : {_sent(hyp.get('mechanism'), 900)}")
     else:
-        log("  bull thesis: the strategist declined to propose a thesis "
+        log("    bull thesis : the strategist declined to propose a thesis "
             "(the bull case was not strong enough to commit to).")
-    log(f"  main risk (skeptic): {_sent(crit.get('strongest', '-'), 400)} "
-        f"(verdict: {crit.get('verdict', '-')})")
-    log(f"  decision rationale (PM): {_sent(pm.get('decisive_factor', '-'), 900)}")
+    log(f"    main risk   : {_sent(crit.get('strongest', '-'), 400)} "
+        f"(skeptic verdict: {crit.get('verdict', '-')})")
+    log(f"    PM decision : {_sent(pm.get('decisive_factor', '-'), 900)}")
     if action not in {"enter", "adjust"}:
-        log("  => PASS is the system's disciplined default: it recommends a BUY only "
-            "when a real edge survives the bear case. The positives above did not "
-            "outweigh the risks here.")
+        log("    => PASS is the disciplined default: a BUY needs a real edge that "
+            "survives the bear case. The positives did not outweigh the risks here.")
     if rec:
         e, s, tg = rec["entry"], rec["stop"], rec["target"]
         sp = f"{(s / e - 1) * 100:+.1f}%" if (e and s) else "?"
         tp = f"{(tg / e - 1) * 100:+.1f}%" if (e and tg) else "?"
         rr = f"{abs((tg - e) / (e - s)):.1f}" if (e and s and tg and e != s) else "?"
-        log("Trade plan (advisory):")
-        log(f"  entry ~${e}   stop ${s} ({sp})   target ${tg} ({tp})   reward/risk {rr}:1")
-        log(f"  hold ~{rec['hold_days']} sessions  ->  exit by {rec['exit_by']}")
-        log(f"  size @ ${equity:,.0f}: {rec['shares_at_ref_equity']} shares (1% account risk)")
+        _h("TRADE PLAN (advisory)")
+        log(f"    entry ~${e}   stop ${s} ({sp})   target ${tg} ({tp})   R/R {rr}:1")
+        log(f"    hold ~{rec['hold_days']} sessions  ->  exit by {rec['exit_by']}")
+        log(f"    risk-sized: {rec['shares_at_ref_equity']} sh @ ${equity:,.0f} (1% risk)")
 
 
 def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
@@ -961,6 +1017,12 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
         calls = getattr(client, "calls", 0)
         if real_llm:
             log(f"\n[cost] LLM calls this run: {calls}")
+        if recs:
+            from app import reco_ledger
+            n = reco_ledger.record(recs, "ticker" if ticker else "scan",
+                                   str(session.date()))
+            if n:
+                log(f"[ledger] saved {n} recommendation(s) for forward tracking.")
         _save_memory(cfg, mem, log, _memb)
         log(f"\n[done] {len(recs)} recommendation(s).")
     return {"session": str(session.date()), "recommendations": recs}
@@ -1073,6 +1135,15 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
         # desk's own past trades say is working.
         mem = _load_memory(cfg, log)
         _memb = (len(mem.entries), len(mem.outcomes)) if mem else (0, 0)
+
+        # Score any matured prior recommendations off the freshly-downloaded prices
+        # and feed the outcomes into the learning memory (advice learns too).
+        from app import reco_ledger
+        ev = reco_ledger.evaluate(closes, today.isoformat(), mem)
+        if ev["evaluated"]:
+            log(f"[ledger] scored {ev['evaluated']} matured recommendation(s): "
+                f"hit rate {ev['win_rate_pct']:.0f}%, avg {ev['avg_return_pct']:+.1f}%. "
+                f"({ev['open']} still open)")
         regime0 = market_regime(closes)
         weights = strategy.factor_weights(regime0, mem)
         ranked, regime = prescreen(closes, top=max(15, int(cfg.screen_top_k) * 3),
@@ -1117,10 +1188,9 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
         k = int(cfg.screen_top_k)
         if risk_off:
             k = max(2, k // 2)
-        # Spread the shortlist across sectors (<=2 per sector) so one hot sector
-        # can't monopolize the deep-dive — breadth over concentration.
-        pool = [m for m in ranked if m["score"] > 0]
-        top = strategy.diversify(pool, k, max_per_sector=2)
+        # Best names by score regardless of sector (concentration is fine when the
+        # names are valid); only the bad-data drop and the score>0 bar apply.
+        top = [m for m in ranked if m["score"] > 0][:k]
         if not top:
             log("\n[deep-dive] no name cleared the pre-filter bar (score > 0) in this "
                 "regime; standing down. Default is to do nothing.")
@@ -1189,6 +1259,11 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
             log("\n  No name cleared the BUY bar, but the WATCH names above are close - "
                 "they typically need a better entry (a pullback) or one more "
                 "confirming signal. Re-run after a dip or set a tighter ticker.")
+        if recs:
+            n = reco_ledger.record(recs, "screen", today.isoformat())
+            if n:
+                log(f"\n[ledger] saved {n} recommendation(s) to track forward "
+                    "performance (scored automatically after the hold window).")
         if real_llm:
             log(f"\n[cost] LLM calls this screen: {getattr(client, 'calls', 0)}")
         _save_memory(cfg, mem, log, _memb)

@@ -247,6 +247,29 @@ class AlpacaBroker(Broker):
         }
         return self._req("POST", "/v2/orders", payload)
 
+    def submit_manual(self, symbol, qty, side="buy", order_type="market",
+                      limit_price=None, stop=None, target=None, tif="day"):
+        """A flexible single order for the GUI's selective-execution panel: market
+        or limit, with an optional protective stop and/or take-profit (bracket/OTO).
+        Returns the Alpaca order dict (or an {'error': ...})."""
+        qty = int(qty)
+        if qty <= 0:
+            return {"error": "quantity must be > 0"}
+        payload = {"symbol": symbol, "qty": str(qty), "side": side,
+                   "type": order_type, "time_in_force": tif}
+        if order_type == "limit":
+            if not limit_price:
+                return {"error": "limit order needs a limit price"}
+            payload["limit_price"] = round(float(limit_price), 2)
+        if stop and target:
+            payload.update({"order_class": "bracket", "time_in_force": "gtc",
+                            "take_profit": {"limit_price": round(float(target), 2)},
+                            "stop_loss": {"stop_price": round(float(stop), 2)}})
+        elif stop:
+            payload.update({"order_class": "oto", "time_in_force": "gtc",
+                            "stop_loss": {"stop_price": round(float(stop), 2)}})
+        return self._req("POST", "/v2/orders", payload)
+
     def close_position(self, symbol):
         """Cancel any open orders for the symbol, then liquidate the position at
         market (Alpaca DELETE /v2/positions/{symbol})."""

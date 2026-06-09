@@ -59,7 +59,7 @@ def test_construct_portfolio_caps_and_regime_budget():
     by_sec = {}
     for p in on:
         by_sec[p["sector"]] = by_sec.get(p["sector"], 0) + p["weight_pct"]
-    assert all(v <= 45.5 for v in by_sec.values())             # per-sector cap holds
+    assert all(v <= 65.5 for v in by_sec.values())             # per-sector cap holds
     on_inv = sum(p["weight_pct"] for p in on)
     off = strategy.construct_portfolio(recs, 100000, {"available": True, "above_200dma": False})
     off_inv = sum(p["weight_pct"] for p in off)

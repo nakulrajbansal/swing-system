@@ -16,10 +16,11 @@ from tkinter import messagebox, scrolledtext, ttk
 
 from app import APP_NAME, APP_VERSION
 from app.config import SECRET_FIELDS, AppConfig
-from app.runner import (check_alpaca, run_deliberation, run_filing_validation,
-                        run_insider_validation, run_momentum_trade, run_paper,
-                        run_portfolio_status, run_recommendations, run_reddit_scan,
-                        run_screen, run_strategy_backtest, run_validation)
+from app.runner import (check_alpaca, place_manual_order, run_deliberation,
+                        run_filing_validation, run_insider_validation,
+                        run_momentum_trade, run_paper, run_portfolio_status,
+                        run_recommendations, run_reddit_scan, run_screen,
+                        run_strategy_backtest, run_validation)
 
 # (field, label, kind)  kind: "secret" | "text" | "int" | "float" | "choice"
 _FIELDS = [
@@ -425,6 +426,17 @@ class SwingApp:
         ttk.Button(bar2, text="Clear", command=self._clear).pack(side="left", padx=(0, 8))
         ttk.Button(bar2, text="Open logs", command=self._open_logs).pack(side="left")
 
+        # Selective execution: populated from the last run's BUY recommendations.
+        self.orders_card = ttk.LabelFrame(parent, text=" Place orders (from last run) ")
+        self.orders_card.pack(fill="x", padx=14, pady=6)
+        self.orders_body = ttk.Frame(self.orders_card, style="Card.TFrame")
+        self.orders_body.pack(fill="x", padx=8, pady=6)
+        self._orders_hint = ttk.Label(
+            self.orders_body, style="Muted.TLabel",
+            text="Run 'Screen S&P 500' or analyze a ticker — buyable tickets appear "
+                 "here with qty / price / order-type and a Place button.")
+        self._orders_hint.pack(anchor="w", padx=4, pady=4)
+
         # Output console.
         card3 = ttk.LabelFrame(parent, text=" Output ")
         card3.pack(fill="both", expand=True, padx=14, pady=(6, 6))
@@ -464,7 +476,10 @@ class SwingApp:
     def _refresh_lessons(self):
         try:
             from app.learning import load_memory, summarize
-            text = summarize(load_memory())
+            from app import reco_ledger
+            text = (summarize(load_memory())
+                    + "\n\n" + "-" * 60 + "\n"
+                    + reco_ledger.summarize())
         except Exception as exc:
             text = f"(could not load learning memory: {exc})"
         self.lessons_out.configure(state="normal")
@@ -517,6 +532,76 @@ class SwingApp:
         d["auto_approve_lessons"] = bool(self.vars["auto_approve_lessons"].get())
         return AppConfig(**d)
 
+    # -- selective execution ----------------------------------------------
+    def _show_orders(self, result: dict):
+        """Populate the orders panel with the last run's BUY recommendations."""
+        for w in self.orders_body.winfo_children():
+            w.destroy()
+        recs = result.get("recommendations", [])
+        port = {p["symbol"]: p for p in result.get("portfolio", [])}
+        if not recs:
+            ttk.Label(self.orders_body, style="Muted.TLabel",
+                      text="Last run produced no BUY recommendations to place.").pack(
+                anchor="w", padx=4, pady=4)
+            return
+        env = self._collect().alpaca_env.upper()
+        ttk.Label(self.orders_body, style="CardMuted.TLabel",
+                  text=f"{len(recs)} ticket(s) from the last run - set qty / price / type, "
+                       f"then Place. Orders route to your {env} Alpaca account.").pack(
+            anchor="w", padx=4, pady=(0, 6))
+        for r in recs:
+            sym = r["symbol"]
+            entry = r.get("entry") or 0
+            stop, target = r.get("stop"), r.get("target")
+            default_qty = port.get(sym, {}).get("shares") or r.get("shares_at_ref_equity") or 0
+            row = ttk.Frame(self.orders_body, style="Card.TFrame")
+            row.pack(fill="x", pady=2)
+            ttk.Label(row, text=sym, style="Card.TLabel", width=7).pack(side="left")
+            ttk.Label(row, text=f"~${entry}", style="CardMuted.TLabel", width=11).pack(side="left")
+            ttk.Label(row, text="qty", style="CardMuted.TLabel").pack(side="left")
+            qv = tk.StringVar(value=str(int(default_qty)))
+            ttk.Entry(row, textvariable=qv, width=6).pack(side="left", padx=(3, 8))
+            tv = tk.StringVar(value="limit")
+            ttk.Combobox(row, textvariable=tv, values=["market", "limit"],
+                         state="readonly", width=7).pack(side="left", padx=(0, 8))
+            pv = tk.StringVar(value=str(entry))
+            ttk.Label(row, text="$", style="CardMuted.TLabel").pack(side="left")
+            ttk.Entry(row, textvariable=pv, width=8).pack(side="left", padx=(2, 8))
+            bv = tk.BooleanVar(value=bool(stop and target))
+            ttk.Checkbutton(row, text="stop/target", variable=bv).pack(side="left", padx=(0, 8))
+            ttk.Button(row, text="Place", style="Accent.TButton",
+                       command=lambda r=r, qv=qv, tv=tv, pv=pv, bv=bv:
+                       self._place_order(r, qv, tv, pv, bv)).pack(side="left")
+
+    def _place_order(self, rec, qv, tv, pv, bv):
+        try:
+            qty = int(float(qv.get()))
+            otype = tv.get()
+            price = float(pv.get()) if (otype == "limit" and pv.get()) else None
+        except ValueError:
+            messagebox.showerror("Invalid order", "Quantity and price must be numbers.")
+            return
+        if qty <= 0:
+            messagebox.showerror("Invalid order", "Quantity must be greater than 0.")
+            return
+        cfg = self._collect()
+        env = cfg.alpaca_env.upper()
+        px = f"limit ${price}" if otype == "limit" else "market"
+        if not messagebox.askyesno(
+                "Confirm order",
+                f"Submit {env} BUY {qty} {rec['symbol']} ({px})"
+                f"{' with stop/target' if bv.get() else ''}?\n\n"
+                f"This sends a real order to your {env} Alpaca account."):
+            return
+        order = {"symbol": rec["symbol"], "qty": qty, "order_type": otype,
+                 "limit_price": price, "stop": rec.get("stop"),
+                 "target": rec.get("target"), "attach_bracket": bool(bv.get())}
+        self._log(f"\n[order] submitting BUY {qty} {rec['symbol']} ({px}) ...")
+        threading.Thread(
+            target=lambda: place_manual_order(
+                cfg, order, lambda line: self.q.put(("log", line))),
+            daemon=True).start()
+
     def _save(self):
         try:
             cfg = self._collect()
@@ -560,7 +645,8 @@ class SwingApp:
 
         def work():
             try:
-                fn(cfg, lambda line: self.q.put(("log", line)))
+                res = fn(cfg, lambda line: self.q.put(("log", line)))
+                self.q.put(("result", res))
                 self.q.put(("done", None))
             except Exception as exc:  # surface, never crash the GUI
                 self.q.put(("log", f"[error] {type(exc).__name__}: {exc}"))
@@ -575,6 +661,9 @@ class SwingApp:
                 kind, payload = self.q.get_nowait()
                 if kind == "log":
                     self._log(payload)
+                elif kind == "result":
+                    if isinstance(payload, dict) and payload.get("recommendations"):
+                        self._show_orders(payload)
                 elif kind == "done":
                     self.running = False
                     self._set_busy(False)
