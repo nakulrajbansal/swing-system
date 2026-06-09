@@ -942,7 +942,8 @@ def _analyze_symbol(cfg: AppConfig, sym: str, client, real_llm: bool, mem, log: 
             }
     _analysis_summary(log, sym, transcript.get("evidence", {}), transcript, rec,
                       float(cfg.starting_equity))
-    return rec, pm.get("action", "pass"), pm.get("decisive_factor", "")
+    conv = float(pm.get("final_conviction", 0) or 0)
+    return rec, pm.get("action", "pass"), pm.get("decisive_factor", ""), conv
 
 
 def run_screen(cfg: AppConfig, emit: Emit) -> dict:
@@ -1050,11 +1051,13 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
                 f"RS {m['rs'] * 100:+.0f}%, sector {m.get('sector') or '?'})\n{'#' * 60}")
             try:
                 with _redirect(log):
-                    rec, action, decisive = _analyze_symbol(cfg, sym, client, real_llm, mem, log)
+                    rec, action, decisive, conv = _analyze_symbol(
+                        cfg, sym, client, real_llm, mem, log)
             except Exception as exc:
                 log(f"[deep-dive] {sym} failed: {type(exc).__name__}: {exc}")
                 continue
-            considered.append((sym, action, decisive))
+            considered.append({"symbol": sym, "action": action, "decisive": decisive,
+                               "conviction": conv, "score": m["score"]})
             if rec:
                 rec["sector"] = sec_map.get(sym, "?")
                 recs.append(rec)
@@ -1083,9 +1086,24 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
             inv = sum(p["weight_pct"] for p in portfolio)
             log(f"    invested {inv:.0f}% / cash {max(0, 100 - inv):.0f}%")
 
-        log("\n  shortlist verdicts:")
-        for sym, act, why in considered:
-            log(f"    {sym}: {act.upper()} - {_sent(why, 200)}")
+        # Always surface the model's best ideas, ranked by conviction and tiered,
+        # so an all-PASS run is still actionable (what to watch, and why not yet).
+        log("\n  TOP IDEAS (ranked by the agents' conviction):")
+        for c in sorted(considered, key=lambda x: x["conviction"], reverse=True):
+            if c["action"] in {"enter", "adjust"} or c["conviction"] >= 0.55:
+                tier = "BUY  "
+            elif c["conviction"] >= 0.40:
+                tier = "WATCH"
+            else:
+                tier = "PASS "
+            log(f"    [{tier}] {c['symbol']:<6} conv {c['conviction']:.2f}  - "
+                f"{_sent(c['decisive'], 180)}")
+        watch = [c for c in considered if c["action"] not in {"enter", "adjust"}
+                 and c["conviction"] >= 0.40]
+        if watch and not recs:
+            log("\n  No name cleared the BUY bar, but the WATCH names above are close - "
+                "they typically need a better entry (a pullback) or one more "
+                "confirming signal. Re-run after a dip or set a tighter ticker.")
         if real_llm:
             log(f"\n[cost] LLM calls this screen: {getattr(client, 'calls', 0)}")
         _save_memory(cfg, mem, log, _memb)

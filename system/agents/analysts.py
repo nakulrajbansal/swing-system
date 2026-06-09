@@ -214,8 +214,12 @@ class GrowthAnalyst(Agent):
             elif eg < 0:
                 con.append(f"earnings are declining ({eg:+.0f}%)"); score -= 0.1
         ig = g.get("implied_fwd_eps_growth_pct")
+        reliable = g.get("fwd_eps_reliable", True)
         if isinstance(ig, (int, float)):
-            if ig > 5:
+            if not reliable:
+                con.append(f"forward-EPS jump ({ig:+.0f}%) looks like a trailing-year "
+                           "artifact, not real acceleration - discounted")
+            elif ig > 5:
                 pos.append(f"forward EPS guidance above trailing ({ig:+.0f}%) - guided up"); score += 0.12
             elif ig < -5:
                 con.append(f"forward EPS guidance below trailing ({ig:+.0f}%) - guided down"); score -= 0.12

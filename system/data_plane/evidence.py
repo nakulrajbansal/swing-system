@@ -128,8 +128,13 @@ def _fundamentals(view, symbol: str) -> dict:
     tgt = _f(r, "target_mean_price")
     fwd_eps, tr_eps = _f(r, "forward_eps"), _f(r, "trailing_eps")
     implied_eps_growth = None
+    eps_reliable = True
     if fwd_eps is not None and tr_eps not in (None, 0):
         implied_eps_growth = round((fwd_eps / tr_eps - 1) * 100, 1)
+        # A tiny/negative trailing EPS or an enormous implied jump makes the ratio
+        # an artifact, not a real growth signal — flag it so agents discount it.
+        if tr_eps < 1.0 or abs(implied_eps_growth) > 80:
+            eps_reliable = False
     return {
         "available": True,
         "valuation": {
@@ -151,6 +156,7 @@ def _fundamentals(view, symbol: str) -> dict:
             "trailing_eps": tr_eps,
             "forward_eps_guidance": fwd_eps,
             "implied_fwd_eps_growth_pct": implied_eps_growth,
+            "fwd_eps_reliable": eps_reliable,
             "profit_margin_pct": round(_f(r, "profit_margin") * 100, 1)
             if _f(r, "profit_margin") is not None else None,
             "return_on_equity_pct": round(_f(r, "return_on_equity") * 100, 1)

@@ -171,10 +171,12 @@ class Orchestrator:
             transcript["steps"].append(
                 self._step(self.skeptic, self.skeptic.system_prompt, crit_in, asdict(crit)))
 
-            # Consensus step: on a survivable objection (caution), the proposer
-            # gets one rebuttal before the PM arbitrates (master §8 flow).
+            # Consensus step: the proposer gets one rebuttal to the strongest
+            # objection before the PM arbitrates (master §8 flow). This runs on a
+            # 'kill' too — a proposed thesis must never die undefended (otherwise
+            # an aggressive skeptic auto-passes every name).
             rebuttal = ""
-            if crit.verdict == "caution" and hyp.decision == "propose":
+            if hyp.decision == "propose" and crit.strongest:
                 reb_in = {"symbol": cand.symbol, "thesis": asdict(hyp),
                           "objection": crit.strongest, "evidence": evidence}
                 try:
