@@ -19,7 +19,7 @@ from app.config import SECRET_FIELDS, AppConfig
 from app.runner import (check_alpaca, run_deliberation, run_filing_validation,
                         run_insider_validation, run_momentum_trade, run_paper,
                         run_recommendations, run_reddit_scan, run_screen,
-                        run_validation)
+                        run_strategy_backtest, run_validation)
 
 # (field, label, kind)  kind: "secret" | "text" | "int" | "float" | "choice"
 _FIELDS = [
@@ -68,19 +68,23 @@ _GROUPS = [
       "momentum_max_positions", "reddit_top_k", "screen_top_k", "screen_universe"]),
 ]
 
-# -- palette (dark, elegant "terminal": charcoal surfaces, one emerald accent) --
-BG = "#14171c"          # app background (charcoal)
-CARD = "#1b1f27"        # card / surface
-SURF2 = "#222733"       # raised controls (buttons, fields)
-INK = "#e6e9ef"         # primary text (off-white)
-MUTED = "#8b94a7"       # secondary text
-ACCENT = "#3fb27f"      # emerald accent (used sparingly)
-ACCENT_DK = "#34966b"
-ACCENT_INK = "#0e1216"  # text on the accent
-OK = "#57c98a"
-BORDER = "#2a3039"
-CONSOLE_BG = "#0f1216"  # near-black console
-CONSOLE_FG = "#cdd3de"
+# -- palette (dark, layered: sidebar < content < card < raised; one accent) ----
+SIDEBAR = "#0d1014"     # deepest (left rail)
+BG = "#14181e"          # content background
+CARD = "#1c212b"        # card / surface (raised above content)
+SURF2 = "#262c39"       # raised controls (buttons, fields)
+SURF3 = "#2f3744"       # hover
+INK = "#eaedf3"         # primary text (off-white)
+MUTED = "#8590a3"       # secondary text
+FAINT = "#5a6577"       # tertiary / disabled
+ACCENT = "#46c08a"      # emerald accent (used sparingly)
+ACCENT_DK = "#37a074"
+ACCENT_SOFT = "#1f3a30"  # accent-tinted surface (active nav)
+ACCENT_INK = "#08120d"  # text on the accent
+OK = "#5fd39a"
+BORDER = "#272d38"
+CONSOLE_BG = "#0b0e12"  # near-black console
+CONSOLE_FG = "#c8cfdb"
 
 
 class _ScrollFrame(ttk.Frame):
@@ -143,7 +147,8 @@ class SwingApp:
         self.f_base = tkfont.Font(family=fam, size=10)
         self.f_bold = tkfont.Font(family=fam, size=10, weight="bold")
         self.f_section = tkfont.Font(family=fam, size=9, weight="bold")
-        self.f_title = tkfont.Font(family=fam, size=15, weight="bold")
+        self.f_title = tkfont.Font(family=fam, size=14, weight="bold")
+        self.f_h1 = tkfont.Font(family=fam, size=16, weight="bold")
         self.f_sub = tkfont.Font(family=fam, size=9)
         self.f_mono = tkfont.Font(family=mono, size=10)
 
@@ -162,85 +167,129 @@ class SwingApp:
                     fieldbackground=SURF2, bordercolor=BORDER)
         s.configure("TFrame", background=BG)
         s.configure("Card.TFrame", background=CARD)
-        s.configure("Header.TFrame", background=BG)
+        s.configure("Side.TFrame", background=SIDEBAR)
         s.configure("Rule.TFrame", background=BORDER)
+        s.configure("AccentRule.TFrame", background=ACCENT)
         s.configure("TLabel", background=BG, foreground=INK)
         s.configure("Card.TLabel", background=CARD, foreground=INK)
+        s.configure("CardMuted.TLabel", background=CARD, foreground=MUTED, font=self.f_sub)
         s.configure("Muted.TLabel", background=CARD, foreground=MUTED, font=self.f_sub)
-        s.configure("Header.TLabel", background=BG, foreground=INK, font=self.f_title)
-        s.configure("HeaderSub.TLabel", background=BG, foreground=MUTED, font=self.f_sub)
-        s.configure("Accent.TLabel", background=BG, foreground=ACCENT, font=self.f_sub)
-        s.configure("Status.TLabel", background=BG, foreground=MUTED, font=self.f_sub)
+        s.configure("Side.TLabel", background=SIDEBAR, foreground=INK)
+        s.configure("SideMuted.TLabel", background=SIDEBAR, foreground=FAINT, font=self.f_sub)
+        s.configure("Brand.TLabel", background=SIDEBAR, foreground=INK, font=self.f_title)
+        s.configure("BrandSub.TLabel", background=SIDEBAR, foreground=ACCENT, font=self.f_sub)
+        s.configure("PageTitle.TLabel", background=BG, foreground=INK, font=self.f_h1)
+        s.configure("PageSub.TLabel", background=BG, foreground=MUTED, font=self.f_sub)
+        s.configure("Status.TLabel", background=SIDEBAR, foreground=MUTED, font=self.f_sub)
         s.configure("OK.TLabel", background=BG, foreground=OK, font=self.f_sub)
 
         s.configure("TButton", background=SURF2, foreground=INK, bordercolor=BORDER,
-                    relief="flat", padding=(13, 8), font=self.f_base)
+                    relief="flat", padding=(13, 8), font=self.f_base, focuscolor=BG)
         s.map("TButton",
-              background=[("active", "#2c333f"), ("disabled", "#191d24")],
-              foreground=[("disabled", "#5b6573")],
+              background=[("active", SURF3), ("disabled", "#171b22")],
+              foreground=[("disabled", FAINT)],
               bordercolor=[("active", ACCENT)])
         s.configure("Accent.TButton", background=ACCENT, foreground=ACCENT_INK,
-                    bordercolor=ACCENT, relief="flat", padding=(15, 9), font=self.f_bold)
+                    bordercolor=ACCENT, relief="flat", padding=(16, 10), font=self.f_bold)
         s.map("Accent.TButton",
-              background=[("active", ACCENT_DK), ("disabled", "#2c4a3d")],
+              background=[("active", ACCENT_DK), ("disabled", "#27483a")],
               foreground=[("disabled", "#7f8b85")])
+        # Sidebar nav items (flat, left-aligned).
+        s.configure("Nav.TButton", background=SIDEBAR, foreground=MUTED, bordercolor=SIDEBAR,
+                    relief="flat", padding=(16, 11), font=self.f_base, anchor="w")
+        s.map("Nav.TButton", background=[("active", "#161b22")],
+              foreground=[("active", INK)])
+        s.configure("NavActive.TButton", background=ACCENT_SOFT, foreground=ACCENT,
+                    bordercolor=ACCENT_SOFT, relief="flat", padding=(16, 11),
+                    font=self.f_bold, anchor="w")
+        s.map("NavActive.TButton", background=[("active", ACCENT_SOFT)],
+              foreground=[("active", ACCENT)])
 
         s.configure("TCheckbutton", background=CARD, foreground=INK, font=self.f_base)
         s.map("TCheckbutton", background=[("active", CARD)],
               foreground=[("disabled", MUTED)],
               indicatorcolor=[("selected", ACCENT), ("!selected", SURF2)])
         s.configure("TEntry", fieldbackground=SURF2, foreground=INK, bordercolor=BORDER,
-                    insertcolor=INK, relief="flat", padding=5)
+                    insertcolor=INK, relief="flat", padding=6)
         s.map("TEntry", bordercolor=[("focus", ACCENT)])
         s.configure("TCombobox", fieldbackground=SURF2, foreground=INK, bordercolor=BORDER,
-                    arrowcolor=MUTED, padding=4)
+                    arrowcolor=MUTED, padding=5)
         s.map("TCombobox", fieldbackground=[("readonly", SURF2)],
               foreground=[("readonly", INK)], bordercolor=[("focus", ACCENT)])
 
-        s.configure("TNotebook", background=BG, borderwidth=0, tabmargins=(6, 6, 6, 0))
-        s.configure("TNotebook.Tab", background=BG, foreground=MUTED,
-                    padding=(18, 9), font=self.f_base, borderwidth=0)
-        s.map("TNotebook.Tab", background=[("selected", BG)],
-              foreground=[("selected", ACCENT), ("active", INK)])
-
         s.configure("TLabelframe", background=CARD, bordercolor=BORDER,
                     relief="solid", borderwidth=1)
-        s.configure("TLabelframe.Label", background=CARD, foreground=MUTED,
+        s.configure("TLabelframe.Label", background=CARD, foreground=ACCENT,
                     font=self.f_section)
         s.configure("Vertical.TScrollbar", background=SURF2, troughcolor=BG,
-                    bordercolor=BG, arrowcolor=MUTED, relief="flat")
-        s.map("Vertical.TScrollbar", background=[("active", "#333b48")])
+                    bordercolor=BG, arrowcolor=MUTED, relief="flat", width=12)
+        s.map("Vertical.TScrollbar", background=[("active", SURF3)])
 
     # -- layout ------------------------------------------------------------
     def _build(self):
-        header = ttk.Frame(self.root, style="Header.TFrame")
-        header.pack(fill="x")
-        inner = ttk.Frame(header, style="Header.TFrame")
-        inner.pack(fill="x", padx=20, pady=(14, 10))
-        ttk.Label(inner, text="◎  " + APP_NAME, style="Header.TLabel").pack(side="left")
-        ttk.Label(inner, text=f"   v{APP_VERSION}", style="HeaderSub.TLabel").pack(
-            side="left", pady=(6, 0))
-        ttk.Label(inner, text="AI swing desk", style="Accent.TLabel").pack(
-            side="right", pady=(6, 0))
-        ttk.Frame(header, style="Rule.TFrame", height=1).pack(fill="x")
+        outer = ttk.Frame(self.root)
+        outer.pack(fill="both", expand=True)
 
-        nb = ttk.Notebook(self.root)
-        nb.pack(fill="both", expand=True, padx=10, pady=(8, 4))
+        # ---- left sidebar (brand + nav + status) ----
+        side = ttk.Frame(outer, style="Side.TFrame", width=208)
+        side.pack(side="left", fill="y")
+        side.pack_propagate(False)
+        brand = ttk.Frame(side, style="Side.TFrame")
+        brand.pack(fill="x", padx=18, pady=(20, 6))
+        ttk.Label(brand, text="◎ " + APP_NAME, style="Brand.TLabel").pack(anchor="w")
+        ttk.Label(brand, text="AI swing desk", style="BrandSub.TLabel").pack(anchor="w")
+        ttk.Frame(side, style="Rule.TFrame", height=1).pack(fill="x", padx=14, pady=(10, 8))
 
-        cfg_tab = ttk.Frame(nb)
-        run_tab = ttk.Frame(nb)
-        lessons_tab = ttk.Frame(nb)
-        nb.add(run_tab, text="  Run  ")
-        nb.add(lessons_tab, text="  Lessons  ")
-        nb.add(cfg_tab, text="  Configuration  ")
-        nb.select(run_tab)
+        self._nav_btns: dict[str, ttk.Button] = {}
+        navwrap = ttk.Frame(side, style="Side.TFrame")
+        navwrap.pack(fill="x", padx=10)
+        for key, label in (("run", "  Desk"), ("lessons", "  Learning"),
+                           ("settings", "  Settings")):
+            b = ttk.Button(navwrap, text=label, style="Nav.TButton",
+                           takefocus=False, command=lambda k=key: self._show(k))
+            b.pack(fill="x", pady=2)
+            self._nav_btns[key] = b
 
-        self._build_config(cfg_tab)
-        self._build_run(run_tab)
-        self._build_lessons(lessons_tab)
-        nb.bind("<<NotebookTabChanged>>",
-                lambda e: self._refresh_lessons() if nb.tab(nb.select(), "text").strip()
-                == "Lessons" else None)
+        statusbox = ttk.Frame(side, style="Side.TFrame")
+        statusbox.pack(side="bottom", fill="x", padx=18, pady=16)
+        self.spinner = ttk.Label(statusbox, text="● ready", style="Status.TLabel")
+        self.spinner.pack(anchor="w")
+        ttk.Label(statusbox, text=f"v{APP_VERSION}", style="SideMuted.TLabel").pack(anchor="w")
+
+        ttk.Frame(outer, style="Rule.TFrame", width=1).pack(side="left", fill="y")
+
+        # ---- content area with stacked pages ----
+        self._content = ttk.Frame(outer)
+        self._content.pack(side="left", fill="both", expand=True)
+        self._pages: dict[str, ttk.Frame] = {}
+        for key, title, sub in (
+            ("run", "Desk", "Screen the market, analyze a name, run the agents"),
+            ("lessons", "Learning", "What the desk has learned from closed trades"),
+            ("settings", "Settings", "Credentials, data, strategy parameters")):
+            page = ttk.Frame(self._content)
+            head = ttk.Frame(page)
+            head.pack(fill="x", padx=22, pady=(18, 0))
+            ttk.Label(head, text=title, style="PageTitle.TLabel").pack(anchor="w")
+            ttk.Label(head, text=sub, style="PageSub.TLabel").pack(anchor="w", pady=(2, 0))
+            ttk.Frame(page, style="Rule.TFrame", height=1).pack(fill="x", padx=22, pady=(12, 0))
+            body = ttk.Frame(page)
+            body.pack(fill="both", expand=True)
+            self._pages[key] = page
+            page._body = body
+
+        self._build_run(self._pages["run"]._body)
+        self._build_lessons(self._pages["lessons"]._body)
+        self._build_config(self._pages["settings"]._body)
+        self._show("run")
+
+    def _show(self, key: str):
+        for k, page in self._pages.items():
+            page.pack_forget()
+        self._pages[key].pack(fill="both", expand=True)
+        for k, btn in self._nav_btns.items():
+            btn.configure(style="NavActive.TButton" if k == key else "Nav.TButton")
+        if key == "lessons":
+            self._refresh_lessons()
 
     def _add_fields(self, card, names):
         for i, name in enumerate(names):
@@ -355,6 +404,9 @@ class SwingApp:
         self.btn_val = ttk.Button(bar2, text="Validation harness",
                                   command=lambda: self._start(run_validation))
         self.btn_val.pack(side="left", padx=(0, 8))
+        self.btn_backtest = ttk.Button(bar2, text="Strategy backtest (vs S&P 500)",
+                                       command=lambda: self._start(run_strategy_backtest))
+        self.btn_backtest.pack(side="left", padx=(0, 8))
         self.btn_paper = ttk.Button(bar2, text="Paper backtest",
                                     command=lambda: self._start(run_paper))
         self.btn_paper.pack(side="left", padx=(0, 8))
@@ -384,21 +436,14 @@ class SwingApp:
         self.out.tag_configure("hl", foreground="#7fa8e8", font=self.f_mono)
         self.out.tag_configure("dim", foreground="#6f7b8e")
         self.out.configure(state="disabled")
-
-        # Status / spinner bar.
-        sbar = ttk.Frame(parent)
-        sbar.pack(fill="x", padx=14, pady=(0, 10))
-        self.spinner = ttk.Label(sbar, text="ready", style="Status.TLabel")
-        self.spinner.pack(side="left")
-        self._log(f"{APP_NAME} ready. Set a ticker and Analyze, or Find trade "
-                  "recommendations. Configure keys on the Configuration tab.")
+        self._log(f"{APP_NAME} ready. Screen the S&P 500 to find the best names, or "
+                  "analyze a ticker. Set keys under Settings.")
 
     def _build_lessons(self, parent):
         bar = ttk.Frame(parent)
-        bar.pack(fill="x", padx=14, pady=(12, 4))
-        ttk.Label(bar, text="What the desk has learned from closed trades "
-                  "(advisory; informs the agents on future runs).",
-                  style="Status.TLabel").pack(side="left")
+        bar.pack(fill="x", padx=22, pady=(14, 4))
+        ttk.Label(bar, text="Advisory lessons + base rates that inform the agents "
+                  "on future runs.", style="PageSub.TLabel").pack(side="left")
         ttk.Button(bar, text="Refresh", command=self._refresh_lessons).pack(side="right")
         ttk.Button(bar, text="Approve all", style="Accent.TButton",
                    command=self._approve_lessons).pack(side="right", padx=(0, 8))
@@ -538,6 +583,7 @@ class SwingApp:
         state = "disabled" if busy else "normal"
         self.btn_ticker.config(state=state)
         self.btn_screen.config(state=state)
+        self.btn_backtest.config(state=state)
         self.btn_recs.config(state=state)
         self.btn_momentum.config(state=state)
         self.btn_reddit.config(state=state)
@@ -547,7 +593,7 @@ class SwingApp:
         self.btn_alpaca.config(state=state)
         self.btn_hist.config(state=state)
         self.btn_filings.config(state=state)
-        self.spinner.config(text="running…" if busy else "ready")
+        self.spinner.config(text="● running…" if busy else "● ready")
 
     @staticmethod
     def _tag_for(line: str) -> str | None:

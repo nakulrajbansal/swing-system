@@ -956,9 +956,9 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
     import datetime
 
     from harness.data.loader import fetch_closes_batch
-    from harness.data.pit_store import PITStore  # noqa: F401 (kept for parity)
-    from harness.data.sp500 import screen_universe
-    from app.screen import prescreen
+    from harness.data.sp500 import SECTOR_ETFS, screen_universe, sector_of
+    from app.screen import prescreen, market_regime
+    from app import strategy
 
     cfg.apply_to_env()
     with _run_logger(emit, "screen") as (log, _path):
@@ -969,9 +969,10 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
             log("[mode] using the real LLM agents for the shortlist (bounded spend).")
 
         universe = screen_universe(cfg.screen_universe or None)
-        if "SPY" not in universe:
-            universe = universe + ["SPY"]            # benchmark for RS + regime
-        log(f"[universe] {len(universe)} names (S&P 500{' capped' if cfg.screen_universe else ''}).")
+        extras = ["SPY"] + list(SECTOR_ETFS.values())     # benchmark + sector ETFs
+        fetch_list = list(dict.fromkeys(universe + extras))
+        log(f"[universe] {len(universe)} S&P 500 names + benchmark/sector ETFs "
+            f"({len(fetch_list)} series).")
 
         today = datetime.date.today()
         start = (today - datetime.timedelta(days=420)).isoformat()
@@ -982,40 +983,71 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
             closes = pd.read_parquet(cache)
         else:
             with _redirect(log):
-                closes = fetch_closes_batch(universe, start, today.isoformat(), emit=log)
+                closes = fetch_closes_batch(fetch_list, start, today.isoformat(), emit=log)
             if not closes.empty:
                 closes.to_parquet(cache)
         if closes.empty:
             log("[error] no price data fetched for the pre-filter (check network).")
             return {"recommendations": []}
 
-        ranked, regime = prescreen(closes, top=max(15, int(cfg.screen_top_k) * 3))
+        # Regime read first, then adapt the factor weights to the regime + what the
+        # desk's own past trades say is working.
+        mem = _load_memory(cfg, log)
+        _memb = (len(mem.entries), len(mem.outcomes)) if mem else (0, 0)
+        regime0 = market_regime(closes)
+        weights = strategy.factor_weights(regime0, mem)
+        ranked, regime = prescreen(closes, top=max(15, int(cfg.screen_top_k) * 3),
+                                   weights=weights, sector_etfs=SECTOR_ETFS,
+                                   sector_of=sector_of())
+
+        risk_off = regime.get("available") and not regime.get("above_200dma")
         if regime.get("available"):
-            log(f"\n[regime] market is {regime['regime']} "
-                f"(SPY 6mo {regime['mom6_pct']:+.0f}%, "
-                f"{'above' if regime['above_200dma'] else 'below'} its 200-DMA).")
-            if not regime["above_200dma"]:
-                log("[regime] risk-off: be selective; favor cash and only the strongest "
-                    "relative-strength names survive the agents' bar.")
+            log(f"\n[regime] market is {regime['regime']} (SPY 6mo "
+                f"{regime['mom6_pct']:+.0f}%, "
+                f"{'above' if regime['above_200dma'] else 'below'} its 200-DMA). "
+                "Factor weights adapted accordingly.")
+            if risk_off:
+                log("[regime] risk-off: deep-diving fewer names, demanding the 200-DMA, "
+                    "and the suggested portfolio runs only ~50% invested.")
+
+        # Sector rotation leaderboard.
+        sec_rs = regime.get("sector_rs", {})
+        if sec_rs:
+            lead = sorted(sec_rs.items(), key=lambda kv: kv[1], reverse=True)
+            log("\n[sectors] relative strength vs SPY (leaders first):")
+            for s, v in lead[:4]:
+                log(f"    + {s}: {v * 100:+.0f}%")
+            for s, v in lead[-2:]:
+                log(f"    - {s}: {v * 100:+.0f}%")
+
         log(f"\n[leaderboard] top pre-filter names (of {len(closes.columns)} priced):")
-        log("  rank  symbol   score   RS_vs_mkt  6mo_mom  vs_high  RSI  trend")
+        log("  rank  symbol   score   RS_vs_mkt  6mo_mom  vs_high  RSI  gap   trend  sector")
         for i, m in enumerate(ranked[:15], 1):
             log(f"  {i:>4}  {m['symbol']:<6}  {m['score']:>5.2f}  "
                 f"{m['rs'] * 100:>+8.0f}%  {m['mom6'] * 100:>+6.0f}%  "
                 f"{m['dist_high'] * 100:>+6.0f}%  {m['rsi']:>3.0f}  "
-                f"{'up' if m['above_200dma'] else 'down'}")
+                f"{m['earnings_gap'] * 100:>+4.0f}  {'up ' if m['above_200dma'] else 'down'}  "
+                f"{(m.get('sector') or '')[:18]}")
 
-        top = ranked[: int(cfg.screen_top_k)]
-        log(f"\n[deep-dive] running the full AI agent panel on the top {len(top)} "
-            f"name(s): {', '.join(m['symbol'] for m in top)}")
+        # Regime-conditional shortlist: in risk-off, deep-dive fewer; never waste
+        # LLM on negative-score names.
+        k = int(cfg.screen_top_k)
+        if risk_off:
+            k = max(2, k // 2)
+        top = [m for m in ranked[:k] if m["score"] > 0]
+        if not top:
+            log("\n[deep-dive] no name cleared the pre-filter bar (score > 0) in this "
+                "regime; standing down. Default is to do nothing.")
+        else:
+            log(f"\n[deep-dive] full AI agent panel on the top {len(top)}: "
+                f"{', '.join(m['symbol'] for m in top)}")
 
-        mem = _load_memory(cfg, log)
-        _memb = (len(mem.entries), len(mem.outcomes)) if mem else (0, 0)
         recs, considered = [], []
+        sec_map = sector_of()
         for m in top:
             sym = m["symbol"]
-            log(f"\n{'#' * 60}\n# DEEP-DIVE: {sym}  (pre-filter score {m['score']:.2f}, "
-                f"RS {m['rs'] * 100:+.0f}%)\n{'#' * 60}")
+            log(f"\n{'#' * 60}\n# DEEP-DIVE: {sym}  (score {m['score']:.2f}, "
+                f"RS {m['rs'] * 100:+.0f}%, sector {m.get('sector') or '?'})\n{'#' * 60}")
             try:
                 with _redirect(log):
                     rec, action, decisive = _analyze_symbol(cfg, sym, client, real_llm, mem, log)
@@ -1024,6 +1056,7 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
                 continue
             considered.append((sym, action, decisive))
             if rec:
+                rec["sector"] = sec_map.get(sym, "?")
                 recs.append(rec)
 
         log("\n" + "=" * 60)
@@ -1033,22 +1066,99 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
             log("No BUY among the shortlist (the agents passed on all of them).")
         for r in sorted(recs, key=lambda x: x["conviction"], reverse=True):
             log(f"\n  RECOMMEND BUY {r['symbol']}  (conviction {r['conviction']}, "
-                f"families {r['families']})")
+                f"{r.get('sector', '?')})")
             log(f"    entry ~{r['entry']}   stop {r['stop']}   target {r['target']}")
             log(f"    hold ~{r['hold_days']} sessions  ->  exit by {r['exit_by']}")
-            log(f"    size @ ${float(cfg.starting_equity):,.0f}: {r['shares_at_ref_equity']} sh")
             log(f"    thesis: {_sent(r['thesis'], 240)}")
+
+        # Portfolio construction: conviction-scaled, capped, regime-budgeted.
+        portfolio = strategy.construct_portfolio(recs, float(cfg.starting_equity), regime)
+        if portfolio:
+            log("\n  SUGGESTED PORTFOLIO (conviction-weighted, capped, "
+                f"{'~50% invested - risk-off' if risk_off else 'fully invested'}):")
+            for p in portfolio:
+                log(f"    {p['symbol']:<6} {p['weight_pct']:>5.1f}%  "
+                    f"${p['dollars']:>10,.0f}  {p['shares']:>5} sh   "
+                    f"[{p['sector']}]")
+            inv = sum(p["weight_pct"] for p in portfolio)
+            log(f"    invested {inv:.0f}% / cash {max(0, 100 - inv):.0f}%")
+
         log("\n  shortlist verdicts:")
         for sym, act, why in considered:
             log(f"    {sym}: {act.upper()} - {_sent(why, 200)}")
         if real_llm:
             log(f"\n[cost] LLM calls this screen: {getattr(client, 'calls', 0)}")
         _save_memory(cfg, mem, log, _memb)
-        log(f"\n[done] screened {len(closes.columns)} names; deep-dived {len(top)}; "
+        log(f"\n[done] screened {len(closes.columns)} series; deep-dived {len(top)}; "
             f"{len(recs)} BUY recommendation(s).")
-    return {"recommendations": recs,
+    return {"recommendations": recs, "portfolio": portfolio if recs else [],
             "leaderboard": [(m["symbol"], m["score"]) for m in ranked[:15]],
-            "regime": regime}
+            "regime": {k2: v for k2, v in regime.items() if k2 != "sector_rs"}}
+
+
+def run_strategy_backtest(cfg: AppConfig, emit: Emit) -> dict:
+    """Honest walk-forward backtest of the pre-filter strategy: every hold-period,
+    rank the S&P 500 by the composite score using ONLY prior history, buy the
+    top-K equal-weight, hold, and compare realized returns to the benchmark
+    (CAGR, Sharpe, win rate, drawdown, excess vs SPY). No LLM, no look-ahead."""
+    import datetime
+
+    from harness.data.loader import fetch_closes_batch
+    from harness.data.sp500 import SECTOR_ETFS, screen_universe
+    from app.screen import _metrics
+    from app import strategy
+
+    cfg.apply_to_env()
+    with _run_logger(emit, "backtest") as (log, _path):
+        universe = screen_universe(cfg.screen_universe or None)
+        extras = ["SPY"] + list(SECTOR_ETFS.values())
+        fetch_list = list(dict.fromkeys(universe + extras))
+        today = datetime.date.today()
+        # ~3 years so the walk-forward has many periods.
+        start = (today - datetime.timedelta(days=1100)).isoformat()
+        cache = CONFIG_DIR / "data_store" / f"backtest_{len(fetch_list)}_{today.isoformat()}.parquet"
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        if cache.exists():
+            log(f"[data] using cached prices ({cache.name}).")
+            closes = pd.read_parquet(cache)
+        else:
+            log(f"[data] downloading ~3y prices for {len(fetch_list)} series "
+                "(first run is slow) ...")
+            with _redirect(log):
+                closes = fetch_closes_batch(fetch_list, start, today.isoformat(), emit=log)
+            if not closes.empty:
+                closes.to_parquet(cache)
+        if closes.empty:
+            log("[error] no price data; cannot backtest.")
+            return {}
+
+        hold = int(cfg.momentum_hold_days) or 10
+        k = max(int(cfg.screen_top_k), 5)
+        weights = strategy.factor_weights(None, None)   # stable base weights
+        log(f"[backtest] walk-forward: rank {len(closes.columns)} series, buy top {k} "
+            f"equal-weight, hold {hold} sessions, repeat. No look-ahead.")
+        with _redirect(log):
+            res = strategy.walk_forward_backtest(closes, _metrics, weights,
+                                                 top_k=k, hold_days=hold)
+        if res.get("error"):
+            log(f"[backtest] {res['error']}")
+            return res
+        log("\n" + "=" * 60)
+        log("WALK-FORWARD BACKTEST  (strategy vs S&P 500)")
+        log("=" * 60)
+        log(f"  periods: {res['periods']}  (top {res['top_k']}, hold {res['hold_days']} sessions)")
+        log(f"  strategy : total {res['strategy_total_return_pct']:+.1f}%   "
+            f"CAGR {res['strategy_cagr_pct']:+.1f}%   Sharpe {res['strategy_sharpe']}")
+        log(f"  benchmark: total {res['benchmark_total_return_pct']:+.1f}%   "
+            f"CAGR {res['benchmark_cagr_pct']:+.1f}%   Sharpe {res['benchmark_sharpe']}")
+        verdict = "BEATS" if res["excess_return_pct"] > 0 else "TRAILS"
+        log(f"  --> strategy {verdict} the benchmark by {res['excess_return_pct']:+.1f}% "
+            f"total;  win rate {res['win_rate_pct']:.0f}%,  max drawdown "
+            f"{res['max_drawdown_pct']:.1f}%")
+        log("\n[note] gross of slippage on the pre-filter alone (no agent gate). The "
+            "agents + Risk Governor are an additional discipline layer on top.")
+        log("[done] backtest complete.")
+    return res
 
 
 def run_momentum_trade(cfg: AppConfig, emit: Emit) -> dict:
