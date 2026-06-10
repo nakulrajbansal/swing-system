@@ -258,7 +258,35 @@ def run_portfolio_status(cfg: AppConfig, emit: Emit) -> dict:
             f"best {max(rows, key=lambda r: r[6])[0]} "
             f"({max(r[6] for r in rows):+.1f}%), worst "
             f"{min(rows, key=lambda r: r[6])[0]} ({min(r[6] for r in rows):+.1f}%).")
-        log("[note] unrealized P&L is gross of any open stop/target. The desk's edge "
+
+        # Risk guardrails: leverage (gross exposure vs equity) and single-name
+        # concentration vs the desk's 25%-per-name cap.
+        gross = tot_val / equity if equity else 0.0
+        if gross > 1.05:
+            log(f"\n[RISK] gross exposure ${tot_val:,.0f} is {gross:.2f}x your equity "
+                f"${equity:,.0f} (margin) - at {gross:.1f}x, a 10% adverse move is "
+                f"~{gross * 10:.0f}% of the account. The desk's plan is <=1.0x.")
+        heavy = [r for r in rows if equity and r[4] / equity > 0.25]
+        for r in heavy:
+            log(f"[RISK] {r[0]} is {r[4] / equity * 100:.0f}% of equity - above the "
+                "system's 25%-per-name cap; consider trimming.")
+
+        # Open (working / unfilled) orders — e.g. a limit set at a stale price.
+        try:
+            openo = broker._req("GET", "/v2/orders?status=open")
+        except Exception:
+            openo = []
+        if openo:
+            log(f"\n[open orders] {len(openo)} working (not yet filled):")
+            for o in openo:
+                lp = o.get("limit_price") or o.get("stop_price") or "mkt"
+                log(f"    {o.get('side', '?').upper()} {o.get('qty', '?')} "
+                    f"{o.get('symbol', '?')}  {o.get('type', '?')} @ {lp}  "
+                    f"status {o.get('status', '?')}")
+            log("    (a limit set at a stale screen price may never fill - re-place at "
+                "a current/marketable price, or cancel from your Alpaca dashboard.)")
+
+        log("\n[note] unrealized P&L is gross of any open stop/target. The desk's edge "
             "shows up over many closed trades, not one snapshot - keep re-checking and "
             "let the Learning tab accumulate outcomes.")
     return out
