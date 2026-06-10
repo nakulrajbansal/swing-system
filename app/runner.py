@@ -654,6 +654,17 @@ def _save_memory(cfg: AppConfig, mem, log: Emit, before: tuple[int, int]):
             f"saved to {path}")
 
 
+def _screen_universe(cfg: AppConfig):
+    """(symbols, sector_map, label, key) for the configured screen index."""
+    from harness.data.sp500 import screen_universe as sp_u, sector_of
+    from harness.data import nasdaq100 as nq
+    idx = (getattr(cfg, "screen_index", "sp500") or "sp500").lower()
+    cap = cfg.screen_universe or None
+    if idx == "qqq":
+        return nq.screen_universe(cap), sector_of(), "Nasdaq-100 (QQQ)", "qqq"
+    return sp_u(cap), sector_of(), "S&P 500", "sp500"
+
+
 def _macro_context(cfg: AppConfig, client, log: Emit):
     """Macro snapshot + a single shared MacroAnalyst read for this run (snapshot
     cached daily). Returns (snapshot, macro_read_dict) or (None, None)."""
@@ -1167,30 +1178,30 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
     import datetime
 
     from harness.data.loader import fetch_closes_batch
-    from harness.data.sp500 import SECTOR_ETFS, screen_universe, sector_of
+    from harness.data.sp500 import SECTOR_ETFS, sector_of
     from app.screen import prescreen, market_regime
     from app import strategy
 
     cfg.apply_to_env()
     with _run_logger(emit, "screen") as (log, _path):
         client, real_llm = _resolve_client(cfg, log)
-        log("[mode] SCREEN S&P 500 - free pre-filter over the whole universe, then "
+        universe, sec_of_map, label, idx_key = _screen_universe(cfg)
+        log(f"[mode] SCREEN {label} - free pre-filter over the whole universe, then "
             f"a full AI deep-dive on only the top {cfg.screen_top_k} (advisory; no orders).")
         if real_llm:
             log("[mode] using the real LLM agents for the shortlist (bounded spend).")
 
-        universe = screen_universe(cfg.screen_universe or None)
         extras = ["SPY"] + list(SECTOR_ETFS.values())     # benchmark + sector ETFs
         fetch_list = list(dict.fromkeys(universe + extras))
-        log(f"[universe] {len(universe)} S&P 500 names + benchmark/sector ETFs "
+        log(f"[universe] {len(universe)} {label} names + benchmark/sector ETFs "
             f"({len(fetch_list)} series).")
 
         today = datetime.date.today()
         start = (today - datetime.timedelta(days=420)).isoformat()
-        # Cache key includes the universe size so a capped test run never shadows a
-        # full-universe run (and vice versa).
+        # Cache key includes the index + universe size so different screens never
+        # shadow each other (sp500 vs qqq, capped vs full).
         cache = (CONFIG_DIR / "data_store" /
-                 f"prefilter_{today.isoformat()}_{len(fetch_list)}.parquet")
+                 f"prefilter_{today.isoformat()}_{idx_key}_{len(fetch_list)}.parquet")
         cache.parent.mkdir(parents=True, exist_ok=True)
         closes = pd.read_parquet(cache) if cache.exists() else pd.DataFrame()
         # Refetch if missing or if coverage is well short of what was requested
@@ -1223,7 +1234,7 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
         weights = strategy.factor_weights(regime0, mem)
         ranked, regime = prescreen(closes, top=max(15, int(cfg.screen_top_k) * 3),
                                    weights=weights, sector_etfs=SECTOR_ETFS,
-                                   sector_of=sector_of())
+                                   sector_of=sec_of_map)
 
         macro, macro_read = _macro_context(cfg, client, log)
         risk_off = regime.get("available") and not regime.get("above_200dma")
@@ -1278,7 +1289,7 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
                 f"{', '.join(m['symbol'] for m in top)}")
 
         recs, considered = [], []
-        sec_map = sector_of()
+        sec_map = sec_of_map
         for m in top:
             sym = m["symbol"]
             log(f"\n{'#' * 60}\n# DEEP-DIVE: {sym}  (score {m['score']:.2f}, "
@@ -1297,7 +1308,7 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
                 recs.append(rec)
 
         log("\n" + "=" * 60)
-        log(f"S&P 500 SCREEN RESULTS  ({today})  -- advisory only, no orders")
+        log(f"{label} SCREEN RESULTS  ({today})  -- advisory only, no orders")
         log("=" * 60)
         if not recs:
             log("No BUY among the shortlist (the agents passed on all of them).")
@@ -1339,7 +1350,7 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
                 "they typically need a better entry (a pullback) or one more "
                 "confirming signal. Re-run after a dip or set a tighter ticker.")
         if recs:
-            n = reco_ledger.record(recs, "screen", today.isoformat())
+            n = reco_ledger.record(recs, f"screen-{idx_key}", today.isoformat())
             if n:
                 log(f"\n[ledger] saved {n} recommendation(s) to track forward "
                     "performance (scored automatically after the hold window).")
@@ -1361,19 +1372,21 @@ def run_strategy_backtest(cfg: AppConfig, emit: Emit) -> dict:
     import datetime
 
     from harness.data.loader import fetch_closes_batch
-    from harness.data.sp500 import SECTOR_ETFS, screen_universe
+    from harness.data.sp500 import SECTOR_ETFS
     from app.screen import _metrics
     from app import strategy
 
     cfg.apply_to_env()
     with _run_logger(emit, "backtest") as (log, _path):
-        universe = screen_universe(cfg.screen_universe or None)
+        universe, _sec, label, idx_key = _screen_universe(cfg)
+        log(f"[backtest] universe: {label}")
         extras = ["SPY"] + list(SECTOR_ETFS.values())
         fetch_list = list(dict.fromkeys(universe + extras))
         today = datetime.date.today()
         # ~3 years so the walk-forward has many periods.
         start = (today - datetime.timedelta(days=1100)).isoformat()
-        cache = CONFIG_DIR / "data_store" / f"backtest_{len(fetch_list)}_{today.isoformat()}.parquet"
+        cache = (CONFIG_DIR / "data_store" /
+                 f"backtest_{idx_key}_{len(fetch_list)}_{today.isoformat()}.parquet")
         cache.parent.mkdir(parents=True, exist_ok=True)
         if cache.exists():
             log(f"[data] using cached prices ({cache.name}).")

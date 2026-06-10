@@ -46,12 +46,14 @@ _FIELDS = [
     ("momentum_hold_days", "Momentum hold (trading days)", "int"),
     ("momentum_max_positions", "Momentum max positions", "int"),
     ("reddit_top_k", "Reddit: tickers to analyze", "int"),
-    ("screen_top_k", "S&P 500 screen: deep-dive top K", "int"),
-    ("screen_universe", "S&P 500 screen: cap universe (0=all)", "int"),
+    ("screen_top_k", "Screen: deep-dive top K", "int"),
+    ("screen_universe", "Screen: cap universe (0=all)", "int"),
+    ("screen_index", "Screen index (default)", "choice"),
 ]
 
 # Allowed values for "choice" fields.
-_CHOICES = {"data_source": ["synthetic", "live"], "alpaca_env": ["paper", "live"]}
+_CHOICES = {"data_source": ["synthetic", "live"], "alpaca_env": ["paper", "live"],
+            "screen_index": ["sp500", "qqq"]}
 
 _FIELD_BY_NAME = {f[0]: f for f in _FIELDS}
 
@@ -66,7 +68,8 @@ _GROUPS = [
       "starting_equity", "oos_start"]),
     ("Strategy parameters",
      ["insider_history_quarters", "filing_history_count", "momentum_hold_days",
-      "momentum_max_positions", "reddit_top_k", "screen_top_k", "screen_universe"]),
+      "momentum_max_positions", "reddit_top_k", "screen_top_k", "screen_universe",
+      "screen_index"]),
 ]
 
 # -- palette (dark, layered: sidebar < content < card < raised; one accent) ----
@@ -380,10 +383,14 @@ class SwingApp:
         card1.pack(fill="x", padx=14, pady=6, ipady=6)
         bar = ttk.Frame(card1, style="Card.TFrame")
         bar.pack(fill="x", padx=8, pady=6)
-        self.btn_screen = ttk.Button(bar, text="◎  Screen S&P 500 (find best)",
+        self.btn_screen = ttk.Button(bar, text="◎  Screen S&P 500",
                                      style="Accent.TButton",
-                                     command=lambda: self._start(run_screen))
+                                     command=lambda: self._start(run_screen, screen_index="sp500"))
         self.btn_screen.pack(side="left", padx=(0, 8))
+        self.btn_screen_qqq = ttk.Button(bar, text="◎  Screen Nasdaq-100 (QQQ)",
+                                         style="Accent.TButton",
+                                         command=lambda: self._start(run_screen, screen_index="qqq"))
+        self.btn_screen_qqq.pack(side="left", padx=(0, 8))
         self.btn_recs = ttk.Button(bar, text="Scan core universe",
                                    command=lambda: self._start(run_recommendations, ticker=""))
         self.btn_recs.pack(side="left", padx=(0, 8))
@@ -675,6 +682,7 @@ class SwingApp:
         state = "disabled" if busy else "normal"
         self.btn_ticker.config(state=state)
         self.btn_screen.config(state=state)
+        self.btn_screen_qqq.config(state=state)
         self.btn_backtest.config(state=state)
         self.btn_recs.config(state=state)
         self.btn_momentum.config(state=state)
