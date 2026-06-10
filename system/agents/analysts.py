@@ -15,6 +15,7 @@ from system.agents.base import Agent
 from system.agents.prompts import (
     FUNDAMENTAL_ANALYST,
     GROWTH_ANALYST,
+    MACRO_ANALYST,
     TECHNICAL_ANALYST,
     VALUATION_ANALYST,
 )
@@ -132,6 +133,56 @@ class FundamentalAnalyst(Agent):
         score = _f(raw, "score", 0.5)
         stance = str(raw.get("stance") or _stance(score))
         return AnalystRead("fundamental", stance, score, str(raw.get("assessment", "")).strip(),
+                           _lst(raw.get("positives")), _lst(raw.get("concerns")))
+
+
+class MacroAnalyst(Agent):
+    name = "macro_analyst"
+    schema_name = "AnalystRead"
+
+    def __init__(self, client, model):
+        super().__init__(client, model, MACRO_ANALYST, max_tokens=600)
+
+    def deterministic(self, inputs: dict) -> AnalystRead:
+        mac = inputs.get("evidence", {}).get("macro", {})
+        if not mac.get("available"):
+            return AnalystRead("macro", "neutral", 0.5,
+                               "No macro snapshot available.", [], ["no macro data"])
+        pos, con = [], []
+        if mac.get("equity_regime") == "uptrend":
+            pos.append("equity index in an uptrend (above 200-DMA)")
+        else:
+            con.append("equity index below its 200-DMA (downtrend)")
+        vs = mac.get("vix_state")
+        if vs == "calm":
+            pos.append(f"VIX calm ({mac.get('vix')})")
+        elif vs == "stressed":
+            con.append(f"VIX stressed ({mac.get('vix')})")
+        elif vs == "elevated":
+            con.append(f"VIX elevated ({mac.get('vix')})")
+        if mac.get("credit") == "risk-on":
+            pos.append("credit risk-on (high-yield leading)")
+        elif mac.get("credit") == "risk-off":
+            con.append("credit risk-off (high-yield lagging)")
+        if mac.get("rates_trend") == "rising":
+            con.append("long rates rising (a headwind for risk multiples)")
+        elif mac.get("rates_trend") == "falling":
+            pos.append("rates falling (supportive)")
+        if mac.get("usd_trend") == "strengthening":
+            con.append("US dollar strengthening (headwind)")
+        if "cyclicals leading" in (mac.get("cyclical_vs_defensive") or ""):
+            pos.append("cyclicals leading defensives (risk appetite)")
+        elif "defensives leading" in (mac.get("cyclical_vs_defensive") or ""):
+            con.append("defensives leading (risk aversion)")
+        # Map the snapshot's backdrop score (~[-3,3]) to a 0..1 stance score.
+        score = max(0.0, min(1.0, 0.5 + float(mac.get("score", 0)) / 6.0))
+        return AnalystRead("macro", _stance(score), score,
+                           mac.get("summary", "")[:400], pos, con)
+
+    def parse(self, raw: dict, inputs: dict) -> AnalystRead:
+        score = _f(raw, "score", 0.5)
+        stance = str(raw.get("stance") or _stance(score))
+        return AnalystRead("macro", stance, score, str(raw.get("assessment", "")).strip(),
                            _lst(raw.get("positives")), _lst(raw.get("concerns")))
 
 

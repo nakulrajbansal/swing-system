@@ -62,7 +62,8 @@ class PaperTradingEngine:
     def __init__(self, store: PITStore, sector_map: dict, config: SystemConfig | None = None,
                  client: LLMClient | None = None, starting_equity: float = 100_000.0,
                  edges: list | None = None, memory: LessonMemory | None = None,
-                 auto_approve_lessons: bool = True):
+                 auto_approve_lessons: bool = True, macro: dict | None = None,
+                 macro_read: dict | None = None):
         self.store = store
         self.sector_map = sector_map
         self.cfg = config or DEFAULT_CONFIG
@@ -101,7 +102,7 @@ class PaperTradingEngine:
             SkepticAgent(self.client, m.adversarial),
             PortfolioManagerAgent(self.client, m.adversarial),
             self.cfg, price_lookup=self._price_lookup, analysts=self.analysts,
-            memory=self.memory)
+            memory=self.memory, macro=macro, macro_read=macro_read)
 
         # Fully-adjusted panels (outcomes/fills replay realized bars).
         last = available_at_for_session(self._last_session()) + pd.Timedelta(days=1)

@@ -39,7 +39,8 @@ class CycleResult:
 class Orchestrator:
     def __init__(self, store, specialists: list[EdgeSpecialist], hypothesis,
                  skeptic, portfolio_manager, config: SystemConfig,
-                 price_lookup=None, analysts=None, memory=None):
+                 price_lookup=None, analysts=None, memory=None,
+                 macro=None, macro_read=None):
         self.store = store
         self.specialists = specialists
         self.analysts = list(analysts or [])      # technical / fundamental analysts
@@ -48,6 +49,8 @@ class Orchestrator:
         self.pm = portfolio_manager
         self.cfg = config
         self.memory = memory                      # LessonMemory (advisory recall), or None
+        self.macro = macro                        # shared macro snapshot (same for all names)
+        self.macro_read = macro_read              # precomputed macro AnalystRead dict, or None
         # price_lookup(symbol, view) -> adjusted OHLCV df; defaults to view.prices.
         self.price_lookup = price_lookup or (lambda sym, view: view.prices(sym))
 
@@ -119,6 +122,8 @@ class Orchestrator:
 
         # Give the agents the real, domain-specific evidence their expertise needs.
         evidence = assemble_evidence(view, cand.symbol)
+        if self.macro:                            # shared macro backdrop (same for all)
+            evidence["macro"] = self.macro
         confluence = {"n_families": cand.n_families,
                       "combined_score": cand.combined_score,
                       "strong_single": cand.strong_single,
@@ -145,6 +150,13 @@ class Orchestrator:
             # over the evidence, fed to the trio. Advisory — a failed analyst is
             # skipped, it never fails the candidate.
             analyst_reads = []
+            # The macro read is computed once per run and shared across all names.
+            if self.macro_read:
+                analyst_reads.append(self.macro_read)
+                transcript["steps"].append(
+                    {"agent": "macro_analyst", "model": self.macro_read.get("_model", "-"),
+                     "system_prompt": "", "inputs": {"scope": "market-wide"},
+                     "output": {k: v for k, v in self.macro_read.items() if k != "_model"}})
             for an in self.analysts:
                 an_in = {"symbol": cand.symbol, "evidence": evidence}
                 try:

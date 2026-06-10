@@ -654,6 +654,43 @@ def _save_memory(cfg: AppConfig, mem, log: Emit, before: tuple[int, int]):
             f"saved to {path}")
 
 
+def _macro_context(cfg: AppConfig, client, log: Emit):
+    """Macro snapshot + a single shared MacroAnalyst read for this run (snapshot
+    cached daily). Returns (snapshot, macro_read_dict) or (None, None)."""
+    import dataclasses
+    import datetime
+    import json
+
+    from harness.data.macro import fetch_macro_snapshot
+    from system.agents.analysts import MacroAnalyst
+    from system.config import DEFAULT_CONFIG
+
+    cache = CONFIG_DIR / "data_store" / f"macro_{datetime.date.today().isoformat()}.json"
+    snap = None
+    if cache.exists():
+        try:
+            snap = json.loads(cache.read_text(encoding="utf-8"))
+        except Exception:
+            snap = None
+    if not snap:
+        with _redirect(log):
+            snap = fetch_macro_snapshot(emit=log)
+        if snap.get("available"):
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps(snap), encoding="utf-8")
+    if not snap or not snap.get("available"):
+        log("[macro] snapshot unavailable; proceeding without the macro read.")
+        return None, None
+    log(f"[macro] {snap.get('summary', '')}")
+    try:
+        read = MacroAnalyst(client, DEFAULT_CONFIG.models.framing).run(
+            {"symbol": "_MACRO_", "evidence": {"macro": snap}})
+        return snap, dataclasses.asdict(read)
+    except Exception as exc:
+        log(f"[macro] analyst read failed ({exc}); using the snapshot only.")
+        return snap, None
+
+
 _AGENT_ROLE = {
     "memory": "Recalled lessons & base rates",
     "technical_analyst": "Technical analyst", "fundamental_analyst": "Fundamental analyst",
@@ -834,6 +871,7 @@ def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
                       rec: dict | None, equity: float) -> None:
     """Readable scorecard: technicals, valuation/growth, filings, what's good/bad,
     the agents' reasoning, the buy/no-buy verdict, and the trade plan if a buy."""
+    macro_r = _step_out(transcript, "macro_analyst")
     tech = _step_out(transcript, "technical_analyst")
     fund = _step_out(transcript, "fundamental_analyst")
     val = _step_out(transcript, "valuation_analyst")
@@ -881,8 +919,13 @@ def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
     _h("FILINGS & INSIDER")
     for ln in _assess_filings(evidence.get("filings", {}), evidence.get("insider", {})):
         log(ln)
-    if tech or fund or val or grow:
+    mac = evidence.get("macro", {})
+    if mac.get("available"):
+        _h("MACRO BACKDROP")
+        log(f"  {mac.get('summary', '')}")
+    if macro_r or tech or fund or val or grow:
         _h("ANALYST READS")
+        _panel("Macro      ", macro_r)
         _panel("Technical  ", tech)
         _panel("Fundamental", fund)
         _panel("Valuation  ", val)
@@ -957,6 +1000,7 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
 
         mem = _load_memory(cfg, log)
         _memb = (len(mem.entries), len(mem.outcomes)) if mem else (0, 0)
+        macro, macro_read = _macro_context(cfg, client, log)
         recs, considered = [], []
         with _redirect(log):
             if ticker:
@@ -967,7 +1011,8 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
                                         starting_equity=float(cfg.starting_equity),
                                         edges=list(ALL_FREE_EDGES),   # ungated
                                         memory=mem,
-                                        auto_approve_lessons=cfg.auto_approve_lessons)
+                                        auto_approve_lessons=cfg.auto_approve_lessons,
+                                        macro=macro, macro_read=macro_read)
             session = engine._last_session()
             T = available_at_for_session(session)
             gov = RiskGovernor(DEFAULT_CONFIG)
@@ -1056,10 +1101,11 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
     return {"session": str(session.date()), "recommendations": recs}
 
 
-def _analyze_symbol(cfg: AppConfig, sym: str, client, real_llm: bool, mem, log: Emit):
+def _analyze_symbol(cfg: AppConfig, sym: str, client, real_llm: bool, mem, log: Emit,
+                    macro=None, macro_read=None):
     """Full multi-agent deep-dive on one symbol (data + analysts + trio). Returns
-    (rec | None, pm_action, decisive). Used by the S&P 500 screen for each
-    shortlisted name and reused for ad-hoc analysis."""
+    (rec | None, pm_action, decisive, conviction). Used by the S&P 500 screen for
+    each shortlisted name and reused for ad-hoc analysis."""
     from harness.data.loader import available_at_for_session
     from harness.data import calendar as cal
     from harness.signals import ALL_FREE_EDGES
@@ -1072,7 +1118,8 @@ def _analyze_symbol(cfg: AppConfig, sym: str, client, real_llm: bool, mem, log: 
     engine = PaperTradingEngine(store, sector_map, client=client,
                                 starting_equity=float(cfg.starting_equity),
                                 edges=list(ALL_FREE_EDGES), memory=mem,
-                                auto_approve_lessons=cfg.auto_approve_lessons)
+                                auto_approve_lessons=cfg.auto_approve_lessons,
+                                macro=macro, macro_read=macro_read)
     session = engine._last_session()
     T = available_at_for_session(session)
     cand, _decision, transcript = engine.orchestrator.deliberate_symbol(T, sym)
@@ -1178,7 +1225,11 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
                                    weights=weights, sector_etfs=SECTOR_ETFS,
                                    sector_of=sector_of())
 
+        macro, macro_read = _macro_context(cfg, client, log)
         risk_off = regime.get("available") and not regime.get("above_200dma")
+        if macro and macro.get("backdrop") == "hostile":
+            risk_off = True
+            log("[macro] hostile backdrop -> risk-off: fewer, more selective picks.")
         dropped = regime.get("dropped_bad_data", 0)
         if dropped:
             log(f"[prefilter] dropped {dropped} name(s) with implausible/corrupt "
@@ -1235,7 +1286,7 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
             try:
                 with _redirect(log):
                     rec, action, decisive, conv = _analyze_symbol(
-                        cfg, sym, client, real_llm, mem, log)
+                        cfg, sym, client, real_llm, mem, log, macro, macro_read)
             except Exception as exc:
                 log(f"[deep-dive] {sym} failed: {type(exc).__name__}: {exc}")
                 continue
@@ -1692,12 +1743,14 @@ def run_deliberation(cfg: AppConfig, emit: Emit) -> dict:
                     getattr(client, "calls", 0)}
 
         mem = _load_memory(cfg, log)
+        macro, macro_read = _macro_context(cfg, client, log)
         with _redirect(log):
             store, sector_map = _build_store(cfg, log)
             engine = PaperTradingEngine(store, sector_map, client=client,
                                         starting_equity=float(cfg.starting_equity),
                                         edges=edges, memory=mem,
-                                        auto_approve_lessons=cfg.auto_approve_lessons)
+                                        auto_approve_lessons=cfg.auto_approve_lessons,
+                                        macro=macro, macro_read=macro_read)
             session = engine._last_session()
             from harness.data.loader import available_at_for_session
             T = available_at_for_session(session)
