@@ -388,9 +388,20 @@ def run_curation(cfg: AppConfig, emit: Emit) -> dict:
     with _run_logger(emit, "curator") as (log, _path):
         client, _real = _resolve_client(cfg, log)
         mem = load_memory()
-        scored = [r for r in reco_ledger.load() if r.get("status") == "evaluated"]
+        rows = reco_ledger.load()
+        scored = [r for r in rows if r.get("status") == "evaluated"]
         log(f"[curator] reviewing the desk's record: {len(scored)} scored "
             f"recommendation(s), {len(mem.entries)} lesson(s) in memory.")
+        if not scored:
+            opens = sorted(str(r.get("exit_by") or "") for r in rows
+                           if r.get("status") == "open" and r.get("exit_by"))
+            if opens:
+                log(f"[curator] nothing to grade yet: {len(opens)} open "
+                    f"recommendation(s); the earliest matures {opens[0]} - the "
+                    "self-review gets its first real evidence then.")
+            else:
+                log("[curator] no recommendations on the ledger yet - run a "
+                    "screen or a deep-dive to start the record.")
         stats = assess(reco_ledger.load())["stats"]
         for key, label in (("overall", "overall"), ("hidden_gem", "hidden-gem"),
                            ("core", "core"), ("moat_bullish", "moat-bullish")):
@@ -941,6 +952,23 @@ def _r_multiple(entry_price, stop, current) -> float:
         return (float(current) - float(entry_price)) / risk
     except (TypeError, ValueError):
         return 0.0
+
+
+def _staleness_note(session, log: Emit) -> None:
+    """Note when the latest available session lags today by 2+ trading days —
+    the analysis is still valid, but prices/levels are not this morning's."""
+    import datetime
+
+    try:
+        behind = len(pd.bdate_range(pd.Timestamp(session).normalize(),
+                                    pd.Timestamp(datetime.date.today()))) - 1
+        if behind >= 2:
+            log(f"[note] latest available session is {pd.Timestamp(session).date()} "
+                f"({behind} trading days behind today) - the data vendor lags at "
+                "this hour; entry/stop levels reflect that close, not the "
+                "current price.")
+    except Exception:
+        pass
 
 
 def _pullback_entry(action: str, pm_entry, ref: float):
@@ -1509,6 +1537,7 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
             gov = RiskGovernor(DEFAULT_CONFIG)
             mode = "real LLM" if real_llm else "deterministic"
 
+            _staleness_note(session, log)
             if ticker:
                 log(f"\n[analyze] {ticker} | session {session.date()} | agents: {mode}")
                 cand, _decision, transcript = engine.orchestrator.deliberate_symbol(T, ticker)
@@ -1619,6 +1648,7 @@ def _analyze_symbol(cfg: AppConfig, sym: str, client, real_llm: bool, mem, log: 
                                 macro=macro, macro_read=macro_read)
     session = engine._last_session()
     T = available_at_for_session(session)
+    _staleness_note(session, log)
     cand, _decision, transcript = engine.orchestrator.deliberate_symbol(T, sym)
     _print_transcript(log, sym, transcript, bool(cfg.verbose_agents))
     hyp = _step_out(transcript, "hypothesis")
