@@ -749,13 +749,27 @@ def _clean_filing_text(html: str, cap_chars: int = 400_000) -> str:
     t = re.sub(r"https?://\S+", " ", t)
     t = " ".join(tok for tok in t.split() if not _looks_like_noise(tok))
     t = re.sub(r"\s+", " ", t).strip()
-    # Prefer to begin at the substantive body (skip cover-page boilerplate).
-    for anchor in (r"Risk Factors", r"Management.s Discussion",
-                   r"PART I", r"Item\s*1A", r"Item\s*2"):
-        m = re.search(anchor, t, re.I)
-        if m and m.start() < len(t) * 0.5:
-            t = t[m.start():]
-            break
+    # Begin at the REAL risk-factors section, not its table-of-contents entry.
+    # The TOC lists "Item 1A. Risk Factors" early, surrounded by other "Item N"
+    # lines; the actual section is a later occurrence followed by prose. Scan
+    # candidates last-to-first and take the first whose following text is not
+    # heading soup.
+    best = None
+    for m in re.finditer(r"Item\s*1A\.?\s*[—–:\-]?\s*Risk Factors", t, re.I):
+        after = t[m.start():m.start() + 1500]
+        n_items = len(re.findall(r"Item\s*\d", after, re.I))
+        if len(after) > 600 and n_items <= 3:    # prose, not a TOC block
+            best = m.start()                      # keep the LAST qualifying one
+    if best is not None:
+        t = t[best:]
+    else:
+        # Fallback anchors (skip cover-page boilerplate at least).
+        for anchor in (r"Management.s Discussion", r"Risk Factors",
+                       r"PART I", r"Item\s*1A", r"Item\s*2"):
+            m = re.search(anchor, t, re.I)
+            if m and m.start() < len(t) * 0.5:
+                t = t[m.start():]
+                break
     return t[:cap_chars]
 
 

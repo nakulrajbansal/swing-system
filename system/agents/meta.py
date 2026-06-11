@@ -53,6 +53,11 @@ class GuardianAgent(Agent):
             return GuardianDecision(symbol, "exit", inputs.get("reason", "thesis broken"))
         return GuardianDecision(symbol, "hold")
 
+    def parse(self, raw: dict, inputs: dict) -> GuardianDecision:
+        action = "exit" if str(raw.get("action", "hold")).strip().lower() == "exit" else "hold"
+        return GuardianDecision(inputs["symbol"], action,
+                                str(raw.get("reason", "")).strip()[:300])
+
 
 class ReflectionAgent(Agent):
     name = "reflection"

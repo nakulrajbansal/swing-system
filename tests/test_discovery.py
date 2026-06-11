@@ -208,6 +208,54 @@ def test_pullback_entry_surfaces_pm_adjust_price():
     assert _pullback_entry("adjust", 658.9, 659.52) is None     # <0.5% below: noise
 
 
+def test_ledger_mark_closed_realizes_actual_fills(tmp_path):
+    from app import reco_ledger
+
+    p = tmp_path / "ledger.json"
+    reco_ledger.record([{"symbol": "SITM", "entry": 659.52, "hold_days": 10,
+                         "exit_by": "2026-06-24", "conviction": 0.58}],
+                       "screen-sp400", "2026-06-11", path=p)
+    plan = reco_ledger.open_for("SITM", path=p)
+    assert plan and plan["exit_by"] == "2026-06-24"
+    # Close out with the ACTUAL fill prices (which differ from the rec's ref).
+    r = reco_ledger.mark_closed("SITM", exit_price=700.0, when="2026-06-24",
+                                reason="time", entry_price=655.0, path=p)
+    assert r["status"] == "evaluated" and r["outcome"] == "time"
+    assert abs(r["return_pct"] - 6.87) < 0.01          # 700/655 - 1
+    assert reco_ledger.open_for("SITM", path=p) is None  # no longer open
+
+
+def test_guardian_exit_only_on_broken_thesis():
+    from system.agents.llm_client import MockLLMClient
+    from system.agents.meta import GuardianAgent
+    from system.config import SystemConfig
+
+    g = GuardianAgent(MockLLMClient(), SystemConfig().models.framing)
+    hold = g.run({"symbol": "SITM", "pnl_pct": -4.0})       # drawdown alone: hold
+    assert hold.action == "hold"
+    ex = g.run({"symbol": "SITM", "thesis_broken": True,
+                "reason": "price at/below the planned stop"})
+    assert ex.action == "exit" and "stop" in ex.reason
+    # Real-LLM parse path maps loose JSON onto the schema (never 'add').
+    parsed = g.parse({"action": "EXIT", "reason": "guidance withdrawn"},
+                     {"symbol": "SITM"})
+    assert parsed.action == "exit"
+    assert g.parse({"action": "buy more"}, {"symbol": "SITM"}).action == "hold"
+
+
+def test_clean_filing_text_skips_table_of_contents():
+    from harness.data.loader import _clean_filing_text
+
+    toc = " ".join(f"<p>Item {i}. Section</p>" for i in (1, 2, 3))
+    html = ("<p>Item 1A. Risk Factors</p>" + toc +
+            "<p>Item 1B. Staff Comments</p><p>Item 2. Properties</p>"
+            "<div>" + "cover boilerplate " * 60 + "</div>"
+            "<h2>Item 1A. Risk Factors</h2><p>The following risks could harm us. "
+            + "Demand may fall and competition may intensify. " * 80 + "</p>")
+    out = _clean_filing_text(html)
+    assert "The following risks" in out[:120]    # anchored at the real section
+
+
 def test_midsmall_universe_static_fallback(monkeypatch):
     from harness.data import midsmall as ms
 

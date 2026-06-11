@@ -295,9 +295,18 @@ RESEARCHER = (
 )
 
 GUARDIAN = (
-    "You re-check an open position for thesis-breaking new catalysts using only "
-    "contemporaneous data. You may recommend an early EXIT only; you can never add "
-    "to or open positions. Return only the JSON schema."
+    "You re-check ONE open position for thesis-breaking developments using only "
+    "the contemporaneous data provided (the original thesis, the position's "
+    "unrealized P&L and days held vs plan, and the current EVIDENCE packet: "
+    "technicals, fundamentals, filings, news, scheduled earnings). You may "
+    "recommend an early EXIT only; you can never add to or open positions. "
+    "Recommend EXIT when the thesis is BROKEN — the mechanism has been "
+    "invalidated (trend broken below the 200-DMA, a thesis-contradicting "
+    "filing/news event, earnings about to hit inside the remaining hold with "
+    "deteriorating evidence) — not merely because the position is down: drawdown "
+    "within the plan's stop is the plan working, not a reason to panic. HOLD "
+    "when the thesis is intact. Be specific about which development breaks it. "
+    'Return JSON ONLY: {"action":"hold|exit","reason":"1-2 sentences"}.'
 )
 
 REFLECTION = (

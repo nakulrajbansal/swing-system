@@ -359,6 +359,139 @@ def place_manual_order(cfg: AppConfig, order: dict, emit: Emit) -> dict:
         return {"ok": True, "id": oid, "status": status}
 
 
+def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
+    """Manage the OPEN side of the book — the other half of the trade lifecycle.
+
+    For every broker position: show it against its plan (the ledger entry that
+    recommended it), CLOSE positions held past their planned exit date (a time
+    exit honors the trade's own plan and only reduces risk), and run the
+    Guardian on the rest for thesis-breaking developments. Guardian EXIT advice
+    auto-closes only when 'Place orders' is ON; otherwise it is advisory.
+    Momentum-flow positions are managed by the momentum cycle and only noted."""
+    import datetime
+
+    from app import reco_ledger
+    from app.momentum import load_positions
+    from harness.data.loader import available_at_for_session
+    from system.agents.meta import GuardianAgent
+    from system.config import DEFAULT_CONFIG
+    from system.data_plane.evidence import assemble_evidence
+
+    cfg.apply_to_env()
+    out = {"open": 0, "time_exits": [], "guardian_exits": [], "advised": []}
+    with _run_logger(emit, "review") as (log, _path):
+        if not (cfg.alpaca_key_id and cfg.alpaca_secret):
+            log("[error] Alpaca key id + secret required (Settings).")
+            return out
+        try:
+            broker = _alpaca_broker(cfg)
+            raw = broker._req("GET", "/v2/positions")
+        except Exception as exc:
+            log(f"[error] could not read Alpaca positions: {exc}")
+            return out
+        if not raw:
+            log("[review] no open positions - nothing to manage.")
+            return out
+
+        client, real_llm = _resolve_client(cfg, log)
+        guardian = GuardianAgent(client, DEFAULT_CONFIG.models.framing)
+        mem = _load_memory(cfg, log)
+        _memb = (len(mem.entries), len(mem.outcomes)) if mem else (0, 0)
+        today = datetime.date.today().isoformat()
+        momentum_syms = set(load_positions().get(cfg.alpaca_env, {}))
+        out["open"] = len(raw)
+        log(f"[review] {len(raw)} open position(s) on {cfg.alpaca_env.upper()} - "
+            "checking each against its plan ...")
+
+        for p in raw:
+            sym = p.get("symbol")
+            qty = float(p.get("qty", 0))
+            avg = float(p.get("avg_entry_price", 0) or 0)
+            cur = float(p.get("current_price", 0) or 0)
+            plpc = float(p.get("unrealized_plpc", 0) or 0) * 100
+            plan = reco_ledger.open_for(sym)
+            held = ((datetime.date.today()
+                     - datetime.date.fromisoformat(plan["date"])).days
+                    if plan and plan.get("date") else None)
+            bar = "-" * 56
+            log(f"\n  {sym}: {qty:.0f} sh @ {avg:.2f} -> {cur:.2f}  ({plpc:+.1f}%)")
+            log(f"  {bar}")
+            if sym in momentum_syms:
+                log("  managed by the momentum flow (time exit fires on its own "
+                    "cycle) - not touched here.")
+                continue
+            if not plan:
+                log("  no plan on file (not from a screen/deep-dive ticket) - "
+                    "review manually; nothing automated.")
+                continue
+            log(f"  plan: entry ~{plan.get('entry')}  stop {plan.get('stop')}  "
+                f"target {plan.get('target')}  exit by {plan.get('exit_by')}  "
+                f"(held {held}d)")
+
+            # 1) TIME EXIT: past the plan's exit date -> close (the plan's own rule).
+            if plan.get("exit_by") and today >= str(plan["exit_by"]):
+                log(f"  [exit] {today} >= planned exit {plan['exit_by']} -> "
+                    "closing at market (time exit per the trade's own plan).")
+                try:
+                    broker.close_position(sym)
+                except Exception as exc:
+                    log(f"  [error] close failed: {exc}")
+                    continue
+                reco_ledger.mark_closed(sym, cur, today, "time",
+                                        entry_price=avg, memory=mem)
+                out["time_exits"].append(sym)
+                continue
+
+            # 2) GUARDIAN: thesis-breaking developments? (advisory by default)
+            ginputs = {"symbol": sym, "thesis": plan.get("thesis", ""),
+                       "pnl_pct": round(plpc, 1), "days_held": held,
+                       "plan": {k: plan.get(k) for k in
+                                ("entry", "stop", "target", "exit_by", "hold_days")}}
+            if plan.get("stop") and cur and cur <= float(plan["stop"]):
+                ginputs["thesis_broken"] = True
+                ginputs["reason"] = (f"price {cur:.2f} is at/below the planned stop "
+                                     f"{plan['stop']} - the protective order may not "
+                                     "have fired")
+            if real_llm:
+                try:
+                    with _redirect(log):
+                        store, _sm = _build_ticker_store(cfg, sym, log)
+                        last = pd.to_datetime(store.read_table("prices")["date"]).max()
+                        view = store.as_of(available_at_for_session(last))
+                        ginputs["evidence"] = assemble_evidence(view, sym)
+                except Exception as exc:
+                    log(f"  [guardian] evidence fetch skipped ({exc}).")
+            try:
+                d = guardian.run(ginputs)
+            except Exception as exc:
+                log(f"  [guardian] failed ({exc}) - defaulting to HOLD.")
+                continue
+            if d.action == "exit":
+                log(f"  [guardian] EXIT recommended: {_sent(d.reason, 280)}")
+                if cfg.place_orders:
+                    try:
+                        broker.close_position(sym)
+                        reco_ledger.mark_closed(sym, cur, today, "guardian",
+                                                entry_price=avg, memory=mem)
+                        out["guardian_exits"].append(sym)
+                        log("  [exit] closed at market (place_orders is ON).")
+                    except Exception as exc:
+                        log(f"  [error] close failed: {exc}")
+                else:
+                    out["advised"].append(sym)
+                    log("  [advice] advisory only - close manually or turn ON "
+                        "'Place approved orders' to let the review close it.")
+            else:
+                log(f"  [guardian] HOLD - thesis intact"
+                    f"{(': ' + _sent(d.reason, 200)) if d.reason else '.'}")
+
+        _save_memory(cfg, mem, log, _memb)
+        log(f"\n[done] review complete: {len(out['time_exits'])} time exit(s), "
+            f"{len(out['guardian_exits'])} guardian exit(s), "
+            f"{len(out['advised'])} advisory exit(s).")
+    return out
+
+
 def _maybe_place_orders(cfg: AppConfig, tickets, sector_map, log: Emit) -> None:
     if not cfg.place_orders:
         if tickets:
@@ -391,6 +524,38 @@ def _maybe_place_orders(cfg: AppConfig, tickets, sector_map, log: Emit) -> None:
                 f"{o.get('id', '?')} status {o.get('status', '?')}")
         except Exception as exc:
             log(f"  [orders] {t.symbol}: FAILED - {exc}")
+
+
+def _account_snapshot(cfg: AppConfig, log: Emit) -> dict | None:
+    """Real Alpaca account equity/buying power, or None (no keys / unreachable).
+
+    Sizing every ticket and suggested portfolio off the REAL account is what
+    makes the numbers in the app actionable — a $100k default produced 21-share
+    tickets against $2.6k of buying power."""
+    if not (cfg.alpaca_key_id and cfg.alpaca_secret):
+        return None
+    try:
+        acct = _alpaca_broker(cfg).account()
+        eq = float(acct.get("equity") or 0.0)
+        bp = float(acct.get("buying_power") or acct.get("cash") or 0.0)
+        if eq > 0:
+            return {"equity": eq, "buying_power": bp}
+    except Exception as exc:
+        log(f"[account] could not read the Alpaca account ({exc}); "
+            "sizing from the configured equity instead.")
+    return None
+
+
+def _resolve_equity(cfg: AppConfig, log: Emit) -> tuple[float, float | None]:
+    """(sizing equity, buying_power | None) — real account when available."""
+    acct = _account_snapshot(cfg, log)
+    if acct:
+        log(f"[account] sizing from your real {cfg.alpaca_env.upper()} account: "
+            f"equity ${acct['equity']:,.0f}, buying power ${acct['buying_power']:,.0f}.")
+        return acct["equity"], acct["buying_power"]
+    log(f"[account] no broker account available - sizing from configured equity "
+        f"${float(cfg.starting_equity):,.0f}.")
+    return float(cfg.starting_equity), None
 
 
 def _build_store(cfg: AppConfig, emit: Emit):
@@ -1148,6 +1313,7 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
             if str(cfg.end_date) < today:
                 cfg = dataclasses.replace(cfg, end_date=today)
 
+        equity, buying_power = _resolve_equity(cfg, log)
         mem = _load_memory(cfg, log)
         _memb = (len(mem.entries), len(mem.outcomes)) if mem else (0, 0)
         macro, macro_read = _macro_context(cfg, client, log)
@@ -1194,7 +1360,7 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
                     if px is not None and session in px.index:
                         ref = float(px.loc[session, "close"])
                         atr = last_atr(px.loc[px.index <= session].reset_index())
-                        ctx = GovernorContext(equity=float(cfg.starting_equity),
+                        ctx = GovernorContext(equity=equity,
                                               reference_price=ref,
                                               atr_value=atr if atr == atr else 0.0,
                                               sector=sector_map.get(cand.symbol, "?"))
@@ -1217,9 +1383,11 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
                             "suggested_entry": _pullback_entry(pm.get("action"),
                                                                pm.get("entry"), ref),
                         }
+                        if buying_power is not None and ref > 0:
+                            rec["affordable_qty"] = int(buying_power // ref)
                         recs.append(rec)
                 _analysis_summary(log, cand.symbol, transcript.get("evidence", {}),
-                                  transcript, rec, float(cfg.starting_equity))
+                                  transcript, rec, equity)
 
         # --- recommendation summary ---
         log("\n" + "=" * 60)
@@ -1232,7 +1400,7 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
                 f"conviction {r['conviction']})")
             log(f"    entry ~{r['entry']}   stop {r['stop']}   target {r['target']}")
             log(f"    hold ~{r['hold_days']} sessions  ->  exit by {r['exit_by']}")
-            log(f"    size @ ${float(cfg.starting_equity):,.0f}: {r['shares_at_ref_equity']} sh (1% risk)")
+            log(f"    size @ ${equity:,.0f}: {r['shares_at_ref_equity']} sh (1% risk)")
             log(f"    thesis: {r['thesis'][:240]}")
             log(f"    skeptic verdict: {r['skeptic']}   |   decisive: {r['decisive_factor'][:140]}")
         if considered:
@@ -1254,7 +1422,8 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
 
 
 def _analyze_symbol(cfg: AppConfig, sym: str, client, real_llm: bool, mem, log: Emit,
-                    macro=None, macro_read=None):
+                    macro=None, macro_read=None, equity: float | None = None,
+                    buying_power: float | None = None):
     """Full multi-agent deep-dive on one symbol (data + analysts + trio). Returns
     (rec | None, pm_action, decisive, conviction). Used by the S&P 500 screen for
     each shortlisted name and reused for ad-hoc analysis."""
@@ -1266,6 +1435,7 @@ def _analyze_symbol(cfg: AppConfig, sym: str, client, real_llm: bool, mem, log: 
     from system.run_live import PaperTradingEngine
     from system.config import DEFAULT_CONFIG
 
+    equity = float(equity if equity is not None else cfg.starting_equity)
     store, sector_map = _build_ticker_store(cfg, sym, log)
     engine = PaperTradingEngine(store, sector_map, client=client,
                                 starting_equity=float(cfg.starting_equity),
@@ -1286,7 +1456,7 @@ def _analyze_symbol(cfg: AppConfig, sym: str, client, real_llm: bool, mem, log: 
         if px is not None and session in px.index:
             ref = float(px.loc[session, "close"])
             atr = last_atr(px.loc[px.index <= session].reset_index())
-            ctx = GovernorContext(equity=float(cfg.starting_equity), reference_price=ref,
+            ctx = GovernorContext(equity=equity, reference_price=ref,
                                   atr_value=atr if atr == atr else 0.0,
                                   sector=sector_map.get(sym, "?"))
             ticket = RiskGovernor(DEFAULT_CONFIG).evaluate(sym, "enter", ctx)
@@ -1305,8 +1475,10 @@ def _analyze_symbol(cfg: AppConfig, sym: str, client, real_llm: bool, mem, log: 
                 "moat_stance": moat.get("stance"),
                 "suggested_entry": _pullback_entry(pm.get("action"), pm.get("entry"), ref),
             }
-    _analysis_summary(log, sym, transcript.get("evidence", {}), transcript, rec,
-                      float(cfg.starting_equity))
+            # What the account could actually buy (caps the GUI ticket default).
+            if buying_power is not None and ref > 0:
+                rec["affordable_qty"] = int(buying_power // ref)
+    _analysis_summary(log, sym, transcript.get("evidence", {}), transcript, rec, equity)
     conv = float(pm.get("final_conviction", 0) or 0)
     return rec, pm.get("action", "pass"), pm.get("decisive_factor", ""), conv
 
@@ -1334,6 +1506,7 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
             f"a full AI deep-dive on only the top {cfg.screen_top_k} (advisory; no orders).")
         if real_llm:
             log("[mode] using the real LLM agents for the shortlist (bounded spend).")
+        equity, buying_power = _resolve_equity(cfg, log)
 
         extras = ["SPY"] + list(SECTOR_ETFS.values())     # benchmark + sector ETFs
         fetch_list = list(dict.fromkeys(universe + extras))
@@ -1479,7 +1652,8 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
             try:
                 with _redirect(log):
                     rec, action, decisive, conv = _analyze_symbol(
-                        cfg, sym, client, real_llm, mem, log, macro, macro_read)
+                        cfg, sym, client, real_llm, mem, log, macro, macro_read,
+                        equity=equity, buying_power=buying_power)
             except Exception as exc:
                 log(f"[deep-dive] {sym} failed: {type(exc).__name__}: {exc}")
                 continue
@@ -1504,11 +1678,12 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
             log(f"    hold ~{r['hold_days']} sessions  ->  exit by {r['exit_by']}")
             log(f"    thesis: {_sent(r['thesis'], 240)}")
 
-        # Portfolio construction: conviction-scaled, capped, regime-budgeted.
-        portfolio = strategy.construct_portfolio(recs, float(cfg.starting_equity), regime)
+        # Portfolio construction: conviction-scaled, capped, regime-budgeted —
+        # sized off the REAL account equity when broker keys are present.
+        portfolio = strategy.construct_portfolio(recs, equity, regime)
         if portfolio:
-            log("\n  SUGGESTED PORTFOLIO (conviction-weighted, capped, "
-                f"{'~50% invested - risk-off' if risk_off else 'fully invested'}):")
+            log(f"\n  SUGGESTED PORTFOLIO (@ ${equity:,.0f} equity, conviction-weighted, "
+                f"capped, {'~50% invested - risk-off' if risk_off else 'fully invested'}):")
             for p in portfolio:
                 log(f"    {p['symbol']:<6} {p['weight_pct']:>5.1f}%  "
                     f"${p['dollars']:>10,.0f}  {p['shares']:>5} sh   "
@@ -1975,7 +2150,9 @@ def run_deliberation(cfg: AppConfig, emit: Emit) -> dict:
             for st in cycle.deliberation.get(cand.symbol, {}).get("steps", []):
                 log(f"  [{st['agent']}] {_fmt_payload(st['agent'], st['output'])}")
 
-        # Two-key view: what the Risk Governor would actually approve/size today.
+        # Two-key view: what the Risk Governor would actually approve/size today,
+        # off the REAL account when broker keys are present.
+        equity, _bp = _resolve_equity(cfg, log)
         log("\n[two-key] Risk Governor sizing of any ENTER decisions:")
         approved_tickets = []
         any_enter = False
@@ -1988,7 +2165,7 @@ def run_deliberation(cfg: AppConfig, emit: Emit) -> dict:
                 continue
             ref = float(px.loc[session, "close"])
             atr = last_atr(px.loc[px.index <= session].reset_index())
-            ctx = GovernorContext(equity=float(cfg.starting_equity), reference_price=ref,
+            ctx = GovernorContext(equity=equity, reference_price=ref,
                                   atr_value=atr if atr == atr else 0.0,
                                   sector=sector_map.get(d.symbol, "?"))
             ticket = engine.governor.evaluate(d.symbol, d.action, ctx)

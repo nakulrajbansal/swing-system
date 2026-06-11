@@ -17,8 +17,9 @@ from tkinter import messagebox, scrolledtext, ttk
 from app import APP_NAME, APP_VERSION
 from app.config import SECRET_FIELDS, AppConfig
 from app.runner import (check_alpaca, place_manual_order, run_momentum_trade,
-                        run_portfolio_status, run_recommendations,
-                        run_reddit_scan, run_screen, run_strategy_backtest)
+                        run_portfolio_status, run_position_review,
+                        run_recommendations, run_reddit_scan, run_screen,
+                        run_strategy_backtest)
 
 # (field, label, kind)  kind: "secret" | "text" | "int" | "float" | "choice"
 _FIELDS = [
@@ -172,9 +173,25 @@ class SwingApp:
         root.geometry("1120x860")
         root.minsize(940, 680)
         root.configure(bg=BG)
+        self._set_app_icon()
         self._setup_style()
         self._build()
         self.root.after(80, self._drain_queue)
+
+    def _set_app_icon(self):
+        """Draw the brand mark (accent diamond on dark) as the window icon, so
+        the taskbar/titlebar doesn't show the stock Tk feather."""
+        try:
+            icon = tk.PhotoImage(width=32, height=32)
+            icon.put(SIDEBAR, to=(0, 0, 32, 32))
+            for y in range(32):
+                half = max(0, 13 - abs(y - 16) * 13 // 14)
+                if half:
+                    icon.put(ACCENT, to=(16 - half, y, 16 + half, y + 1))
+            self.root.iconphoto(True, icon)
+            self._icon = icon                     # keep a reference alive
+        except Exception:
+            pass
 
     # -- theme -------------------------------------------------------------
     def _setup_style(self):
@@ -326,8 +343,13 @@ class SwingApp:
             page = ttk.Frame(self._content)
             head = ttk.Frame(page)
             head.pack(fill="x", padx=26, pady=(22, 0))
-            ttk.Label(head, text=title, style="PageTitle.TLabel").pack(anchor="w")
-            ttk.Label(head, text=sub, style="PageSub.TLabel").pack(anchor="w", pady=(3, 0))
+            left = ttk.Frame(head)
+            left.pack(side="left")
+            ttk.Label(left, text=title, style="PageTitle.TLabel").pack(anchor="w")
+            ttk.Label(left, text=sub, style="PageSub.TLabel").pack(anchor="w", pady=(3, 0))
+            if key == "run":                       # context chips, right-aligned
+                self._chipbar = ttk.Frame(head)
+                self._chipbar.pack(side="right", anchor="n", pady=(4, 0))
             body = ttk.Frame(page)
             body.pack(fill="both", expand=True)
             self._pages[key] = page
@@ -336,6 +358,7 @@ class SwingApp:
         self._build_run(self._pages["run"]._body)
         self._build_lessons(self._pages["lessons"]._body)
         self._build_config(self._pages["settings"]._body)
+        self._refresh_chips()
         self._show("run")
 
     def _show(self, key: str):
@@ -436,6 +459,25 @@ class SwingApp:
                        "~/.swing_system/config.json (never committed or bundled).").pack(
             anchor="w", padx=8, pady=(6, 4))
 
+        auto = self._card(body, "Automation",
+                          "let the desk run itself on weekday afternoons")
+        ttk.Label(auto, style="CardMuted.TLabel", wraplength=760, justify="left",
+                  text="The daily run reviews open positions (closing any held past "
+                       "their planned exit) and then screens your saved universe, "
+                       "feeding the learning ledger - all with your saved settings. "
+                       "Scheduled weekdays at 4:45 pm via Windows Task Scheduler.").pack(
+            anchor="w", pady=(0, 8))
+        abar = ttk.Frame(auto, style="Card.TFrame")
+        abar.pack(fill="x")
+        ttk.Button(abar, text="Schedule daily run", style="TButton", cursor="hand2",
+                   takefocus=False, command=self._schedule_daily).pack(side="left")
+        ttk.Button(abar, text="Remove schedule", style="Tool.TButton", cursor="hand2",
+                   takefocus=False, command=self._unschedule_daily).pack(
+            side="left", padx=(8, 0))
+        self.sched_status = ttk.Label(abar, text="", style="CardMuted.TLabel")
+        self.sched_status.pack(side="left", padx=(12, 0))
+        self._refresh_sched_status()
+
         bar = ttk.Frame(parent)
         bar.pack(fill="x", padx=26, pady=14)
         ttk.Button(bar, text="Save configuration", style="Accent.TButton",
@@ -482,15 +524,18 @@ class SwingApp:
         # ---- trade & monitor ----
         rows = self._card(parent, "Trade & monitor")
         actions = [
-            ("Momentum trade", lambda: self._start(run_momentum_trade)),
+            ("Review exits", lambda: self._start(run_position_review)),
             ("Portfolio P&L", lambda: self._start(run_portfolio_status)),
+            ("Momentum trade", lambda: self._start(run_momentum_trade)),
             ("Strategy backtest", lambda: self._start(run_strategy_backtest)),
             ("Reddit sentiment", lambda: self._start(run_reddit_scan)),
         ]
         for i, (label, cmd) in enumerate(actions):
             self._mkbtn(rows, label, cmd).grid(
-                row=0, column=i, sticky="ew", padx=(0 if i == 0 else 8, 0))
-            rows.columnconfigure(i, weight=1, uniform="desk")
+                row=i // 3, column=i % 3, sticky="ew",
+                padx=(0 if i % 3 == 0 else 8, 0), pady=(0 if i < 3 else 6, 0))
+        for c in range(3):
+            rows.columnconfigure(c, weight=1, uniform="desk")
 
         # ---- selective execution: tickets from the last run ----
         self.orders_body = self._card(parent, "Order tickets",
@@ -646,7 +691,11 @@ class SwingApp:
             sym = r["symbol"]
             entry = r.get("entry") or 0
             stop, target = r.get("stop"), r.get("target")
-            default_qty = port.get(sym, {}).get("shares") or r.get("shares_at_ref_equity") or 0
+            # Risk-sized default; for tiny accounts where 1%-risk rounds to zero,
+            # fall back to what the account can actually afford.
+            default_qty = (port.get(sym, {}).get("shares")
+                           or r.get("shares_at_ref_equity")
+                           or r.get("affordable_qty") or 0)
             cell = ttk.Frame(grid, style="Card.TFrame")
             cell.grid(row=i, column=0, sticky="w", padx=(0, 10), pady=5)
             ttk.Label(cell, text=sym, style="Card.TLabel").pack(side="left")
@@ -725,8 +774,32 @@ class SwingApp:
             self.cfg = cfg
             self.status.config(text=f"Saved to {path}")
             self._refresh_env_badge()
+            self._refresh_chips()
         except Exception as exc:
             messagebox.showerror("Save failed", str(exc))
+
+    def _refresh_chips(self):
+        """Desk-header context chips: what the next run will actually use."""
+        for w in self._chipbar.winfo_children():
+            w.destroy()
+
+        def chip(text, on):
+            tk.Label(self._chipbar, text=text, bg=SURF2 if not on else ACCENT_SOFT,
+                     fg=OK if on else MUTED, font=self.f_sub, padx=10, pady=3
+                     ).pack(side="left", padx=(6, 0))
+
+        try:
+            live = str(self.vars.get("data_source", None) and
+                       self.vars["data_source"].get() or self.cfg.data_source) == "live"
+            llm = bool(self.vars["use_llm_agents"].get()
+                       if "use_llm_agents" in self.vars else self.cfg.use_llm_agents)
+            keys = bool((self.vars["alpaca_key_id"].get()
+                         if "alpaca_key_id" in self.vars else self.cfg.alpaca_key_id))
+        except Exception:
+            live, llm, keys = self.cfg.data_source == "live", self.cfg.use_llm_agents, False
+        chip("DATA · LIVE" if live else "DATA · SYNTHETIC", live)
+        chip("AGENTS · LLM" if llm else "AGENTS · DETERMINISTIC", llm)
+        chip("SIZING · REAL ACCOUNT" if keys else "SIZING · CONFIGURED", keys)
 
     def _refresh_env_badge(self):
         """Always-visible trading-environment indicator (paper vs real money)."""
@@ -749,6 +822,62 @@ class SwingApp:
                 "'Place approved orders on Alpaca' is on. Real capital can be lost. "
                 "Default to 'paper' until you have validated everything. Use the kill "
                 "switch / your Alpaca dashboard to halt.")
+
+    # -- daily automation (Windows Task Scheduler) ---------------------------
+    _TASK_NAME = "SwingSystem Daily Run"
+
+    def _daily_command(self) -> str | None:
+        """The command the scheduled task runs: the packaged exe with --daily."""
+        if getattr(sys, "frozen", False):
+            return f'"{sys.executable}" --daily'
+        from pathlib import Path
+        exe = Path(__file__).resolve().parents[1] / "dist" / "SwingSystem.exe"
+        return f'"{exe}" --daily' if exe.exists() else None
+
+    def _schedule_daily(self):
+        import subprocess
+        if sys.platform != "win32":
+            messagebox.showinfo("Windows only", "Task scheduling uses Windows "
+                                "Task Scheduler; on macOS use launchd/cron.")
+            return
+        cmd = self._daily_command()
+        if not cmd:
+            messagebox.showinfo("Build the app first",
+                                "No SwingSystem.exe found to schedule - build it "
+                                "with build\\build_windows.ps1, or run the "
+                                "packaged app and schedule from there.")
+            return
+        try:
+            subprocess.run(["schtasks", "/Create", "/F", "/SC", "WEEKLY",
+                            "/D", "MON,TUE,WED,THU,FRI", "/TN", self._TASK_NAME,
+                            "/TR", cmd, "/ST", "16:45"],
+                           check=True, capture_output=True, text=True)
+        except Exception as exc:
+            err = getattr(exc, "stderr", "") or str(exc)
+            messagebox.showerror("Scheduling failed", err.strip()[:400])
+            return
+        self._refresh_sched_status()
+
+    def _unschedule_daily(self):
+        import subprocess
+        try:
+            subprocess.run(["schtasks", "/Delete", "/F", "/TN", self._TASK_NAME],
+                           check=True, capture_output=True, text=True)
+        except Exception:
+            pass
+        self._refresh_sched_status()
+
+    def _refresh_sched_status(self):
+        import subprocess
+        try:
+            r = subprocess.run(["schtasks", "/Query", "/TN", self._TASK_NAME],
+                               capture_output=True, text=True)
+            on = r.returncode == 0
+        except Exception:
+            on = False
+        self.sched_status.config(
+            text="● scheduled - weekdays 4:45 pm" if on else "not scheduled",
+            foreground=OK if on else MUTED)
 
     def _analyze_ticker(self):
         sym = self.ent_ticker.get().strip().upper()

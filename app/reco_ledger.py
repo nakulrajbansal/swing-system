@@ -68,6 +68,44 @@ def record(recs: list[dict], source: str, as_of: str, path=None) -> int:
     return added
 
 
+def open_for(symbol: str, path=None) -> dict | None:
+    """The most recent OPEN ledger entry for a symbol (the trade's intent:
+    exit_by, stop, target, thesis), or None."""
+    cands = [r for r in load(path)
+             if r.get("symbol") == symbol and r.get("status") == "open"]
+    return max(cands, key=lambda r: r.get("date") or "") if cands else None
+
+
+def mark_closed(symbol: str, exit_price: float, when: str, reason: str,
+                entry_price: float | None = None, memory=None, path=None) -> dict | None:
+    """Close out the most recent open entry for `symbol` with the REALIZED
+    result (actual fill prices, not the close-path estimate), feeding the
+    outcome into LessonMemory. Returns the updated entry or None."""
+    led = load(path)
+    cands = [r for r in led if r.get("symbol") == symbol and r.get("status") == "open"]
+    if not cands:
+        return None
+    r = max(cands, key=lambda x: x.get("date") or "")
+    entry = float(entry_price if entry_price is not None else (r.get("entry") or 0))
+    if entry <= 0 or exit_price <= 0:
+        return None
+    pnl_pct = round((float(exit_price) / entry - 1) * 100.0, 2)
+    r.update(status="evaluated", return_pct=pnl_pct, outcome=reason,
+             evaluated_on=when, realized=True)
+    save(led, path)
+    if memory is not None:
+        conv = float(r.get("conviction") or 0.0)
+        memory.record_outcome(TradeOutcome("confluence_swing", symbol, conv,
+                                           pnl_pct, reason, when))
+        verb = "paid" if pnl_pct > 0 else "did not pay"
+        memory.add(Lesson("confluence_swing",
+                          f"executed {symbol} {verb} {pnl_pct:+.1f}% (exit: {reason}).",
+                          pnl_pct > 0, "clean" if reason in {"target", "time"} else "stopped",
+                          symbol=symbol, as_of=when, pnl_pct=pnl_pct, conviction=conv),
+                   human_reviewed=True)
+    return r
+
+
 def _price_on_or_after(series: pd.Series, when: str):
     idx = series.index[series.index >= pd.Timestamp(when)]
     if len(idx):
