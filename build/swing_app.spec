@@ -71,12 +71,13 @@ exe = EXE(
     runtime_tmpdir=None,
     console=console,
     disable_windowed_traceback=False,
+    icon=os.path.join(ROOT, "build", "swing.ico"),
 )
 
 if is_mac:
     app = BUNDLE(
         exe,
         name="SwingSystem.app",
-        icon=None,
+        icon=os.path.join(ROOT, "build", "swing.ico"),
         bundle_identifier="com.swingsystem.app",
     )

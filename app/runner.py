@@ -503,6 +503,12 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
             else:
                 log(f"  [guardian] HOLD - thesis intact"
                     f"{(': ' + _sent(d.reason, 200)) if d.reason else '.'}")
+                # Winner management: at >=1R unrealized, advise de-risking.
+                r_mult = _r_multiple(avg, plan.get("stop"), cur)
+                if r_mult >= 1.0:
+                    log(f"  [manage] up {r_mult:.1f}R - consider raising the stop "
+                        f"to breakeven (~{avg:.2f}): with risk removed, the "
+                        "winner can run on the market's money.")
 
         _save_memory(cfg, mem, log, _memb)
         log(f"\n[done] review complete: {len(out['time_exits'])} time exit(s), "
@@ -844,6 +850,18 @@ def _sent(text, n: int = 900) -> str:
 
 def _step_out(transcript: dict, agent: str) -> dict:
     return next((s["output"] for s in transcript.get("steps", []) if s["agent"] == agent), {})
+
+
+def _r_multiple(entry_price, stop, current) -> float:
+    """Unrealized gain in R (multiples of the planned per-share risk). At +1R a
+    winner has earned the right to a risk-free ride: stop to breakeven."""
+    try:
+        risk = float(entry_price) - float(stop)
+        if risk <= 0:
+            return 0.0
+        return (float(current) - float(entry_price)) / risk
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _pullback_entry(action: str, pm_entry, ref: float):
@@ -1585,6 +1603,12 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
         if real_llm:
             log("[mode] using the real LLM agents for the shortlist (bounded spend).")
         equity, buying_power = _resolve_equity(cfg, log)
+        held: set = set()
+        if cfg.alpaca_key_id and cfg.alpaca_secret:
+            try:
+                held = set(_alpaca_broker(cfg).positions())
+            except Exception:
+                held = set()
 
         extras = ["SPY"] + list(SECTOR_ETFS.values())     # benchmark + sector ETFs
         fetch_list = list(dict.fromkeys(universe + extras))
@@ -1690,13 +1714,17 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
                 log(f"    - {s}: {v * 100:+.0f}%")
 
         log(f"\n[leaderboard] top pre-filter names (of {len(closes.columns)} priced):")
-        log("  rank  symbol   score   RS_vs_mkt  6mo_mom  vs_high  RSI  gap   trend  sector")
+        log("  rank  symbol   score   RS_vs_mkt  6mo_mom  vs_high  vs20d  RVOL  RSI  gap   sector")
         for i, m in enumerate(ranked[:15], 1):
+            rv = m.get("rvol")
             log(f"  {i:>4}  {m['symbol']:<6}  {m['score']:>5.2f}  "
                 f"{m['rs'] * 100:>+8.0f}%  {m['mom6'] * 100:>+6.0f}%  "
-                f"{m['dist_high'] * 100:>+6.0f}%  {m['rsi']:>3.0f}  "
-                f"{m['earnings_gap'] * 100:>+4.0f}  {'up ' if m['above_200dma'] else 'down'}  "
+                f"{m['dist_high'] * 100:>+6.0f}%  {m.get('ext20', 0) * 100:>+5.0f}%  "
+                f"{(f'{rv:.1f}' if isinstance(rv, (int, float)) else '  -'):>4}  "
+                f"{m['rsi']:>3.0f}  {m['earnings_gap'] * 100:>+4.0f}  "
                 f"{(m.get('sector') or '')[:18]}")
+        log("  (vs20d = stretch above the 20-DMA: near 0 is a buyable entry, "
+            ">12% is a chase.  RVOL = today's volume vs its 20-day average.)")
 
         # Regime-conditional shortlist: in risk-off, deep-dive fewer; never waste
         # LLM on negative-score names.
@@ -1705,8 +1733,14 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
             k = max(2, k // 2)
         # Top composite scores plus reserved HIDDEN-GEM slots: early-acceleration
         # names a pure momentum ranking would only surface after the rally is
-        # consensus. Bad-data names were already dropped by the pre-filter.
-        top = strategy.select_shortlist(ranked, k, gem_slots=0 if risk_off else 2)
+        # consensus. Slot count self-tunes from the lens's REALIZED hit rate.
+        cohorts = reco_ledger.cohort_stats()
+        gems_n = 0 if risk_off else strategy.gem_slot_count(cohorts)
+        gco = cohorts.get("hidden_gem", {})
+        if not risk_off and gems_n != 2 and gco.get("n"):
+            log(f"[lens] hidden-gem slots tuned to {gems_n} from realized results "
+                f"({gco['n']} scored, {gco.get('win_rate_pct', 0):.0f}% hit rate).")
+        top = strategy.select_shortlist(ranked, k, gem_slots=gems_n)
         if not top:
             log("\n[deep-dive] no name cleared the pre-filter bar (score > 0) in this "
                 "regime; standing down. Default is to do nothing.")
@@ -1740,6 +1774,10 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
             if rec:
                 rec["sector"] = sec_map.get(sym, "?")
                 rec["hidden_gem"] = bool(m.get("hidden_gem"))
+                rec["already_held"] = sym in held
+                if rec["already_held"]:
+                    log(f"[book] note: {sym} is ALREADY an open position - this "
+                        "would add to it, not diversify.")
                 recs.append(rec)
 
         log("\n" + "=" * 60)

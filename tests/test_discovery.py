@@ -194,6 +194,48 @@ def test_walk_forward_reports_gem_cohort():
     assert res["periods"] > 0
 
 
+def test_entry_timing_rewards_pullbacks_and_penalizes_chases():
+    from app import strategy
+
+    base = {"rs": 0.2, "mom6": 0.2, "mom3": 0.1, "above_200dma": True,
+            "dist_high": -0.1, "earnings_gap": 0.0, "accel": 0.0}
+    resting = strategy.composite_score({**base, "ext20": 0.01})
+    chased = strategy.composite_score({**base, "ext20": 0.18})
+    assert resting > chased            # same trend, better entry scores higher
+
+
+def test_gem_slot_count_self_tunes_from_realized_results():
+    from app.strategy import gem_slot_count
+
+    assert gem_slot_count(None) == 2                                  # no data
+    assert gem_slot_count({"hidden_gem": {"n": 5, "win_rate_pct": 20}}) == 2
+    assert gem_slot_count({"hidden_gem": {"n": 12, "win_rate_pct": 35}}) == 1
+    assert gem_slot_count({"hidden_gem": {"n": 12, "win_rate_pct": 62}}) == 3
+
+
+def test_fresh_gap_outscores_stale_gap():
+    import numpy as np
+    from app import strategy
+
+    idx = pd.date_range("2025-01-01", periods=120, freq="B")
+
+    def with_gap(days_ago):
+        c = pd.Series(100.0, index=idx)
+        c.iloc[-days_ago:] = 112.0                  # +12% gap, held since
+        return strategy.earnings_gap_drift(c)
+
+    assert with_gap(3) > with_gap(25) > 0           # recency-weighted PEAD
+
+
+def test_r_multiple_for_winner_management():
+    from app.runner import _r_multiple
+
+    assert abs(_r_multiple(100.0, 90.0, 110.0) - 1.0) < 1e-9   # +1R
+    assert _r_multiple(100.0, 90.0, 95.0) < 0                  # underwater
+    assert _r_multiple(100.0, 100.0, 110.0) == 0.0             # degenerate risk
+    assert _r_multiple(None, 90.0, 110.0) == 0.0
+
+
 def test_pullback_entry_surfaces_pm_adjust_price():
     from app.runner import _pullback_entry
 

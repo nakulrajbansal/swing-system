@@ -26,7 +26,7 @@ import pandas as pd
 BASE_WEIGHTS = {
     "rs": 2.0, "mom6": 1.0, "mom3": 0.5, "trend": 0.30,
     "near_high": 0.20, "earnings_gap": 0.80, "sector": 0.60, "accel": 0.60,
-    "volume": 0.30,
+    "volume": 0.30, "timing": 0.45,
 }
 
 
@@ -52,7 +52,11 @@ def earnings_gap_drift(close: pd.Series, lookback: int = 30) -> float:
         return 0.0
     after = c.loc[i:]
     drift = float(after.iloc[-1] / after.iloc[0] - 1) if len(after) > 1 else 0.0
-    return _clamp(0.5 * gap + 0.5 * drift, -0.25, 0.35)
+    # Post-earnings drift decays: a gap from last week is a live catalyst, one
+    # from five weeks ago is mostly spent. Weight freshness accordingly.
+    days_since = max(0, len(c) - 1 - c.index.get_loc(i))
+    freshness = max(0.4, 1.0 - days_since / 40.0)
+    return _clamp(freshness * (0.5 * gap + 0.5 * drift), -0.25, 0.35)
 
 
 def sector_strength(closes: pd.DataFrame, sector_etfs: dict[str, str],
@@ -127,6 +131,16 @@ def composite_score(m: dict, weights: dict | None = None,
     uv = m.get("updown_vol")
     if isinstance(uv, (int, float)):
         s += w.get("volume", 0.0) * _clamp(uv - 1.0, -0.5, 0.5)
+    # ENTRY TIMING: the right name at the wrong price is a bad trade. A strong
+    # trend resting at/near its 20-DMA is a buyable entry; one stretched far
+    # above it is a chase that mean-reverts against a 2-20 day hold.
+    ext = m.get("ext20")
+    if isinstance(ext, (int, float)):
+        wt = w.get("timing", 0.0)
+        if -0.04 <= ext <= 0.05:
+            s += wt * 0.5                      # resting on the rising 20-DMA
+        elif ext > 0.12:
+            s -= wt                            # >12% above: extended, poor entry
     sec = m.get("sector")
     if sec and sec in sec_rs:
         s += w["sector"] * _clamp(sec_rs[sec], -0.3, 0.3)
@@ -167,10 +181,30 @@ def hidden_gem_score(m: dict) -> float:
         uv = m.get("updown_vol")
         if isinstance(uv, (int, float)) and uv > 1.3:
             s += 0.15                      # up-day volume dominates: accumulation
+        rv = m.get("rvol")
+        if isinstance(rv, (int, float)) and rv > 1.5:
+            s += 0.20                      # unusual volume TODAY: ignition is live
+        ext = m.get("ext20")
+        if isinstance(ext, (int, float)) and -0.06 <= ext <= 0.04:
+            s += 0.15                      # igniting AND still buyable (not chased)
     rsi = m.get("rsi", float("nan"))
     if rsi == rsi and rsi > 80:
         s -= 0.30
     return round(s, 4)
+
+
+def gem_slot_count(cohorts: dict | None, default: int = 2) -> int:
+    """Self-tuning lens allocation: once the ledger has scored enough hidden-gem
+    picks, let the REALIZED results set how many shortlist slots the lens gets
+    — lean into what pays, starve what doesn't (advisory loop, never risk)."""
+    g = (cohorts or {}).get("hidden_gem") or {}
+    n, wr = g.get("n", 0), g.get("win_rate_pct", 50)
+    if n >= 10:
+        if wr < 40:
+            return 1
+        if wr >= 58:
+            return 3
+    return default
 
 
 def select_shortlist(ranked: list[dict], k: int, gem_slots: int = 2) -> list[dict]:
@@ -181,7 +215,10 @@ def select_shortlist(ranked: list[dict], k: int, gem_slots: int = 2) -> list[dic
     universe allows."""
     k = max(1, k)
     base = [m for m in ranked if m["score"] > 0]
-    core = base[: max(1, k - gem_slots)]
+    # Core slots: best scores with a light sector cap (3) so one hot sector
+    # cannot monopolize the whole deep-dive — breadth is where the un-crowded
+    # opportunities live.
+    core = diversify(base, max(1, k - gem_slots), max_per_sector=3)
     chosen = {m["symbol"] for m in core}
     gems = sorted((m for m in ranked if m["symbol"] not in chosen),
                   key=hidden_gem_score, reverse=True)

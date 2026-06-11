@@ -37,7 +37,7 @@ def _volume_metrics(c: pd.Series, volume: pd.Series | None) -> dict:
     updown_vol: up-day volume / down-day volume over ~3 months (>1 = accumulation
     — institutions buying shows in WHERE the volume happens before it shows in price).
     """
-    out = {"dollar_vol_m": None, "vol_ratio": None, "updown_vol": None}
+    out = {"dollar_vol_m": None, "vol_ratio": None, "updown_vol": None, "rvol": None}
     if volume is None:
         return out
     v = volume.reindex(c.index).fillna(0.0)
@@ -47,6 +47,10 @@ def _volume_metrics(c: pd.Series, volume: pd.Series | None) -> dict:
     base = float(v.iloc[-120:-20].mean())
     if base > 0:
         out["vol_ratio"] = float(v.iloc[-20:].mean()) / base
+    base20 = float(v.iloc[-21:-1].mean())
+    if base20 > 0:
+        # Relative volume TODAY: institutions acting now show up here first.
+        out["rvol"] = float(v.iloc[-1]) / base20
     rets = c.pct_change().iloc[-63:]
     up = float(v.iloc[-63:][rets > 0].sum())
     dn = float(v.iloc[-63:][rets < 0].sum())
@@ -67,6 +71,7 @@ def _metrics(close: pd.Series, bench_mom6: float,
     mom3 = last / float(c.iloc[-63]) - 1 if len(c) > 63 else 0.0
     mom12 = last / float(c.iloc[-252]) - 1 if len(c) > 252 else None
     sma200 = float(c.iloc[-200:].mean())
+    sma20 = float(c.iloc[-20:].mean())
     win = c.iloc[-252:]
     high52 = float(win.max())
     low52 = float(win.min())
@@ -82,6 +87,7 @@ def _metrics(close: pd.Series, bench_mom6: float,
             "accel": mom3 - mom6 / 2.0,
             "above_200dma": last > sma200, "dist_high": dist_high,
             "pct_above_low": pct_above_low,
+            "ext20": last / sma20 - 1 if sma20 else 0.0,
             "rsi": _rsi(c), "rs": mom6 - bench_mom6,
             "earnings_gap": strategy.earnings_gap_drift(c), "bad_data": bad_data,
             **_volume_metrics(c, volume)}

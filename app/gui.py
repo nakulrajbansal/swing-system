@@ -170,9 +170,16 @@ class SwingApp:
         self.running = False
 
         root.title(f"{APP_NAME} {APP_VERSION}")
-        root.geometry("1120x860")
+        root.geometry("1120x860")                 # restore-size; opens maximized
         root.minsize(940, 680)
         root.configure(bg=BG)
+        try:
+            if sys.platform == "win32":
+                root.state("zoomed")
+            else:
+                root.attributes("-zoomed", True)
+        except tk.TclError:
+            pass
         self._set_app_icon()
         self._setup_style()
         self._build()
@@ -735,6 +742,9 @@ class SwingApp:
             if r.get("hidden_gem"):
                 tk.Label(cell, text=" ◆", bg=CARD, fg=GEM,
                          font=self.f_base).pack(side="left")
+            if r.get("already_held"):
+                tk.Label(cell, text=" ●", bg=CARD, fg="#d8a657",
+                         font=self.f_base).pack(side="left")
             ttk.Label(grid, text=f"{r.get('conviction', 0):.2f}",
                       style="CardMuted.TLabel").grid(row=i, column=1, sticky="w",
                                                      padx=(0, 10), pady=5)
@@ -763,6 +773,8 @@ class SwingApp:
         notes = []
         if any(r.get("hidden_gem") for r in recs):
             notes.append("◆ = hidden-gem pick (early acceleration)")
+        if any(r.get("already_held") for r in recs):
+            notes.append("● = already an open position (placing adds to it)")
         if any(r.get("suggested_entry") for r in recs):
             notes.append("limit pre-set to the PM's pullback entry where it advised "
                          "waiting for a dip (below the ref price)")
