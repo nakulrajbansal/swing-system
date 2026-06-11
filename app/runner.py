@@ -466,7 +466,8 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
     from system.data_plane.evidence import assemble_evidence
 
     cfg.apply_to_env()
-    out = {"open": 0, "time_exits": [], "guardian_exits": [], "advised": []}
+    out = {"open": 0, "time_exits": [], "guardian_exits": [], "advised": [],
+           "protected": []}
     with _run_logger(emit, "review") as (log, _path):
         if not (cfg.alpaca_key_id and cfg.alpaca_secret):
             log("[error] Alpaca key id + secret required (Settings).")
@@ -480,6 +481,15 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
         if not raw:
             log("[review] no open positions - nothing to manage.")
             return out
+        # Resting SELL orders per symbol: a plan's stop/target only protects
+        # the position if real orders are working at the broker.
+        sells_by_sym: dict[str, list] = {}
+        try:
+            for o in broker._req("GET", "/v2/orders?status=open") or []:
+                if str(o.get("side")) == "sell":
+                    sells_by_sym.setdefault(o.get("symbol"), []).append(o)
+        except Exception:
+            pass
 
         client, real_llm = _resolve_client(cfg, log)
         guardian = GuardianAgent(client, DEFAULT_CONFIG.models.framing)
@@ -529,11 +539,38 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
                 continue
             if not plan:
                 log("  no plan on file (not from a screen/deep-dive ticket) - "
-                    "review manually; nothing automated.")
+                    f"review manually, or Deep-dive {sym} to create a plan.")
                 continue
             log(f"  plan: entry ~{plan.get('entry')}  stop {plan.get('stop')}  "
                 f"target {plan.get('target')}  exit by {plan.get('exit_by')}  "
                 f"(held {held}d)")
+
+            # ARM MISSING PROTECTION: if no sell orders are resting, the plan's
+            # stop/target are wishes, not protection. Placing them only reduces
+            # risk, so it happens automatically.
+            resting = sells_by_sym.get(sym, [])
+            if resting:
+                levels = ", ".join(
+                    f"{o.get('type', '?')} @ {o.get('stop_price') or o.get('limit_price') or '?'}"
+                    for o in resting[:3])
+                log(f"  protection resting at the broker: {levels}")
+            elif plan.get("stop") or plan.get("target"):
+                kind = ("OCO stop+target" if plan.get("stop") and plan.get("target")
+                        else "stop" if plan.get("stop") else "target")
+                log(f"  [protect] NO exit orders resting at the broker - arming "
+                    f"{kind} for {qty:.0f} sh (stop {plan.get('stop')}, "
+                    f"target {plan.get('target')}).")
+                try:
+                    o = broker.submit_exit_orders(sym, int(qty), plan.get("stop"),
+                                                  plan.get("target"))
+                    if isinstance(o, dict) and o.get("error"):
+                        log(f"  [protect] failed: {o['error']}")
+                    else:
+                        out["protected"].append(sym)
+                        log(f"  [protect] exit orders ARMED - id {(o or {}).get('id', '?')} "
+                            f"status {(o or {}).get('status', '?')}.")
+                except Exception as exc:
+                    log(f"  [protect] failed: {exc}")
 
             # 1) TIME EXIT: past the plan's exit date -> close (the plan's own rule).
             if plan.get("exit_by") and today >= str(plan["exit_by"]):
@@ -631,7 +668,8 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
         _save_memory(cfg, mem, log, _memb)
         log(f"\n[done] review complete: {len(out['time_exits'])} time exit(s), "
             f"{len(out['guardian_exits'])} guardian exit(s), "
-            f"{len(out['advised'])} advisory exit(s).")
+            f"{len(out['advised'])} advisory exit(s), "
+            f"{len(out['protected'])} position(s) newly protected.")
     return out
 
 

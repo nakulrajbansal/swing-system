@@ -560,11 +560,14 @@ class SwingApp:
         g.columnconfigure(3, weight=1)
 
         # ---- trade & monitor ----
-        rows = self._card(parent, "Trade & monitor")
+        rows = self._card(parent, "Trade & monitor",
+                          "Review exits manages planned positions (time exits, "
+                          "guardian advice, arms missing stops) · Momentum "
+                          "auto-trade runs the separate mechanical one-name strategy")
         actions = [
             ("Review exits", lambda: self._start(run_position_review)),
             ("Portfolio P&L", lambda: self._start(run_portfolio_status)),
-            ("Momentum trade", lambda: self._start(run_momentum_trade)),
+            ("Momentum auto-trade", lambda: self._start(run_momentum_trade)),
             ("Strategy backtest", lambda: self._start(run_strategy_backtest)),
             ("Reddit sentiment", lambda: self._start(run_reddit_scan)),
         ]

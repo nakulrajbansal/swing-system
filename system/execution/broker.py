@@ -270,6 +270,30 @@ class AlpacaBroker(Broker):
                             "stop_loss": {"stop_price": round(float(stop), 2)}})
         return self._req("POST", "/v2/orders", payload)
 
+    def submit_exit_orders(self, symbol, qty, stop=None, target=None):
+        """Protective exit orders for an EXISTING long position: an OCO pair
+        (take-profit limit + stop-loss) when both levels exist, else a single
+        GTC sell stop / sell limit. Risk-reducing only — sells what is already
+        held, never opens exposure."""
+        qty = int(qty)
+        if qty <= 0 or not (stop or target):
+            return {"error": "nothing to place"}
+        if stop and target:
+            payload = {"symbol": symbol, "qty": str(qty), "side": "sell",
+                       "type": "limit", "time_in_force": "gtc",
+                       "order_class": "oco",
+                       "take_profit": {"limit_price": round(float(target), 2)},
+                       "stop_loss": {"stop_price": round(float(stop), 2)}}
+        elif stop:
+            payload = {"symbol": symbol, "qty": str(qty), "side": "sell",
+                       "type": "stop", "stop_price": round(float(stop), 2),
+                       "time_in_force": "gtc"}
+        else:
+            payload = {"symbol": symbol, "qty": str(qty), "side": "sell",
+                       "type": "limit", "limit_price": round(float(target), 2),
+                       "time_in_force": "gtc"}
+        return self._req("POST", "/v2/orders", payload)
+
     def close_position(self, symbol):
         """Cancel any open orders for the symbol, then liquidate the position at
         market (Alpaca DELETE /v2/positions/{symbol})."""

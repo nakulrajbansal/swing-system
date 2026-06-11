@@ -298,6 +298,30 @@ def test_clean_filing_text_skips_table_of_contents():
     assert "The following risks" in out[:120]    # anchored at the real section
 
 
+def test_exit_order_payloads_are_risk_reducing(monkeypatch):
+    from system.execution.broker import AlpacaBroker
+
+    b = AlpacaBroker("key", "secret", env="paper")
+    sent = {}
+    monkeypatch.setattr(
+        b, "_req",
+        lambda m, p, payload=None: (sent.update(method=m, path=p, payload=payload)
+                                    or {"id": "1", "status": "accepted"}))
+    # Both levels -> one OCO sell pair (stop-loss + take-profit), GTC.
+    b.submit_exit_orders("SITM", 3, stop=553.15, target=872.26)
+    pl = sent["payload"]
+    assert pl["side"] == "sell" and pl["order_class"] == "oco"
+    assert pl["stop_loss"]["stop_price"] == 553.15
+    assert pl["take_profit"]["limit_price"] == 872.26
+    assert pl["time_in_force"] == "gtc"
+    # Stop only -> plain GTC sell stop.
+    b.submit_exit_orders("SITM", 3, stop=553.15)
+    assert sent["payload"]["type"] == "stop" and sent["payload"]["side"] == "sell"
+    # Nothing to place / bad qty -> refused locally, no order sent.
+    assert b.submit_exit_orders("SITM", 0, stop=1.0)["error"]
+    assert b.submit_exit_orders("SITM", 3)["error"]
+
+
 def test_stop_request_cancels_at_next_log_line():
     import pytest
     from app import runner
