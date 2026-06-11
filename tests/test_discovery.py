@@ -194,6 +194,20 @@ def test_walk_forward_reports_gem_cohort():
     assert res["periods"] > 0
 
 
+def test_pullback_entry_surfaces_pm_adjust_price():
+    from app.runner import _pullback_entry
+
+    # 'adjust' with a sane below-ref entry -> surfaced (the SITM case: PM said
+    # ~$630 while the ticket showed the $659 close).
+    assert _pullback_entry("adjust", 630.0, 659.52) == 630.0
+    # Plain 'enter' at the reference price -> nothing to surface.
+    assert _pullback_entry("enter", 659.52, 659.52) is None
+    # Garbage or out-of-range PM numbers are ignored.
+    assert _pullback_entry("adjust", None, 659.52) is None
+    assert _pullback_entry("adjust", 100.0, 659.52) is None     # -85%: not sane
+    assert _pullback_entry("adjust", 658.9, 659.52) is None     # <0.5% below: noise
+
+
 def test_midsmall_universe_static_fallback(monkeypatch):
     from harness.data import midsmall as ms
 

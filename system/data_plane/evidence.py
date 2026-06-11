@@ -266,6 +266,9 @@ def _fundamentals(view, symbol: str) -> dict:
             if _f(r, "held_percent_insiders") is not None else None,
             "industry": r.get("industry"),
             "business_summary": str(summary)[:700] if summary else None,
+            "basis_note": ("snapshot margins/FCF are trailing-twelve-month; the "
+                           "trajectory block is per-quarter - differences between "
+                           "them are period effects, not data errors"),
         },
         "trajectory": _trajectory(view, symbol),
         "next_earnings_date": r.get("next_earnings_date"),

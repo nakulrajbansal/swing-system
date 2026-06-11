@@ -665,7 +665,9 @@ class SwingApp:
             ttk.Combobox(grid, textvariable=tv, values=["market", "limit"],
                          state="readonly", width=7).grid(
                 row=i, column=4, sticky="w", padx=(0, 10), pady=5)
-            pv = tk.StringVar(value=str(entry))
+            # The PM's pullback entry (an 'adjust' decision) pre-fills the limit:
+            # the most actionable number in the deliberation, not the last close.
+            pv = tk.StringVar(value=str(r.get("suggested_entry") or entry))
             ttk.Entry(grid, textvariable=pv, width=9).grid(
                 row=i, column=5, sticky="w", padx=(0, 10), pady=5)
             bv = tk.BooleanVar(value=bool(stop and target))
@@ -676,8 +678,14 @@ class SwingApp:
                        command=lambda r=r, qv=qv, tv=tv, pv=pv, bv=bv:
                        self._place_order(r, qv, tv, pv, bv)).grid(
                 row=i, column=7, sticky="w", pady=5)
+        notes = []
         if any(r.get("hidden_gem") for r in recs):
-            ttk.Label(self.orders_body, text="◆ = hidden-gem pick (early acceleration)",
+            notes.append("◆ = hidden-gem pick (early acceleration)")
+        if any(r.get("suggested_entry") for r in recs):
+            notes.append("limit pre-set to the PM's pullback entry where it advised "
+                         "waiting for a dip (below the ref price)")
+        if notes:
+            ttk.Label(self.orders_body, text="   ·   ".join(notes),
                       style="CardMuted.TLabel").pack(anchor="w", padx=2, pady=(6, 0))
 
     def _place_order(self, rec, qv, tv, pv, bv):

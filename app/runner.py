@@ -657,6 +657,20 @@ def _step_out(transcript: dict, agent: str) -> dict:
     return next((s["output"] for s in transcript.get("steps", []) if s["agent"] == agent), {})
 
 
+def _pullback_entry(action: str, pm_entry, ref: float):
+    """The PM's pullback limit, when actionable. An 'adjust' decision means the
+    thesis is sound but the entry is extended — the PM's suggested entry is the
+    most actionable number in the deliberation, so surface it on the ticket
+    instead of burying it in prose. Sane-range guarded; None otherwise."""
+    try:
+        e = float(pm_entry)
+    except (TypeError, ValueError):
+        return None
+    if action == "adjust" and ref > 0 and ref * 0.70 <= e <= ref * 0.995:
+        return round(e, 2)
+    return None
+
+
 def _load_memory(cfg: AppConfig, log: Emit):
     """Load the cross-run learning memory if learning is enabled (else None)."""
     if not getattr(cfg, "learn_from_runs", True):
@@ -1093,6 +1107,9 @@ def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
         rr = f"{abs((tg - e) / (e - s)):.1f}" if (e and s and tg and e != s) else "?"
         _h("TRADE PLAN (advisory)")
         log(f"    entry ~${e}   stop ${s} ({sp})   target ${tg} ({tp})   R/R {rr}:1")
+        if rec.get("suggested_entry"):
+            log(f"    PM advises WAITING for a pullback to ~${rec['suggested_entry']} "
+                "rather than chasing the current price")
         log(f"    hold ~{rec['hold_days']} sessions  ->  exit by {rec['exit_by']}")
         log(f"    risk-sized: {rec['shares_at_ref_equity']} sh @ ${equity:,.0f} (1% risk)")
 
@@ -1197,6 +1214,8 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
                             "thesis": hyp.get("mechanism", ""),
                             "skeptic": crit.get("verdict", "?"),
                             "decisive_factor": pm.get("decisive_factor", ""),
+                            "suggested_entry": _pullback_entry(pm.get("action"),
+                                                               pm.get("entry"), ref),
                         }
                         recs.append(rec)
                 _analysis_summary(log, cand.symbol, transcript.get("evidence", {}),
@@ -1284,6 +1303,7 @@ def _analyze_symbol(cfg: AppConfig, sym: str, client, real_llm: bool, mem, log: 
                 "thesis": hyp.get("mechanism", ""), "skeptic": crit.get("verdict", "?"),
                 "decisive_factor": pm.get("decisive_factor", ""),
                 "moat_stance": moat.get("stance"),
+                "suggested_entry": _pullback_entry(pm.get("action"), pm.get("entry"), ref),
             }
     _analysis_summary(log, sym, transcript.get("evidence", {}), transcript, rec,
                       float(cfg.starting_equity))
@@ -1478,7 +1498,9 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
         for r in sorted(recs, key=lambda x: x["conviction"], reverse=True):
             log(f"\n  RECOMMEND BUY {r['symbol']}  (conviction {r['conviction']}, "
                 f"{r.get('sector', '?')})")
-            log(f"    entry ~{r['entry']}   stop {r['stop']}   target {r['target']}")
+            pb = (f"   << PM: wait for a pullback to ~{r['suggested_entry']}"
+                  if r.get("suggested_entry") else "")
+            log(f"    entry ~{r['entry']}   stop {r['stop']}   target {r['target']}{pb}")
             log(f"    hold ~{r['hold_days']} sessions  ->  exit by {r['exit_by']}")
             log(f"    thesis: {_sent(r['thesis'], 240)}")
 
