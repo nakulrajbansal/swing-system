@@ -105,6 +105,16 @@ TABLES: dict[str, _TableSpec] = {
         instant_cols=("available_at",),
         dedupe=("symbol", "available_at"),
     ),
+    # Quarterly fundamentals HISTORY from EDGAR XBRL (revenue / margins per
+    # reported quarter). available_at = when the disclosing 10-Q/10-K was filed,
+    # so at decision time T only quarters already reported are visible — the
+    # trajectory (acceleration, margin trend) is PIT-safe by construction.
+    "fundamentals_history": _TableSpec(
+        required=("symbol", "available_at", "period_end", "revenue"),
+        instant_cols=("available_at",),
+        date_cols=("period_end",),
+        dedupe=("symbol", "period_end"),
+    ),
 }
 
 # Event tables (governed by `available_at <= T`) and their PIT time column.
@@ -231,6 +241,9 @@ class PITStore:
     def write_fundamentals(self, df: pd.DataFrame) -> None:
         self._write("fundamentals", df)
 
+    def write_fundamentals_history(self, df: pd.DataFrame) -> None:
+        self._write("fundamentals_history", df)
+
     # -- the single PIT entry point ---------------------------------------
     def as_of(self, T) -> "AsOfView":
         ts = pd.Timestamp(T)
@@ -297,6 +310,9 @@ class AsOfView:
 
     def fundamentals(self, symbol: str | None = None) -> pd.DataFrame:
         return self._event("fundamentals", "symbol", symbol)
+
+    def fundamentals_history(self, symbol: str | None = None) -> pd.DataFrame:
+        return self._event("fundamentals_history", "symbol", symbol)
 
     # -- universe / membership --------------------------------------------
     def constituents(self) -> pd.DataFrame:

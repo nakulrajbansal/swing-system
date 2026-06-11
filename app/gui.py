@@ -53,7 +53,7 @@ _FIELDS = [
 
 # Allowed values for "choice" fields.
 _CHOICES = {"data_source": ["synthetic", "live"], "alpaca_env": ["paper", "live"],
-            "screen_index": ["sp500", "qqq"]}
+            "screen_index": ["sp500", "qqq", "sp400", "sp600", "midsmall", "broad"]}
 
 _FIELD_BY_NAME = {f[0]: f for f in _FIELDS}
 
@@ -391,6 +391,10 @@ class SwingApp:
                                          style="Accent.TButton",
                                          command=lambda: self._start(run_screen, screen_index="qqq"))
         self.btn_screen_qqq.pack(side="left", padx=(0, 8))
+        self.btn_screen_ms = ttk.Button(bar, text="◎  Screen mid/small caps (hidden gems)",
+                                        style="Accent.TButton",
+                                        command=lambda: self._start(run_screen, screen_index="midsmall"))
+        self.btn_screen_ms.pack(side="left", padx=(0, 8))
         self.btn_recs = ttk.Button(bar, text="Scan core universe",
                                    command=lambda: self._start(run_recommendations, ticker=""))
         self.btn_recs.pack(side="left", padx=(0, 8))

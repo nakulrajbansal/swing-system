@@ -235,18 +235,19 @@ def fetch_prices_yahoo(symbol: str, start: str, end: str | None = None):
     return prices, corp
 
 
-def fetch_closes_batch(symbols: list[str], start: str, end: str | None = None,
-                       emit=print) -> pd.DataFrame:
-    """Adjusted daily closes for many symbols in ONE batched request.
+def fetch_closes_volumes_batch(symbols: list[str], start: str, end: str | None = None,
+                               emit=print) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Adjusted daily closes AND share volumes for many symbols, batched.
 
     For the cheap, fast pre-filter only (ranking the whole universe) — NOT for the
     PIT store. Auto-adjusted is fine here because ranking is a live screen, not a
-    backtest. Returns a wide DataFrame indexed by date, columns = symbols (missing
-    names dropped). Chunked to stay within Yahoo's limits.
+    backtest. Returns (closes, volumes): wide DataFrames indexed by date, columns
+    = symbols (missing names dropped). Chunked to stay within Yahoo's limits.
+    Volume enables the liquidity floor and accumulation signals.
     """
     import yfinance as yf  # lazy
 
-    frames = []
+    c_frames, v_frames = [], []
     chunk = 100
     for i in range(0, len(symbols), chunk):
         part = symbols[i:i + chunk]
@@ -261,16 +262,33 @@ def fetch_closes_batch(symbols: list[str], start: str, end: str | None = None,
             continue
         # With multiple tickers, yfinance returns a column MultiIndex (field, ticker).
         if isinstance(data.columns, pd.MultiIndex):
-            close = data["Close"] if "Close" in data.columns.get_level_values(0) else None
+            lvl0 = data.columns.get_level_values(0)
+            close = data["Close"] if "Close" in lvl0 else None
+            vol = data["Volume"] if "Volume" in lvl0 else None
         else:                                   # single ticker -> flat columns
             close = data[["Close"]].rename(columns={"Close": part[0]})
+            vol = (data[["Volume"]].rename(columns={"Volume": part[0]})
+                   if "Volume" in data.columns else None)
         if close is not None:
-            frames.append(close)
-    if not frames:
-        return pd.DataFrame()
-    out = pd.concat(frames, axis=1)
-    out = out.loc[:, ~out.columns.duplicated()]
-    return out.dropna(how="all")
+            c_frames.append(close)
+        if vol is not None:
+            v_frames.append(vol)
+
+    def _merge(frames):
+        if not frames:
+            return pd.DataFrame()
+        out = pd.concat(frames, axis=1)
+        out = out.loc[:, ~out.columns.duplicated()]
+        return out.dropna(how="all")
+
+    return _merge(c_frames), _merge(v_frames)
+
+
+def fetch_closes_batch(symbols: list[str], start: str, end: str | None = None,
+                       emit=print) -> pd.DataFrame:
+    """Adjusted daily closes only (see fetch_closes_volumes_batch)."""
+    closes, _ = fetch_closes_volumes_batch(symbols, start, end, emit=emit)
+    return closes
 
 
 def fetch_fundamentals_yahoo(symbol: str, available_at: pd.Timestamp | None = None) -> pd.DataFrame:
@@ -291,15 +309,34 @@ def fetch_fundamentals_yahoo(symbol: str, available_at: pd.Timestamp | None = No
     if stamp.tz is None:
         stamp = stamp.tz_localize("UTC")
 
+    tk = yf.Ticker(symbol)
     try:
-        info = yf.Ticker(symbol).get_info()
+        info = tk.get_info()
     except Exception:
         try:
-            info = yf.Ticker(symbol).info
+            info = tk.info
         except Exception:
             info = {}
     if not info:
         return pd.DataFrame(columns=["symbol", "available_at"])
+
+    # Next scheduled earnings date (best effort; format varies by yfinance
+    # version). A swing hold that straddles this date carries binary event risk,
+    # so the agents are told about it.
+    next_earnings = None
+    try:
+        cal = tk.calendar
+        eds = []
+        if isinstance(cal, dict):
+            eds = cal.get("Earnings Date") or []
+        elif cal is not None and hasattr(cal, "empty") and not cal.empty:
+            row = cal.loc["Earnings Date"] if "Earnings Date" in getattr(cal, "index", []) else None
+            eds = list(row.dropna()) if row is not None else []
+        future = [pd.Timestamp(d) for d in eds if pd.Timestamp(d) >= pd.Timestamp.now().normalize()]
+        if future:
+            next_earnings = min(future).date().isoformat()
+    except Exception:
+        next_earnings = None
 
     def g(*keys):
         for k in keys:
@@ -340,8 +377,133 @@ def fetch_fundamentals_yahoo(symbol: str, available_at: pd.Timestamp | None = No
         # growth theme (if any) it is levered to.
         "business_summary": (str(g("longBusinessSummary"))[:900]
                              if g("longBusinessSummary") else None),
+        "next_earnings_date": next_earnings,
     }
     return pd.DataFrame([row])
+
+
+# Revenue tag priority: companies report under different us-gaap concepts.
+_XBRL_REVENUE_TAGS = (
+    "RevenueFromContractWithCustomerExcludingAssessedTax",
+    "Revenues",
+    "SalesRevenueNet",
+    "RevenueFromContractWithCustomerIncludingAssessedTax",
+)
+
+
+def _quarterly_usd(gaap: dict, tag: str) -> dict[str, dict]:
+    """{period_end: {val, filed}} for genuinely QUARTERLY (~90-day) USD facts of
+    one us-gaap tag, keeping the EARLIEST filing per period (the original 10-Q,
+    not a later amendment — PIT-conservative)."""
+    out: dict[str, dict] = {}
+    for e in gaap.get(tag, {}).get("units", {}).get("USD", []):
+        try:
+            start, end = pd.Timestamp(e["start"]), pd.Timestamp(e["end"])
+            span = (end - start).days
+            if not 80 <= span <= 100:            # quarterly duration only
+                continue
+            key = e["end"]
+            filed = e.get("filed")
+            if not filed:
+                continue
+            if key not in out or filed < out[key]["filed"]:
+                out[key] = {"val": float(e["val"]), "filed": filed}
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def parse_companyfacts(j: dict, symbol: str, quarters: int = 10) -> pd.DataFrame:
+    """EDGAR XBRL companyfacts JSON -> store-ready quarterly history rows.
+
+    Per quarter: revenue, gross_profit, operating_income, net_income (whichever
+    are reported), with available_at = the close of the session the disclosing
+    filing was made (PIT-safe: a backtest at T sees only reported quarters).
+    Pure function so the parsing is testable offline.
+    """
+    gaap = (j or {}).get("facts", {}).get("us-gaap", {})
+    if not gaap:
+        return pd.DataFrame()
+    revenue: dict[str, dict] = {}
+    for tag in _XBRL_REVENUE_TAGS:
+        revenue = _quarterly_usd(gaap, tag)
+        if len(revenue) >= 4:
+            break
+    if not revenue:
+        return pd.DataFrame()
+    gross = _quarterly_usd(gaap, "GrossProfit")
+    cogs = _quarterly_usd(gaap, "CostOfRevenue") if not gross else {}
+    opinc = _quarterly_usd(gaap, "OperatingIncomeLoss")
+    netinc = _quarterly_usd(gaap, "NetIncomeLoss")
+    rows = []
+    for end, rev in sorted(revenue.items())[-quarters:]:
+        gp = gross.get(end, {}).get("val")
+        if gp is None and end in cogs:
+            gp = rev["val"] - cogs[end]["val"]
+        rows.append({
+            "symbol": symbol,
+            "available_at": available_at_for_session(pd.Timestamp(rev["filed"])),
+            "period_end": pd.Timestamp(end),
+            "revenue": rev["val"],
+            "gross_profit": gp,
+            "operating_income": opinc.get(end, {}).get("val"),
+            "net_income": netinc.get(end, {}).get("val"),
+        })
+    return pd.DataFrame(rows)
+
+
+def fetch_fundamental_history(symbol: str, cik: str, user_agent: str,
+                              quarters: int = 10) -> pd.DataFrame:
+    """Quarterly revenue/margin history from EDGAR XBRL companyfacts (free).
+
+    This is what makes the moat read a TRAJECTORY: revenue acceleration and
+    margin expansion across reported quarters — the pre-rally fingerprint a
+    single snapshot cannot show. Returns empty on any failure."""
+    import requests  # lazy
+
+    url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{int(cik):010d}.json"
+    resp = requests.get(url, headers={"User-Agent": user_agent}, timeout=30)
+    resp.raise_for_status()
+    return parse_companyfacts(resp.json(), symbol, quarters=quarters)
+
+
+def fetch_news_yahoo(symbol: str, limit: int = 10) -> pd.DataFrame:
+    """Recent news headlines for one symbol from Yahoo (free) -> store-ready
+    news rows. available_at = publish time, so the PIT filter governs them like
+    any event. Handles both old and new yfinance item formats; empty on failure."""
+    import yfinance as yf  # lazy
+
+    try:
+        items = yf.Ticker(symbol).news or []
+    except Exception:
+        return pd.DataFrame()
+    rows = []
+    for it in items[:limit]:
+        try:
+            content = it.get("content", it)      # new format nests under "content"
+            title = content.get("title") or it.get("title")
+            if not title:
+                continue
+            when = content.get("pubDate") or content.get("displayTime")
+            if when:
+                ts = pd.Timestamp(when)
+            elif it.get("providerPublishTime"):  # old format: unix seconds
+                ts = pd.Timestamp(int(it["providerPublishTime"]), unit="s", tz="UTC")
+            else:
+                continue
+            if ts.tz is None:
+                ts = ts.tz_localize("UTC")
+            src = (content.get("provider") or {}).get("displayName") if isinstance(
+                content.get("provider"), dict) else it.get("publisher", "yahoo")
+            rows.append({"symbol": symbol, "available_at": ts,
+                         "headline": str(title)[:300],
+                         "body_uri": str(content.get("canonicalUrl", {}).get("url", "")
+                                         if isinstance(content.get("canonicalUrl"), dict)
+                                         else it.get("link", ""))[:300],
+                         "source": str(src or "yahoo")[:80]})
+        except Exception:
+            continue
+    return pd.DataFrame(rows)
 
 
 def fetch_edgar_submissions(cik: str, user_agent: str) -> pd.DataFrame:

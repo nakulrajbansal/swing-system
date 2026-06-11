@@ -160,6 +160,13 @@ class SkepticAgent(Agent):
         rsi = t.get("rsi14")
         if isinstance(rsi, (int, float)) and rsi > 70:
             objs.append(Objection("overbought", f"RSI {rsi:.0f} is overbought — poor entry", 0.5))
+        ev = inputs.get("evidence", {}).get("events", {})
+        d2e = ev.get("days_to_earnings")
+        if ev.get("available") and isinstance(d2e, (int, float)) and 0 <= d2e <= 12:
+            objs.append(Objection(
+                "event_risk",
+                f"earnings on {ev.get('next_earnings_date')} ({d2e:.0f} days away) fall "
+                "inside the hold window — a binary print can gap through any stop", 0.55))
         corr = float(inputs.get("max_corr_to_book", 0.0))
         if corr > 0.6:
             objs.append(Objection("crowding",

@@ -308,6 +308,32 @@ class MoatAnalyst(Agent):
                 and isinstance(gm, (int, float)) and gm >= 50):
             pos.append("hyper-growth WITH high margins - the classic emerging-leader "
                        "profile"); score += 0.08
+        # TRAJECTORY (EDGAR quarterly history): where the business is GOING.
+        # Revenue growth accelerating while margins expand is the pre-rally
+        # inflection fingerprint; a 2-quarter deceleration is the reverse.
+        traj = fu.get("trajectory", {}) or {}
+        if traj.get("available"):
+            acc2 = traj.get("revenue_accelerating_2q")
+            acc = traj.get("revenue_accelerating")
+            mexp = traj.get("margins_expanding")
+            yoy = traj.get("revenue_yoy_latest_pct")
+            if acc and mexp:
+                pos.append(f"INFLECTING: revenue growth accelerating "
+                           f"({yoy:+.0f}% YoY latest) with expanding gross margins "
+                           f"({traj.get('gross_margin_trend_pct', 0):+.1f}pp vs a year ago) "
+                           "- the pre-rally fingerprint")
+                score += 0.18 if acc2 else 0.12
+            elif acc2:
+                pos.append(f"revenue growth accelerating two quarters running "
+                           f"(latest {yoy:+.0f}% YoY)"); score += 0.08
+            if traj.get("revenue_decelerating_2q"):
+                con.append("revenue growth decelerating two quarters running"); score -= 0.10
+            if mexp is False and isinstance(traj.get("gross_margin_trend_pct"),
+                                            (int, float)) \
+                    and traj["gross_margin_trend_pct"] < -2:
+                con.append(f"gross margin contracting "
+                           f"({traj['gross_margin_trend_pct']:+.1f}pp vs a year ago) "
+                           "- pricing power eroding"); score -= 0.08
         # Secular-tailwind scan: theme keywords in the business description, only
         # credited because the margin/growth checks above run independently.
         text = (str(m.get("business_summary") or "") + " "

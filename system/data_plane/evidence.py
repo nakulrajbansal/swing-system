@@ -115,6 +115,74 @@ def _f(row, key):
         return v
 
 
+def _trajectory(view, symbol: str) -> dict:
+    """Quarterly business trajectory from PIT-visible EDGAR XBRL history.
+
+    A snapshot says what the business IS; the trajectory says where it is
+    GOING — revenue growth accelerating with expanding margins across reported
+    quarters is the pre-rally fingerprint a single snapshot cannot show.
+    """
+    if not hasattr(view, "fundamentals_history"):
+        return {"available": False}
+    h = view.fundamentals_history(symbol)
+    if h is None or h.empty or "revenue" not in h.columns:
+        return {"available": False}
+    # Latest visible row per reported quarter, oldest -> newest.
+    h = (h.sort_values("available_at").groupby("period_end", as_index=False).last()
+         .sort_values("period_end").tail(9))
+    rev = h.set_index("period_end")["revenue"].astype(float)
+    if len(rev) < 5:
+        return {"available": False}
+
+    def _margin(col):
+        if col not in h.columns:
+            return {}
+        s = pd.to_numeric(h.set_index("period_end")[col], errors="coerce")
+        return {k: round(float(v) / rev[k] * 100, 1)
+                for k, v in s.items() if v == v and rev.get(k)}
+
+    gm, om = _margin("gross_profit"), _margin("operating_income")
+    yoy = {}
+    idx = list(rev.index)
+    for i in range(4, len(idx)):
+        prior = float(rev.iloc[i - 4])
+        if prior > 0:
+            yoy[idx[i]] = round((float(rev.iloc[i]) / prior - 1) * 100, 1)
+    quarters = [{"q": str(pd.Timestamp(k).date())[:7],
+                 "rev_yoy_pct": yoy.get(k),
+                 "gross_margin_pct": gm.get(k),
+                 "op_margin_pct": om.get(k)} for k in idx[-6:]]
+    yoy_vals = [v for v in (yoy.get(k) for k in idx) if v is not None]
+    gm_vals = [v for v in (gm.get(k) for k in idx) if v is not None]
+    out = {"available": True, "quarters": quarters}
+    if len(yoy_vals) >= 2:
+        out["revenue_accelerating"] = yoy_vals[-1] > yoy_vals[-2]
+        out["revenue_yoy_latest_pct"] = yoy_vals[-1]
+        if len(yoy_vals) >= 3:
+            out["revenue_accelerating_2q"] = (yoy_vals[-1] > yoy_vals[-2] > yoy_vals[-3])
+            out["revenue_decelerating_2q"] = (yoy_vals[-1] < yoy_vals[-2] < yoy_vals[-3])
+    if len(gm_vals) >= 5:
+        out["margins_expanding"] = (gm_vals[-1] > gm_vals[-5]
+                                    and gm_vals[-1] >= gm_vals[-3])
+        out["gross_margin_trend_pct"] = round(gm_vals[-1] - gm_vals[-5], 1)
+    return out
+
+
+def _events(view, symbol: str, fund_row: dict | None) -> dict:
+    """Known scheduled events: the next earnings date and its distance from the
+    decision session — a swing hold that straddles it carries binary event risk."""
+    ed = (fund_row or {}).get("next_earnings_date")
+    if not ed:
+        return {"available": False}
+    try:
+        days = int((pd.Timestamp(str(ed)) - view.asof_date).days)
+    except (TypeError, ValueError):
+        return {"available": False}
+    return {"available": True, "next_earnings_date": str(ed)[:10],
+            "days_to_earnings": days,
+            "earnings_within_swing_window": 0 <= days <= 20}
+
+
 def _fundamentals(view, symbol: str) -> dict:
     """Latest PIT-visible valuation / growth / guidance snapshot for the symbol.
 
@@ -185,6 +253,8 @@ def _fundamentals(view, symbol: str) -> dict:
             "industry": r.get("industry"),
             "business_summary": str(summary)[:700] if summary else None,
         },
+        "trajectory": _trajectory(view, symbol),
+        "next_earnings_date": r.get("next_earnings_date"),
         "analyst_recommendation": r.get("recommendation"),
     }
 
@@ -198,11 +268,13 @@ def _news(view, symbol: str) -> list[str]:
 
 def assemble_evidence(view, symbol: str) -> dict:
     """Compact, readable, domain-specific evidence packet for one symbol."""
+    fund = _fundamentals(view, symbol)
     return {
         "symbol": symbol,
         "as_of": str(view.asof_date.date()),
         "technicals": _technicals(view, symbol),
-        "fundamentals": _fundamentals(view, symbol),
+        "fundamentals": fund,
+        "events": _events(view, symbol, fund),
         "filings": _filings(view, symbol),
         "insider": _insider(view, symbol),
         "recent_news": _news(view, symbol),

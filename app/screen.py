@@ -29,7 +29,34 @@ def _rsi(close: pd.Series, n: int = 14) -> float:
     return float(v.iloc[-1]) if len(v) else float("nan")
 
 
-def _metrics(close: pd.Series, bench_mom6: float) -> dict | None:
+def _volume_metrics(c: pd.Series, volume: pd.Series | None) -> dict:
+    """Liquidity + accumulation reads from share volume (all None if absent).
+
+    dollar_vol_m: median daily dollar volume over ~3 months (liquidity floor).
+    vol_ratio: avg volume last 20 sessions vs the prior ~100 (expanding interest).
+    updown_vol: up-day volume / down-day volume over ~3 months (>1 = accumulation
+    — institutions buying shows in WHERE the volume happens before it shows in price).
+    """
+    out = {"dollar_vol_m": None, "vol_ratio": None, "updown_vol": None}
+    if volume is None:
+        return out
+    v = volume.reindex(c.index).fillna(0.0)
+    if len(v) < 130 or float(v.iloc[-60:].sum()) <= 0:
+        return out
+    out["dollar_vol_m"] = float((c.iloc[-63:] * v.iloc[-63:]).median()) / 1e6
+    base = float(v.iloc[-120:-20].mean())
+    if base > 0:
+        out["vol_ratio"] = float(v.iloc[-20:].mean()) / base
+    rets = c.pct_change().iloc[-63:]
+    up = float(v.iloc[-63:][rets > 0].sum())
+    dn = float(v.iloc[-63:][rets < 0].sum())
+    if dn > 0:
+        out["updown_vol"] = up / dn
+    return out
+
+
+def _metrics(close: pd.Series, bench_mom6: float,
+             volume: pd.Series | None = None) -> dict | None:
     c = close.dropna()
     if len(c) < 150:
         return None
@@ -56,7 +83,8 @@ def _metrics(close: pd.Series, bench_mom6: float) -> dict | None:
             "above_200dma": last > sma200, "dist_high": dist_high,
             "pct_above_low": pct_above_low,
             "rsi": _rsi(c), "rs": mom6 - bench_mom6,
-            "earnings_gap": strategy.earnings_gap_drift(c), "bad_data": bad_data}
+            "earnings_gap": strategy.earnings_gap_drift(c), "bad_data": bad_data,
+            **_volume_metrics(c, volume)}
 
 
 def market_regime(closes: pd.DataFrame, benchmark: str = BENCH) -> dict:
@@ -72,10 +100,17 @@ def market_regime(closes: pd.DataFrame, benchmark: str = BENCH) -> dict:
 
 def prescreen(closes: pd.DataFrame, top: int = 25, benchmark: str = BENCH,
               weights: dict | None = None, sector_etfs: dict | None = None,
-              sector_of: dict | None = None,
-              exclude: set | None = None) -> tuple[list[dict], dict]:
+              sector_of: dict | None = None, exclude: set | None = None,
+              volumes: pd.DataFrame | None = None,
+              min_dollar_vol_m: float = 3.0,
+              min_price: float = 5.0) -> tuple[list[dict], dict]:
     """Rank the universe; return (ranked[:top], regime). The regime dict also
-    carries 'sector_rs' (per-sector relative strength) for display."""
+    carries 'sector_rs' (per-sector relative strength) for display.
+
+    With ``volumes`` provided, names below the liquidity floor (median daily
+    dollar volume < min_dollar_vol_m millions, or price < min_price) are dropped
+    before ranking — essential once the universe includes small caps, so an
+    untradable micro-name can never reach the shortlist or the Risk Governor."""
     regime = market_regime(closes, benchmark)
     w = weights or strategy.BASE_WEIGHTS
     sector_etfs = sector_etfs or {}
@@ -88,15 +123,21 @@ def prescreen(closes: pd.DataFrame, top: int = 25, benchmark: str = BENCH,
     if benchmark in closes.columns:
         bm = _metrics(closes[benchmark], 0.0)
         bench_mom6 = bm["mom6"] if bm else 0.0
-    rows, dropped = [], 0
+    rows, dropped, illiquid = [], 0, 0
     for sym in closes.columns:
         if sym in skip:
             continue
-        m = _metrics(closes[sym], bench_mom6)
+        vol = volumes[sym] if volumes is not None and sym in volumes.columns else None
+        m = _metrics(closes[sym], bench_mom6, volume=vol)
         if m is None:
             continue
         if m.get("bad_data"):                 # corrupt source data — never rank it
             dropped += 1
+            continue
+        dv = m.get("dollar_vol_m")
+        if (m["price"] < min_price
+                or (dv is not None and dv < min_dollar_vol_m)):
+            illiquid += 1                     # tradability floor (small caps)
             continue
         m["symbol"] = sym
         m["sector"] = sector_of.get(sym)
@@ -104,4 +145,5 @@ def prescreen(closes: pd.DataFrame, top: int = 25, benchmark: str = BENCH,
         rows.append(m)
     rows.sort(key=lambda r: r["score"], reverse=True)
     regime["dropped_bad_data"] = dropped
+    regime["dropped_illiquid"] = illiquid
     return rows[:top], regime

@@ -103,6 +103,33 @@ def test_hidden_gem_slots_surface_accelerating_names():
     assert syms[0] == "HOT1"                      # core slots still score-ordered
 
 
+def test_prescreen_liquidity_floor_drops_untradable_names():
+    df = _frame()
+    df["THIN"] = _series(40, 0.0010, seed=12)     # decent trend ...
+    df["PENNY"] = _series(2.0, 0.0008, seed=13)   # ... and a $2 micro-name
+    vols = pd.DataFrame(1_000_000.0, index=df.index, columns=df.columns)
+    vols["THIN"] = 5_000.0                        # ~$200k/day: below the floor
+    ranked, regime = prescreen(df, top=10, volumes=vols)
+    syms = [r["symbol"] for r in ranked]
+    assert "THIN" not in syms and "PENNY" not in syms
+    assert regime.get("dropped_illiquid", 0) >= 2
+    assert "LEAD" in syms                          # liquid names unaffected
+
+
+def test_accumulation_volume_lifts_score():
+    df = _frame()
+    closes = df[["SPY", "LEAD"]].copy()
+    closes["ACCU"] = closes["LEAD"] * 1.001        # near-identical price paths
+    rets = closes["ACCU"].pct_change()
+    base = pd.Series(1_000_000.0, index=closes.index)
+    accu_vol = base.where(rets <= 0, base * 3)     # volume piles into UP days
+    dist_vol = base.where(rets > 0, base * 3)      # volume piles into DOWN days
+    vols = pd.DataFrame({"SPY": base, "LEAD": dist_vol, "ACCU": accu_vol})
+    ranked, _ = prescreen(closes, top=10, volumes=vols)
+    score = {r["symbol"]: r["score"] for r in ranked}
+    assert score["ACCU"] > score["LEAD"]           # accumulation footprint rewarded
+
+
 def test_sp500_universe_is_broad():
     from harness.data.sp500 import screen_universe
     syms = screen_universe()

@@ -26,6 +26,7 @@ import pandas as pd
 BASE_WEIGHTS = {
     "rs": 2.0, "mom6": 1.0, "mom3": 0.5, "trend": 0.30,
     "near_high": 0.20, "earnings_gap": 0.80, "sector": 0.60, "accel": 0.60,
+    "volume": 0.30,
 }
 
 
@@ -121,6 +122,11 @@ def composite_score(m: dict, weights: dict | None = None,
     # Momentum ACCELERATION: is the recent 3-month pace running ahead of the
     # 6-month average pace? An igniting trend scores before it is consensus.
     s += w.get("accel", 0.0) * _clamp(m.get("accel", 0.0), -0.3, 0.4)
+    # Accumulation: volume concentrated on up days (institutions leave volume
+    # footprints before the price move is obvious). Neutral when volume absent.
+    uv = m.get("updown_vol")
+    if isinstance(uv, (int, float)):
+        s += w.get("volume", 0.0) * _clamp(uv - 1.0, -0.5, 0.5)
     sec = m.get("sector")
     if sec and sec in sec_rs:
         s += w["sector"] * _clamp(sec_rs[sec], -0.3, 0.3)
@@ -155,6 +161,12 @@ def hidden_gem_score(m: dict) -> float:
         dh = m.get("dist_high", 0.0)
         if -0.35 <= dh <= -0.10:
             s += 0.20                      # re-rating room back to / through highs
+        vr = m.get("vol_ratio")
+        if isinstance(vr, (int, float)) and vr > 1.3:
+            s += 0.20                      # volume expanding into the move
+        uv = m.get("updown_vol")
+        if isinstance(uv, (int, float)) and uv > 1.3:
+            s += 0.15                      # up-day volume dominates: accumulation
     rsi = m.get("rsi", float("nan"))
     if rsi == rsi and rsi > 80:
         s -= 0.30
@@ -279,6 +291,7 @@ def walk_forward_backtest(closes: pd.DataFrame, metrics_fn, weights: dict,
     if len(dates) <= warmup + hold_days:
         return {"error": "not enough history"}
     period_rets, bench_rets, wins = [], [], 0
+    gem_rets, gem_wins, gem_n = [], 0, 0
     i = warmup
     while i + hold_days < len(dates):
         hist = closes.iloc[: i + 1]
@@ -291,20 +304,35 @@ def walk_forward_backtest(closes: pd.DataFrame, metrics_fn, weights: dict,
             m = metrics_fn(hist[sym], bench_mom6)
             if m is None:
                 continue
-            scored.append((sym, composite_score(m, weights)))
+            scored.append((sym, composite_score(m, weights), m))
         scored.sort(key=lambda x: x[1], reverse=True)
-        picks = [s for s, _ in scored[:top_k]]
-        if picks:
-            fwd = []
-            for s in picks:
+        picks = [s for s, _, _ in scored[:top_k]]
+
+        def _fwd(syms):
+            out = []
+            for s in syms:
                 p0 = closes[s].iloc[i]
                 p1 = closes[s].iloc[i + hold_days]
                 if p0 == p0 and p1 == p1 and p0 > 0:
-                    fwd.append(p1 / p0 - 1)
+                    out.append(p1 / p0 - 1)
+            return out
+
+        if picks:
+            fwd = _fwd(picks)
             if fwd:
-                r = float(np.mean(fwd))
-                period_rets.append(r)
+                period_rets.append(float(np.mean(fwd)))
                 wins += sum(1 for x in fwd if x > 0)
+        # Hidden-gem cohort, tracked separately: would the early-acceleration
+        # lens have paid? (Same walk-forward discipline: scored on history up to
+        # day i only, returns measured forward.)
+        gems = sorted(((s, m) for s, _, m in scored[top_k:]
+                       if hidden_gem_score(m) > 0.15),
+                      key=lambda x: hidden_gem_score(x[1]), reverse=True)[:3]
+        gfwd = _fwd([s for s, _ in gems])
+        if gfwd:
+            gem_rets.append(float(np.mean(gfwd)))
+            gem_wins += sum(1 for x in gfwd if x > 0)
+            gem_n += len(gfwd)
         if benchmark in closes.columns:
             b0, b1 = closes[benchmark].iloc[i], closes[benchmark].iloc[i + hold_days]
             if b0 == b0 and b1 == b1 and b0 > 0:
@@ -321,7 +349,11 @@ def walk_forward_backtest(closes: pd.DataFrame, metrics_fn, weights: dict,
     peak = np.maximum.accumulate(eq)
     mdd = float(((eq - peak) / peak).min() * 100) if len(eq) else 0.0
     total_names = max(1, len(period_rets) * top_k)
+    gem_total = float(np.prod([1 + r for r in gem_rets]) - 1) if gem_rets else 0.0
     return {
+        "gem_periods": len(gem_rets), "gem_picks": gem_n,
+        "gem_total_return_pct": round(gem_total * 100, 1),
+        "gem_win_rate_pct": round(100.0 * gem_wins / gem_n, 0) if gem_n else 0.0,
         "periods": len(period_rets), "hold_days": hold_days, "top_k": top_k,
         "strategy_total_return_pct": round(total * 100, 1),
         "benchmark_total_return_pct": round(btot * 100, 1),

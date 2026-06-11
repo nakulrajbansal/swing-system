@@ -658,10 +658,24 @@ def _screen_universe(cfg: AppConfig):
     """(symbols, sector_map, label, key) for the configured screen index."""
     from harness.data.sp500 import screen_universe as sp_u, sector_of
     from harness.data import nasdaq100 as nq
+    from harness.data import midsmall as ms
     idx = (getattr(cfg, "screen_index", "sp500") or "sp500").lower()
     cap = cfg.screen_universe or None
     if idx == "qqq":
         return nq.screen_universe(cap), sector_of(), "Nasdaq-100 (QQQ)", "qqq"
+    if idx in {"sp400", "sp600", "midsmall"}:
+        labels = {"sp400": "S&P 400 (mid-cap)", "sp600": "S&P 600 (small-cap)",
+                  "midsmall": "S&P 400+600 (mid/small-cap)"}
+        syms, sect = ms.screen_universe(idx, cap)
+        return syms, sect, labels[idx], idx
+    if idx == "broad":
+        # Everything: S&P 500 + 400 + 600 — the full discovery sweep.
+        syms_ms, sect_ms = ms.screen_universe("midsmall", None)
+        syms = sorted(dict.fromkeys(sp_u(None) + syms_ms))
+        sect = {**sect_ms, **sector_of()}
+        if cap:
+            syms = syms[:cap]
+        return syms, sect, "S&P 1500 (broad)", "broad"
     return sp_u(cap), sector_of(), "S&P 500", "sp500"
 
 
@@ -793,6 +807,30 @@ def _build_ticker_store(cfg: AppConfig, ticker: str, emit: Emit):
                 store.write_fundamentals(fund)
         except Exception as exc:
             emit(f"[data] fundamentals skipped: {exc}")
+    # Quarterly revenue/margin history (EDGAR XBRL) feeds the moat analyst's
+    # TRAJECTORY read — where the business is going, not just where it is.
+    if cfg.edgar_user_agent and store.read_table("fundamentals_history").empty:
+        try:
+            from harness.data.loader import fetch_fundamental_history
+            cik = fetch_cik_map(cfg.edgar_user_agent).get(ticker)
+            if cik:
+                emit(f"[edgar] fetching quarterly revenue/margin history for {ticker} ...")
+                hist = fetch_fundamental_history(ticker, cik, cfg.edgar_user_agent)
+                if not hist.empty:
+                    store.write_fundamentals_history(hist)
+        except Exception as exc:
+            emit(f"[edgar] quarterly history skipped: {exc}")
+    # Recent real headlines so the agents' news evidence is no longer empty
+    # on live data.
+    if store.read_table("news").empty:
+        try:
+            from harness.data.loader import fetch_news_yahoo
+            n = fetch_news_yahoo(ticker)
+            if not n.empty:
+                store.write_news(n)
+                emit(f"[news] {len(n)} recent headline(s) loaded for {ticker}.")
+        except Exception as exc:
+            emit(f"[news] skipped: {exc}")
     sector = next((etf for etf, tk in LIVE_UNIVERSE.items() if ticker in tk), "SPY")
     return store, {ticker: sector}
 
@@ -905,6 +943,20 @@ def _assess_moat(fu: dict) -> list[str]:
         out.append(f"  insider ownership: {io:.0f}% [aligned founders/management]")
     if m.get("industry"):
         out.append(f"  industry: {m['industry']}")
+    traj = (fu or {}).get("trajectory", {}) or {}
+    if traj.get("available"):
+        ys = [q for q in (traj.get("quarters") or []) if q.get("rev_yoy_pct") is not None]
+        if ys:
+            out.append("  revenue YoY by quarter: " + "   ".join(
+                f"{q['q']} {q['rev_yoy_pct']:+.0f}%" for q in ys[-4:]))
+        if traj.get("revenue_accelerating") and traj.get("margins_expanding"):
+            out.append("  trajectory: revenue ACCELERATING + margins EXPANDING "
+                       "[the pre-rally inflection]")
+        elif traj.get("revenue_decelerating_2q"):
+            out.append("  trajectory: revenue growth decelerating 2 quarters running "
+                       "[cooling]")
+        elif traj.get("revenue_accelerating"):
+            out.append("  trajectory: revenue growth accelerating [improving]")
     return out or ["  (business-quality data sparse)"]
 
 
@@ -964,6 +1016,13 @@ def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
     _h("FILINGS & INSIDER")
     for ln in _assess_filings(evidence.get("filings", {}), evidence.get("insider", {})):
         log(ln)
+    evts = evidence.get("events", {})
+    if evts.get("available"):
+        _h("SCHEDULED EVENTS")
+        warn = ("  [!] inside the swing window - binary event risk"
+                if evts.get("earnings_within_swing_window") else "")
+        log(f"  next earnings: {evts.get('next_earnings_date')} "
+            f"({evts.get('days_to_earnings')} days away){warn}")
     mac = evidence.get("macro", {})
     if mac.get("available"):
         _h("MACRO BACKDROP")
@@ -1173,6 +1232,7 @@ def _analyze_symbol(cfg: AppConfig, sym: str, client, real_llm: bool, mem, log: 
     hyp = _step_out(transcript, "hypothesis")
     crit = _step_out(transcript, "skeptic")
     pm = _step_out(transcript, "portfolio_manager")
+    moat = _step_out(transcript, "moat_analyst")
     rec = None
     if pm.get("action") in {"enter", "adjust"}:
         px = engine.panels.get(sym)
@@ -1195,6 +1255,7 @@ def _analyze_symbol(cfg: AppConfig, sym: str, client, real_llm: bool, mem, log: 
                 "conviction": round(float(pm.get("final_conviction", 0)), 2),
                 "thesis": hyp.get("mechanism", ""), "skeptic": crit.get("verdict", "?"),
                 "decisive_factor": pm.get("decisive_factor", ""),
+                "moat_stance": moat.get("stance"),
             }
     _analysis_summary(log, sym, transcript.get("evidence", {}), transcript, rec,
                       float(cfg.starting_equity))
@@ -1212,7 +1273,7 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
     of universe size. Advisory only; no orders are placed."""
     import datetime
 
-    from harness.data.loader import fetch_closes_batch
+    from harness.data.loader import fetch_closes_volumes_batch
     from harness.data.sp500 import SECTOR_ETFS, sector_of
     from app.screen import prescreen, market_regime
     from app import strategy
@@ -1237,15 +1298,20 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
         # shadow each other (sp500 vs qqq, capped vs full).
         cache = (CONFIG_DIR / "data_store" /
                  f"prefilter_{today.isoformat()}_{idx_key}_{len(fetch_list)}.parquet")
+        vcache = cache.with_name(cache.name.replace("prefilter_", "prefilter_vol_"))
         cache.parent.mkdir(parents=True, exist_ok=True)
         closes = pd.read_parquet(cache) if cache.exists() else pd.DataFrame()
+        volumes = pd.read_parquet(vcache) if vcache.exists() else pd.DataFrame()
         # Refetch if missing or if coverage is well short of what was requested
         # (a stale/partial cache must not silently shrink the screened universe).
-        if closes.empty or closes.shape[1] < 0.8 * len(fetch_list):
+        if closes.empty or closes.shape[1] < 0.8 * len(fetch_list) or volumes.empty:
             with _redirect(log):
-                closes = fetch_closes_batch(fetch_list, start, today.isoformat(), emit=log)
+                closes, volumes = fetch_closes_volumes_batch(
+                    fetch_list, start, today.isoformat(), emit=log)
             if not closes.empty:
                 closes.to_parquet(cache)
+            if not volumes.empty:
+                volumes.to_parquet(vcache)
         else:
             log(f"[prefilter] using cached prices ({cache.name}, {closes.shape[1]} series).")
         if closes.empty:
@@ -1265,11 +1331,24 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
             log(f"[ledger] scored {ev['evaluated']} matured recommendation(s): "
                 f"hit rate {ev['win_rate_pct']:.0f}%, avg {ev['avg_return_pct']:+.1f}%. "
                 f"({ev['open']} still open)")
+            co = ev.get("cohorts", {})
+            gem, core = co.get("hidden_gem", {}), co.get("core", {})
+            if gem.get("n"):
+                log(f"[ledger] lens scoreboard - hidden-gem picks: {gem['n']} scored, "
+                    f"hit {gem['win_rate_pct']:.0f}%, avg {gem['avg_return_pct']:+.1f}%  |  "
+                    f"core picks: {core.get('n', 0)} scored, "
+                    f"hit {core.get('win_rate_pct', 0):.0f}%, "
+                    f"avg {core.get('avg_return_pct', 0):+.1f}%")
+            mb = co.get("moat_bullish", {})
+            if mb.get("n"):
+                log(f"[ledger] moat-bullish picks: {mb['n']} scored, "
+                    f"hit {mb['win_rate_pct']:.0f}%, avg {mb['avg_return_pct']:+.1f}%")
         regime0 = market_regime(closes)
         weights = strategy.factor_weights(regime0, mem)
         ranked, regime = prescreen(closes, top=max(15, int(cfg.screen_top_k) * 3),
                                    weights=weights, sector_etfs=SECTOR_ETFS,
-                                   sector_of=sec_of_map)
+                                   sector_of=sec_of_map,
+                                   volumes=volumes if not volumes.empty else None)
 
         macro, macro_read = _macro_context(cfg, client, log)
         risk_off = regime.get("available") and not regime.get("above_200dma")
@@ -1280,6 +1359,10 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
         if dropped:
             log(f"[prefilter] dropped {dropped} name(s) with implausible/corrupt "
                 "price data (kept out of the shortlist).")
+        illiq = regime.get("dropped_illiquid", 0)
+        if illiq:
+            log(f"[prefilter] dropped {illiq} name(s) below the liquidity floor "
+                "(median dollar volume / price too low to trade cleanly).")
         if regime.get("available"):
             log(f"\n[regime] market is {regime['regime']} (SPY 6mo "
                 f"{regime['mom6_pct']:+.0f}%, "
@@ -1348,6 +1431,7 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
                                "conviction": conv, "score": m["score"]})
             if rec:
                 rec["sector"] = sec_map.get(sym, "?")
+                rec["hidden_gem"] = bool(m.get("hidden_gem"))
                 recs.append(rec)
 
         log("\n" + "=" * 60)
@@ -1468,6 +1552,11 @@ def run_strategy_backtest(cfg: AppConfig, emit: Emit) -> dict:
         log(f"  --> strategy {verdict} the benchmark by {res['excess_return_pct']:+.1f}% "
             f"total;  win rate {res['win_rate_pct']:.0f}%,  max drawdown "
             f"{res['max_drawdown_pct']:.1f}%")
+        if res.get("gem_picks"):
+            log(f"  hidden-gem lens (tracked separately): {res['gem_picks']} picks over "
+                f"{res['gem_periods']} periods -> total {res['gem_total_return_pct']:+.1f}%, "
+                f"win rate {res['gem_win_rate_pct']:.0f}% "
+                "(validates the early-acceleration lens before money follows it)")
         log("\n[note] gross of slippage on the pre-filter alone (no agent gate). The "
             "agents + Risk Governor are an additional discipline layer on top.")
         log("[note] the universe is TODAY's index membership, so this backtest has "

@@ -51,7 +51,7 @@ class AppConfig:
     reddit_top_k: int = 10               # top mentioned tickers to analyze with the model
     screen_top_k: int = 5                # screen: names that get the full AI deep-dive
     screen_universe: int = 0             # 0 = full index; else cap to first N (testing)
-    screen_index: str = "sp500"          # which universe to screen: "sp500" | "qqq"
+    screen_index: str = "sp500"          # universe: sp500|qqq|sp400|sp600|midsmall|broad
 
     # --- feature toggles (default safe) ---
     use_llm_agents: bool = False         # experimental; spends tokens if a key is set

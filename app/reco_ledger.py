@@ -56,6 +56,10 @@ def record(recs: list[dict], source: str, as_of: str, path=None) -> int:
             "conviction": r.get("conviction"), "hold_days": r.get("hold_days", 10),
             "exit_by": r.get("exit_by"), "thesis": (r.get("thesis") or "")[:300],
             "setup_type": "confluence_swing", "source": source, "status": "open",
+            # Cohort tags: which lens produced the pick, so the desk can learn
+            # whether hidden-gem and moat-bullish picks actually outperform.
+            "hidden_gem": bool(r.get("hidden_gem")),
+            "moat_stance": r.get("moat_stance"),
         })
         have.add(key)
         added += 1
@@ -125,7 +129,31 @@ def evaluate(closes: pd.DataFrame, today: str, memory=None, path=None) -> dict:
         save(led, path)
     avg = round(sum(rets) / len(rets), 1) if rets else 0.0
     return {"evaluated": evaluated, "win_rate_pct": round(100 * wins / evaluated, 0) if evaluated else 0,
-            "avg_return_pct": avg, "open": sum(1 for r in led if r.get("status") == "open")}
+            "avg_return_pct": avg, "open": sum(1 for r in led if r.get("status") == "open"),
+            "cohorts": cohort_stats(led)}
+
+
+def _cohort(rows: list[dict]) -> dict:
+    rets = [r["return_pct"] for r in rows if isinstance(r.get("return_pct"), (int, float))]
+    if not rets:
+        return {"n": 0}
+    wins = sum(1 for x in rets if x > 0)
+    return {"n": len(rets), "win_rate_pct": round(100 * wins / len(rets), 0),
+            "avg_return_pct": round(sum(rets) / len(rets), 1)}
+
+
+def cohort_stats(led: list[dict] | None = None, path=None) -> dict:
+    """Performance split by the lens that produced each pick, over ALL scored
+    recommendations: hidden-gem vs core, and moat-bullish vs the rest. This is
+    how the desk learns whether the discovery lenses actually pay."""
+    rows = [r for r in (led if led is not None else load(path))
+            if r.get("status") == "evaluated"]
+    return {
+        "hidden_gem": _cohort([r for r in rows if r.get("hidden_gem")]),
+        "core": _cohort([r for r in rows if not r.get("hidden_gem")]),
+        "moat_bullish": _cohort([r for r in rows if r.get("moat_stance") == "bullish"]),
+        "moat_other": _cohort([r for r in rows if r.get("moat_stance") not in (None, "bullish")]),
+    }
 
 
 def summarize(path=None) -> str:
