@@ -298,6 +298,24 @@ def test_clean_filing_text_skips_table_of_contents():
     assert "The following risks" in out[:120]    # anchored at the real section
 
 
+def test_stop_request_cancels_at_next_log_line():
+    import pytest
+    from app import runner
+
+    runner.clear_stop()
+    lines: list[str] = []
+    with pytest.raises(runner.RunStopped):
+        with runner._run_logger(lines.append, "testrun") as (log, _path):
+            log("first step")
+            runner.request_stop()
+            log("second step")            # must raise, never emit
+    runner.clear_stop()
+    assert any("first step" in ln for ln in lines)
+    assert not any("second step" in ln for ln in lines)
+    # The cancelled run still reports where its partial log lives.
+    assert any("[stopped]" in ln and "partial log" in ln for ln in lines)
+
+
 def test_midsmall_universe_static_fallback(monkeypatch):
     from harness.data import midsmall as ms
 

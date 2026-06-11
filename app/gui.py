@@ -16,10 +16,11 @@ from tkinter import messagebox, scrolledtext, ttk
 
 from app import APP_NAME, APP_VERSION
 from app.config import SECRET_FIELDS, AppConfig
-from app.runner import (check_alpaca, place_manual_order, run_curation,
-                        run_momentum_trade, run_portfolio_status,
-                        run_position_review, run_recommendations,
-                        run_reddit_scan, run_screen, run_strategy_backtest)
+from app.runner import (RunStopped, check_alpaca, clear_stop, place_manual_order,
+                        request_stop, run_curation, run_momentum_trade,
+                        run_portfolio_status, run_position_review,
+                        run_recommendations, run_reddit_scan, run_screen,
+                        run_strategy_backtest)
 
 # (field, label, kind)  kind: "secret" | "text" | "int" | "float" | "choice"
 _FIELDS = [
@@ -589,6 +590,9 @@ class SwingApp:
         tools.pack(fill="x", pady=(0, 6))
         self.progress = ttk.Progressbar(tools, mode="indeterminate",
                                         style="Accent.Horizontal.TProgressbar", length=180)
+        self.btn_stop = ttk.Button(tools, text="■  Stop run", style="Tool.TButton",
+                                   cursor="hand2", takefocus=False,
+                                   command=self._stop_run)
         ttk.Button(tools, text="Open logs folder", style="Tool.TButton", cursor="hand2",
                    takefocus=False, command=self._open_logs).pack(side="right", padx=(6, 0))
         ttk.Button(tools, text="Copy output", style="Tool.TButton", cursor="hand2",
@@ -938,6 +942,7 @@ class SwingApp:
         for k, v in overrides.items():             # per-button config overrides
             setattr(cfg, k, v)
         self.running = True
+        clear_stop()                               # fresh run, fresh stop flag
         task = fn.__name__.replace("run_", "").replace("_", " ")
         self._show("run")                          # output lives on the Desk
         self._set_busy(True, task)
@@ -947,6 +952,10 @@ class SwingApp:
             try:
                 res = fn(cfg, lambda line: self.q.put(("log", line)))
                 self.q.put(("result", res))
+                self.q.put(("done", None))
+            except RunStopped:
+                self.q.put(("log", "[stopped] run cancelled by user - no further "
+                                   "actions taken; partial output above."))
                 self.q.put(("done", None))
             except Exception as exc:  # surface, never crash the GUI
                 self.q.put(("log", f"[error] {type(exc).__name__}: {exc}"))
@@ -984,12 +993,22 @@ class SwingApp:
             self._busy_t0 = time.time()
             self.progress.pack(side="left", padx=(4, 0), pady=2)
             self.progress.start(24)
+            self.btn_stop.config(state="normal", text="■  Stop run")
+            self.btn_stop.pack(side="left", padx=(10, 0))
             self._tick_spinner()
         else:
             self._busy_task = ""
             self.progress.stop()
             self.progress.pack_forget()
+            self.btn_stop.pack_forget()
             self.spinner.config(text="●  ready")
+
+    def _stop_run(self):
+        """Cooperative cancel: the run aborts at its next step (log line)."""
+        request_stop()
+        self.btn_stop.config(state="disabled", text="■  stopping…")
+        self._log("[stop] stop requested - the run will halt at its next step "
+                  "(a long download chunk may take a moment to finish).")
 
     def _tick_spinner(self):
         """Animated sidebar status with the running task + elapsed time."""
@@ -1010,7 +1029,7 @@ class SwingApp:
                 or "[risk]" in low or "verdict: do not buy" in low):
             return "err"
         if "[warn" in low or "warning" in low or low.startswith("[note]") \
-                or "[hint]" in low:
+                or "[hint]" in low or "[stop]" in low or "[stopped]" in low:
             return "warn"
         if "hidden gem" in low or "hidden-gem" in low:
             return "gem"

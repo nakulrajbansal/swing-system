@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,23 @@ Emit = Callable[[str], None]
 
 # Every run is persisted here so it can be inspected afterwards.
 LOGS_DIR = CONFIG_DIR / "logs"
+
+
+class RunStopped(Exception):
+    """The user pressed Stop. Raised cooperatively at the next log line —
+    every long loop in the system logs constantly (per download chunk, per
+    deep-dive, per position), so cancellation lands within one step."""
+
+
+_STOP = threading.Event()
+
+
+def request_stop() -> None:
+    _STOP.set()
+
+
+def clear_stop() -> None:
+    _STOP.clear()
 
 REDDIT_PROMPT = (
     "You are a social-media sentiment analyst for equities. From the Reddit post "
@@ -46,6 +64,13 @@ def _run_logger(emit: Emit, kind: str):
     f = open(path, "w", encoding="utf-8")
 
     def log(line: str) -> None:
+        if _STOP.is_set():
+            try:
+                f.write("[stopped] run cancelled by the user.\n")
+                f.flush()
+            except Exception:
+                pass
+            raise RunStopped()
         try:
             f.write(line + "\n")
             f.flush()
@@ -57,7 +82,10 @@ def _run_logger(emit: Emit, kind: str):
     try:
         yield log, path
     finally:
-        log(f"[log] run log saved to: {path}")
+        try:
+            log(f"[log] run log saved to: {path}")
+        except RunStopped:
+            emit(f"[stopped] run cancelled - partial log at: {path}")
         f.close()
 
 
@@ -2121,11 +2149,15 @@ def run_momentum_trade(cfg: AppConfig, emit: Emit) -> dict:
                 log(f"  {sym}: already closed at broker (stop hit / manual). Untracking.")
                 _learn_close(sym, info, "stop")
                 tracked.pop(sym)
+                state[env] = tracked
+                save_positions(state)            # persist NOW: stop-safe tracker
             elif d_today >= info["exit_on"]:
                 log(f"  {sym}: held to {d_today} >= exit date {info['exit_on']} -> close at market.")
                 broker.close_position(sym)
                 _learn_close(sym, info, "time")
                 tracked.pop(sym)
+                state[env] = tracked
+                save_positions(state)
             else:
                 log(f"  {sym}: holding (entered {info['entry_date']}, exit on {info['exit_on']}).")
         if not tracked:
@@ -2168,6 +2200,8 @@ def run_momentum_trade(cfg: AppConfig, emit: Emit) -> dict:
                                                         limit=ref * (1 + band), stop=ticket.stop)
                         tracked[sym] = {"entry_date": d_today, "exit_on": exit_on,
                                         "shares": ticket.shares, "entry_price": ref}
+                        state[env] = tracked
+                        save_positions(state)    # persist before any log can stop us
                         log(f"\n[enter] {sym} = strongest momentum (score {score:.3f}). "
                             f"BUY {ticket.shares} sh @ ~{ref:.2f}, protective stop "
                             f"{ticket.stop:.2f}; exit on {exit_on} ({hd} sessions). "
