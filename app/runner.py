@@ -403,6 +403,25 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
         log(f"[review] {len(raw)} open position(s) on {cfg.alpaca_env.upper()} - "
             "checking each against its plan ...")
 
+        # Account-level risk first: every ticket is sized per-trade, so only an
+        # aggregate check catches a book that quietly margined itself up.
+        try:
+            acct = broker.account()
+            equity = float(acct.get("equity") or 0.0)
+            gross = sum(abs(float(p.get("market_value", 0) or 0)) for p in raw)
+            if equity > 0:
+                ratio = gross / equity
+                out["gross_exposure"] = round(ratio, 2)
+                log(f"[account] equity ${equity:,.0f} | open positions ${gross:,.0f} "
+                    f"| gross exposure {ratio:.2f}x")
+                if ratio > 1.05:
+                    log(f"[RISK] the book is {ratio:.1f}x LEVERED - a 10% adverse move "
+                        f"is ~{ratio * 10:.0f}% of the account. The desk's plan is "
+                        "<=1.0x: do not add positions until exits free up capital, "
+                        "and consider trimming the lowest-conviction names.")
+        except Exception:
+            pass
+
         for p in raw:
             sym = p.get("symbol")
             qty = float(p.get("qty", 0))
@@ -552,6 +571,11 @@ def _resolve_equity(cfg: AppConfig, log: Emit) -> tuple[float, float | None]:
     if acct:
         log(f"[account] sizing from your real {cfg.alpaca_env.upper()} account: "
             f"equity ${acct['equity']:,.0f}, buying power ${acct['buying_power']:,.0f}.")
+        if acct["buying_power"] < 0.05 * acct["equity"]:
+            log("[RISK] buying power is nearly exhausted - the book is fully "
+                "deployed (possibly on margin). New tickets will have ~0 "
+                "affordable shares; run 'Review exits' to free capital before "
+                "adding positions.")
         return acct["equity"], acct["buying_power"]
     log(f"[account] no broker account available - sizing from configured equity "
         f"${float(cfg.starting_equity):,.0f}.")
