@@ -359,6 +359,55 @@ def place_manual_order(cfg: AppConfig, order: dict, emit: Emit) -> dict:
         return {"ok": True, "id": oid, "status": status}
 
 
+def _run_curator(mem, client, log: Emit) -> dict:
+    """One curator pass over the lesson memory (the AI-native review that
+    replaced the manual approve gate). Prints a short self-review report."""
+    from app import reco_ledger
+    from system.config import DEFAULT_CONFIG
+    from system.reflection.curator import curate
+
+    rep = curate(mem, reco_ledger.load(), client=client,
+                 model=DEFAULT_CONFIG.models.framing)
+    log(f"[curator] self-review: {rep['activated']} lesson(s) activated by "
+        f"evidence, {rep['retired']} retired as contradicted, "
+        f"{rep['new_patterns']} pattern lesson(s) written "
+        f"({rep['pending']} pending more evidence).")
+    if rep.get("calibration"):
+        log(f"[curator] calibration: {rep['calibration']}")
+    return rep
+
+
+def run_curation(cfg: AppConfig, emit: Emit) -> dict:
+    """On-demand self-assessment: the curator grades the desk's own record —
+    expectation vs realization, lens performance, conviction calibration —
+    activates evidence-backed lessons and retires contradicted ones."""
+    from app import reco_ledger
+    from system.reflection.curator import assess
+
+    cfg.apply_to_env()
+    with _run_logger(emit, "curator") as (log, _path):
+        client, _real = _resolve_client(cfg, log)
+        mem = load_memory()
+        scored = [r for r in reco_ledger.load() if r.get("status") == "evaluated"]
+        log(f"[curator] reviewing the desk's record: {len(scored)} scored "
+            f"recommendation(s), {len(mem.entries)} lesson(s) in memory.")
+        stats = assess(reco_ledger.load())["stats"]
+        for key, label in (("overall", "overall"), ("hidden_gem", "hidden-gem"),
+                           ("core", "core"), ("moat_bullish", "moat-bullish")):
+            b = stats.get(key, {})
+            if b.get("n"):
+                log(f"  {label:<12} n={b['n']:<3} hit {b['win_rate_pct']:.0f}%  "
+                    f"avg {b['avg_return_pct']:+.1f}%  "
+                    f"stops {b.get('stop_rate_pct', 0):.0f}%"
+                    + (f"  avg conviction {b['avg_conviction']:.2f}"
+                       if b.get("avg_conviction") else ""))
+        rep = _run_curator(mem, client, log)
+        save_memory(mem)
+        log("[done] curation complete - see the Learning tab for the active "
+            "lesson set.")
+    return rep
+
+
 def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
     """Manage the OPEN side of the book — the other half of the trade lifecycle.
 
@@ -535,6 +584,8 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
                             f"{core.get('n', 0)} scored, "
                             f"hit {core.get('win_rate_pct', 0):.0f}%, "
                             f"avg {core.get('avg_return_pct', 0):+.1f}%")
+                    if mem is not None:
+                        _run_curator(mem, client, log)
             except Exception as exc:
                 log(f"[ledger] scoring skipped ({type(exc).__name__}: {exc}).")
 
@@ -1702,6 +1753,8 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
             if mb.get("n"):
                 log(f"[ledger] moat-bullish picks: {mb['n']} scored, "
                     f"hit {mb['win_rate_pct']:.0f}%, avg {mb['avg_return_pct']:+.1f}%")
+            if mem is not None:
+                _run_curator(mem, client, log)
         regime0 = market_regime(closes)
         weights = strategy.factor_weights(regime0, mem)
         ranked, regime = prescreen(closes, top=max(15, int(cfg.screen_top_k) * 3),

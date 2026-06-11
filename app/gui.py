@@ -16,10 +16,10 @@ from tkinter import messagebox, scrolledtext, ttk
 
 from app import APP_NAME, APP_VERSION
 from app.config import SECRET_FIELDS, AppConfig
-from app.runner import (check_alpaca, place_manual_order, run_momentum_trade,
-                        run_portfolio_status, run_position_review,
-                        run_recommendations, run_reddit_scan, run_screen,
-                        run_strategy_backtest)
+from app.runner import (check_alpaca, place_manual_order, run_curation,
+                        run_momentum_trade, run_portfolio_status,
+                        run_position_review, run_recommendations,
+                        run_reddit_scan, run_screen, run_strategy_backtest)
 
 # (field, label, kind)  kind: "secret" | "text" | "int" | "float" | "choice"
 _FIELDS = [
@@ -480,7 +480,8 @@ class SwingApp:
         ttk.Checkbutton(opts, text="Learn from runs (reflect on closed trades + recall lessons)",
                         variable=self.vars["learn_from_runs"]).pack(anchor="w", padx=8, pady=2)
         self.vars["auto_approve_lessons"] = tk.BooleanVar(value=self.cfg.auto_approve_lessons)
-        ttk.Checkbutton(opts, text="Auto-activate new lessons (else review them on the Lessons tab)",
+        ttk.Checkbutton(opts, text="Auto-activate new lessons instantly (skip the AI "
+                                   "curator's evidence gate)",
                         variable=self.vars["auto_approve_lessons"]).pack(anchor="w", padx=8, pady=2)
         self.vars["enable_live_trading"] = tk.BooleanVar(value=self.cfg.enable_live_trading)
         ttk.Checkbutton(opts, text="Enable LIVE (real-money) Alpaca env — extra gate",
@@ -629,14 +630,20 @@ class SwingApp:
                           expand=True)
         bar = ttk.Frame(card, style="Card.TFrame")
         bar.pack(fill="x", pady=(0, 8))
+        ttk.Label(bar, style="CardMuted.TLabel",
+                  text="Lessons are reviewed by the AI curator: anecdotes activate "
+                       "only once realized results back them; patterns need 5+ "
+                       "scored calls.").pack(side="left")
         ttk.Button(bar, text="Refresh", style="Tool.TButton", cursor="hand2",
                    takefocus=False, command=self._refresh_lessons).pack(side="right")
         ttk.Button(bar, text="Clear all", style="Tool.TButton", cursor="hand2",
                    takefocus=False, command=self._clear_lessons).pack(
             side="right", padx=(0, 6))
-        ttk.Button(bar, text="Approve all", style="Tool.TButton", cursor="hand2",
-                   takefocus=False, command=self._approve_lessons).pack(
-            side="right", padx=(0, 6))
+        b = ttk.Button(bar, text="Run AI curator", style="Tool.TButton",
+                       cursor="hand2", takefocus=False,
+                       command=lambda: self._start(run_curation))
+        b.pack(side="right", padx=(0, 6))
+        self._action_buttons.append(b)
         self.lessons_out = scrolledtext.ScrolledText(
             card, wrap="word", font=self.f_mono, bg=CONSOLE_BG, fg=CONSOLE_FG,
             relief="flat", bd=0, padx=14, pady=12)
@@ -658,18 +665,6 @@ class SwingApp:
         self.lessons_out.delete("1.0", "end")
         self.lessons_out.insert("end", text + "\n")
         self.lessons_out.configure(state="disabled")
-
-    def _approve_lessons(self):
-        try:
-            from app.learning import load_memory, save_memory
-            mem = load_memory()
-            for e in mem.entries:
-                e.human_reviewed = True
-            save_memory(mem)
-        except Exception as exc:
-            messagebox.showerror("Approve failed", str(exc))
-            return
-        self._refresh_lessons()
 
     def _clear_lessons(self):
         if not messagebox.askyesno("Clear learning memory",
@@ -972,6 +967,7 @@ class SwingApp:
                 elif kind == "done":
                     self.running = False
                     self._set_busy(False)
+                    self._refresh_lessons()    # curator may have changed the set
         except queue.Empty:
             pass
         self.root.after(80, self._drain_queue)
