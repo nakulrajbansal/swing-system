@@ -72,10 +72,10 @@ _GROUPS = [
 ]
 
 # -- palette (dark, layered: sidebar < content < card < raised; one accent) ----
-SIDEBAR = "#0d1014"     # deepest (left rail)
-BG = "#14181e"          # content background
-CARD = "#1c212b"        # card / surface (raised above content)
-SURF2 = "#262c39"       # raised controls (buttons, fields)
+SIDEBAR = "#0c0f14"     # deepest (left rail; also the titlebar caption color)
+BG = "#12161d"          # content background
+CARD = "#1a202a"        # card / surface (raised above content)
+SURF2 = "#252c39"       # raised controls (buttons, fields)
 SURF3 = "#2f3744"       # hover
 INK = "#eaedf3"         # primary text (off-white)
 MUTED = "#8590a3"       # secondary text
@@ -177,6 +177,34 @@ class SwingApp:
         self._setup_style()
         self._build()
         self.root.after(80, self._drain_queue)
+        # The DWM caption attributes need the window to exist; apply once now
+        # and once after the first map (covers both cold start and restore).
+        self._theme_titlebar()
+        self.root.after(200, self._theme_titlebar)
+
+    def _theme_titlebar(self):
+        """Make the native Windows title bar part of the design: dark caption
+        matched to the sidebar, themed border (Windows 10 1809+ / 11 via DWM).
+        Without this the OS paints a white bar over a dark app."""
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            self.root.update_idletasks()
+            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+            one = ctypes.byref(ctypes.c_int(1))
+            for attr in (20, 19):                  # USE_IMMERSIVE_DARK_MODE (old/new id)
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, attr, one, 4)
+
+            def cref(hexcol):                      # "#rrggbb" -> COLORREF 0x00BBGGRR
+                r, g, b = (int(hexcol[i:i + 2], 16) for i in (1, 3, 5))
+                return ctypes.byref(ctypes.c_int((b << 16) | (g << 8) | r))
+
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 35, cref(SIDEBAR), 4)  # caption
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 36, cref(INK), 4)      # text
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 34, cref(BORDER), 4)   # border
+        except Exception:
+            pass                                   # older Windows: dark-mode flag only
 
     def _set_app_icon(self):
         """Draw the brand mark (accent diamond on dark) as the window icon, so
@@ -207,6 +235,7 @@ class SwingApp:
         self.f_sub = tkfont.Font(family=fam, size=9)
         self.f_nav = tkfont.Font(family=fam, size=10)
         self.f_mono = tkfont.Font(family=mono, size=10)
+        self.f_mono_bold = tkfont.Font(family=mono, size=10, weight="bold")
 
         # Dark-themed dropdown lists (tk Listbox inside ttk Combobox).
         self.root.option_add("*TCombobox*Listbox.background", CARD)
@@ -561,14 +590,18 @@ class SwingApp:
         self.out = scrolledtext.ScrolledText(
             cons, wrap="word", height=20, font=self.f_mono, bg=CONSOLE_BG,
             fg=CONSOLE_FG, insertbackground=CONSOLE_FG, relief="flat", bd=0,
-            padx=14, pady=12)
+            padx=18, pady=14, spacing1=2, spacing3=2)
         self.out.pack(fill="both", expand=True)
         self.out.tag_configure("err", foreground=DANGER)
         self.out.tag_configure("warn", foreground="#d8a657")
         self.out.tag_configure("ok", foreground="#57c98a")
-        self.out.tag_configure("hl", foreground="#7fa8e8")
+        self.out.tag_configure("hl", foreground="#8fb4f0", font=self.f_mono_bold,
+                               spacing1=8)
+        self.out.tag_configure("agent", foreground=ACCENT, font=self.f_mono_bold,
+                               spacing1=6)
         self.out.tag_configure("gem", foreground=GEM)
-        self.out.tag_configure("dim", foreground="#6f7b8e")
+        self.out.tag_configure("dim", foreground="#677183")
+        self.out.tag_configure("rule", foreground="#39414f", spacing1=8, spacing3=4)
         self.out.configure(state="disabled")
         ttk.Frame(parent).pack(pady=5)            # bottom breathing room
         self._log(f"{APP_NAME} ready. Pick a universe and run a screen, or deep-dive "
@@ -966,7 +999,7 @@ class SwingApp:
         s = line.strip()
         low = s.lower()
         if (s.startswith("!!") or "[error]" in low or "[blocked]" in low
-                or "verdict: do not buy" in low):
+                or "[risk]" in low or "verdict: do not buy" in low):
             return "err"
         if "[warn" in low or "warning" in low or low.startswith("[note]") \
                 or "[hint]" in low:
@@ -976,17 +1009,29 @@ class SwingApp:
         if ("verdict: buy" in low or "recommend buy" in low or s.startswith("[done]")
                 or "[selftest] ok" in low):
             return "ok"
-        if s.startswith("===") or s.startswith("ANALYSIS:") or ">>> AGENT" in s \
-                or s.startswith("####") or "ANALYST" in s.upper()[:14]:
+        if s.startswith("▸"):
+            return "agent"
+        if (s.startswith("===") or s.startswith("ANALYSIS")
+                or s.isupper() and len(s) > 3 and not s.startswith("[")):
             return "hl"
-        if s.startswith("[") or s.startswith("  -") or s.startswith("  +"):
+        if s.startswith("[") or s.startswith("  -") or s.startswith("  +") \
+                or s.startswith("- ") or s.startswith("+ "):
             return "dim"
         return None
 
     def _log(self, line: str):
+        """Render a backend log line for humans: banner rows become thin rules,
+        section markers become headers; everything else is tag-colored."""
+        s = line.rstrip()
+        stripped = s.strip()
+        if stripped and set(stripped) <= {"#", "=", "-"} and len(stripped) >= 8:
+            disp, tag = "─" * 78, "rule"
+        elif stripped.startswith("# ") or stripped.startswith("=== "):
+            disp, tag = stripped.lstrip("#= ").rstrip(" =#"), "hl"
+        else:
+            disp, tag = s, self._tag_for(s)
         self.out.configure(state="normal")
-        tag = self._tag_for(line)
-        self.out.insert("end", line + "\n", tag or ())
+        self.out.insert("end", disp + "\n", tag or ())
         self.out.see("end")
         self.out.configure(state="disabled")
 

@@ -957,6 +957,59 @@ _AGENT_ROLE = {
 }
 
 
+def _fmt_step_output(out) -> list[str]:
+    """An agent's structured output -> readable lines (no raw JSON dumps —
+    the deliberation must be scannable by a human, in the app and the logs)."""
+    if not isinstance(out, dict):
+        return [_sent(out, 500)]
+    lines: list[str] = []
+    if "stance" in out or "assessment" in out:               # analyst read
+        sc = out.get("score")
+        head = str(out.get("stance", "?")).upper()
+        if isinstance(sc, (int, float)):
+            head += f"   (score {sc:.2f})"
+        lines.append(head)
+        if out.get("assessment"):
+            lines.append(_sent(out["assessment"], 460))
+        for p in (out.get("positives") or [])[:5]:
+            lines.append(f"  + {_sent(p, 200)}")
+        for c in (out.get("concerns") or [])[:5]:
+            lines.append(f"  - {_sent(c, 200)}")
+    elif "mechanism" in out or "decision" in out:            # hypothesis
+        if out.get("decision") != "propose":
+            lines.append(f"DECLINE   (conviction {out.get('raw_conviction', 0):.2f})")
+        else:
+            lines.append(f"PROPOSE   (conviction {out.get('raw_conviction', 0):.2f}, "
+                         f"hold ~{out.get('expected_hold_days', '?')} sessions)")
+            if out.get("mechanism"):
+                lines.append("thesis: " + _sent(out["mechanism"], 600))
+            if out.get("invalidation"):
+                lines.append("invalidated if: " + _sent(out["invalidation"], 260))
+    elif "objections" in out:                                # skeptic
+        lines.append(f"verdict: {str(out.get('verdict', '?')).upper()}")
+        for o in (out.get("objections") or [])[:6]:
+            if isinstance(o, dict):
+                lines.append(f"  - [{float(o.get('severity', 0)):.1f}] "
+                             f"{_sent(o.get('detail', ''), 240)}")
+    elif "rebuttal" in out:
+        lines.append(_sent(out["rebuttal"], 500))
+    elif "action" in out:                                    # PM / guardian
+        act = str(out.get("action", "?")).upper()
+        head = act
+        if isinstance(out.get("final_conviction"), (int, float)):
+            head += f"   (final conviction {out['final_conviction']:.2f})"
+        lines.append(head)
+        if out.get("entry"):
+            lines.append(f"entry ~{out['entry']:.2f}   stop {out.get('stop', 0):.2f}   "
+                         f"target {out.get('target', 0):.2f}")
+        if out.get("decisive_factor") or out.get("reason"):
+            lines.append("decisive: "
+                         + _sent(out.get("decisive_factor") or out.get("reason"), 420))
+    else:
+        lines.append(_short(out, 500))
+    return lines
+
+
 def _print_transcript(log: Emit, symbol: str, transcript: dict, verbose: bool) -> None:
     """Print the deliberation cleanly: the evidence, then each agent's role,
     inputs and output (so it is not a black box) — formatted for scanning."""
@@ -978,11 +1031,12 @@ def _print_transcript(log: Emit, symbol: str, transcript: dict, verbose: bool) -
     log(f"   {'-' * 56}")
     for st in transcript.get("steps", []):
         role = _AGENT_ROLE.get(st["agent"], st["agent"])
-        log(f"\n   > {role}  ({st.get('model', '-')})")
+        log(f"\n   ▸ {role}  ({st.get('model', '-')})")
         if verbose and st.get("system_prompt"):
             log(f"       brief : {_short(st['system_prompt'], 160)}")
             log(f"       input : {_short(st.get('inputs', {}), 300)}")
-        log(f"       output: {_short(st.get('output', {}), 1400)}")
+        for ln in _fmt_step_output(st.get("output", {})):
+            log(f"       {ln}")
 
 
 def _build_ticker_store(cfg: AppConfig, ticker: str, emit: Emit):
