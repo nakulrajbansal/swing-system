@@ -16,11 +16,9 @@ from tkinter import messagebox, scrolledtext, ttk
 
 from app import APP_NAME, APP_VERSION
 from app.config import SECRET_FIELDS, AppConfig
-from app.runner import (check_alpaca, place_manual_order, run_deliberation,
-                        run_filing_validation, run_insider_validation,
-                        run_momentum_trade, run_paper, run_portfolio_status,
-                        run_recommendations, run_reddit_scan, run_screen,
-                        run_strategy_backtest, run_validation)
+from app.runner import (check_alpaca, place_manual_order, run_momentum_trade,
+                        run_portfolio_status, run_recommendations,
+                        run_reddit_scan, run_screen, run_strategy_backtest)
 
 # (field, label, kind)  kind: "secret" | "text" | "int" | "float" | "choice"
 _FIELDS = [
@@ -90,8 +88,41 @@ DANGER = "#e06c6c"
 DANGER_SOFT = "#3a2026"
 GEM = "#62c8d8"          # hidden-gem cyan
 BORDER = "#272d38"
+HOVER = "#161b22"        # sidebar hover
 CONSOLE_BG = "#0b0e12"  # near-black console
 CONSOLE_FG = "#c8cfdb"
+
+
+class _NavItem(tk.Frame):
+    """Sidebar navigation row: left accent indicator bar, hover state, click."""
+
+    def __init__(self, parent, text: str, font, command):
+        super().__init__(parent, bg=SIDEBAR)
+        self.bar = tk.Frame(self, width=3, bg=SIDEBAR)
+        self.bar.pack(side="left", fill="y")
+        self.lbl = tk.Label(self, text=text, bg=SIDEBAR, fg=MUTED, anchor="w",
+                            padx=15, pady=10, font=font, cursor="hand2")
+        self.lbl.pack(side="left", fill="x", expand=True)
+        self.active = False
+        for w in (self, self.lbl):
+            w.bind("<Button-1>", lambda e: command())
+            w.bind("<Enter>", lambda e: self._hover(True))
+            w.bind("<Leave>", lambda e: self._hover(False))
+
+    def _hover(self, on: bool):
+        if self.active:
+            return
+        bg = HOVER if on else SIDEBAR
+        self.configure(bg=bg)
+        self.lbl.configure(bg=bg, fg=INK if on else MUTED)
+        self.bar.configure(bg=bg)
+
+    def set_active(self, on: bool):
+        self.active = on
+        bg = HOVER if on else SIDEBAR
+        self.configure(bg=bg)
+        self.lbl.configure(bg=bg, fg=INK if on else MUTED)
+        self.bar.configure(bg=ACCENT if on else bg)
 
 
 class _ScrollFrame(ttk.Frame):
@@ -154,9 +185,10 @@ class SwingApp:
         self.f_base = tkfont.Font(family=fam, size=10)
         self.f_bold = tkfont.Font(family=fam, size=10, weight="bold")
         self.f_section = tkfont.Font(family=fam, size=9, weight="bold")
-        self.f_title = tkfont.Font(family=fam, size=14, weight="bold")
-        self.f_h1 = tkfont.Font(family=fam, size=16, weight="bold")
+        self.f_title = tkfont.Font(family=fam, size=15, weight="bold")
+        self.f_h1 = tkfont.Font(family=fam, size=19, weight="bold")
         self.f_sub = tkfont.Font(family=fam, size=9)
+        self.f_nav = tkfont.Font(family=fam, size=10)
         self.f_mono = tkfont.Font(family=mono, size=10)
 
         # Dark-themed dropdown lists (tk Listbox inside ttk Combobox).
@@ -189,28 +221,24 @@ class SwingApp:
         s.configure("PageSub.TLabel", background=BG, foreground=MUTED, font=self.f_sub)
         s.configure("Status.TLabel", background=SIDEBAR, foreground=MUTED, font=self.f_sub)
         s.configure("OK.TLabel", background=BG, foreground=OK, font=self.f_sub)
+        # Section headers that sit ABOVE cards (not inside a boxy LabelFrame).
+        s.configure("Section.TLabel", background=BG, foreground=MUTED,
+                    font=self.f_section)
+        s.configure("SectionSub.TLabel", background=BG, foreground=FAINT,
+                    font=self.f_sub)
 
-        s.configure("TButton", background=SURF2, foreground=INK, bordercolor=BORDER,
-                    relief="flat", padding=(13, 8), font=self.f_base, focuscolor=BG)
+        s.configure("TButton", background=SURF2, foreground=INK, bordercolor=SURF2,
+                    relief="flat", padding=(14, 9), font=self.f_base, focuscolor=SURF2)
         s.map("TButton",
               background=[("active", SURF3), ("disabled", "#171b22")],
               foreground=[("disabled", FAINT)],
-              bordercolor=[("active", ACCENT)])
+              bordercolor=[("active", SURF3)])
         s.configure("Accent.TButton", background=ACCENT, foreground=ACCENT_INK,
-                    bordercolor=ACCENT, relief="flat", padding=(16, 10), font=self.f_bold)
+                    bordercolor=ACCENT, relief="flat", padding=(18, 9), font=self.f_bold,
+                    focuscolor=ACCENT)
         s.map("Accent.TButton",
               background=[("active", ACCENT_DK), ("disabled", "#27483a")],
               foreground=[("disabled", "#7f8b85")])
-        # Sidebar nav items (flat, left-aligned).
-        s.configure("Nav.TButton", background=SIDEBAR, foreground=MUTED, bordercolor=SIDEBAR,
-                    relief="flat", padding=(16, 11), font=self.f_base, anchor="w")
-        s.map("Nav.TButton", background=[("active", "#161b22")],
-              foreground=[("active", INK)])
-        s.configure("NavActive.TButton", background=ACCENT_SOFT, foreground=ACCENT,
-                    bordercolor=ACCENT_SOFT, relief="flat", padding=(16, 11),
-                    font=self.f_bold, anchor="w")
-        s.map("NavActive.TButton", background=[("active", ACCENT_SOFT)],
-              foreground=[("active", ACCENT)])
 
         s.configure("TCheckbutton", background=CARD, foreground=INK, font=self.f_base)
         s.map("TCheckbutton", background=[("active", CARD)],
@@ -250,24 +278,27 @@ class SwingApp:
         outer.pack(fill="both", expand=True)
 
         # ---- left sidebar (brand + nav + status) ----
-        side = ttk.Frame(outer, style="Side.TFrame", width=208)
+        side = ttk.Frame(outer, style="Side.TFrame", width=220)
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
         brand = ttk.Frame(side, style="Side.TFrame")
-        brand.pack(fill="x", padx=18, pady=(20, 6))
-        ttk.Label(brand, text="◎ " + APP_NAME, style="Brand.TLabel").pack(anchor="w")
-        ttk.Label(brand, text="AI swing desk", style="BrandSub.TLabel").pack(anchor="w")
-        ttk.Frame(side, style="Rule.TFrame", height=1).pack(fill="x", padx=14, pady=(10, 8))
+        brand.pack(fill="x", padx=20, pady=(24, 4))
+        row = ttk.Frame(brand, style="Side.TFrame")
+        row.pack(anchor="w")
+        tk.Label(row, text="◆", bg=SIDEBAR, fg=ACCENT,
+                 font=self.f_title).pack(side="left", padx=(0, 7))
+        ttk.Label(row, text=APP_NAME, style="Brand.TLabel").pack(side="left")
+        ttk.Label(brand, text="AI swing desk", style="BrandSub.TLabel").pack(
+            anchor="w", padx=(1, 0))
 
-        self._nav_btns: dict[str, ttk.Button] = {}
+        self._nav_btns: dict[str, _NavItem] = {}
         navwrap = ttk.Frame(side, style="Side.TFrame")
-        navwrap.pack(fill="x", padx=10)
-        for key, label in (("run", "  Desk"), ("lessons", "  Learning"),
-                           ("settings", "  Settings")):
-            b = ttk.Button(navwrap, text=label, style="Nav.TButton",
-                           takefocus=False, command=lambda k=key: self._show(k))
-            b.pack(fill="x", pady=2)
-            self._nav_btns[key] = b
+        navwrap.pack(fill="x", pady=(22, 0))
+        for key, label in (("run", "Desk"), ("lessons", "Learning"),
+                           ("settings", "Settings")):
+            item = _NavItem(navwrap, label, self.f_nav, lambda k=key: self._show(k))
+            item.pack(fill="x")
+            self._nav_btns[key] = item
 
         statusbox = ttk.Frame(side, style="Side.TFrame")
         statusbox.pack(side="bottom", fill="x", padx=18, pady=16)
@@ -294,10 +325,9 @@ class SwingApp:
             ("settings", "Settings", "Credentials, data, strategy parameters")):
             page = ttk.Frame(self._content)
             head = ttk.Frame(page)
-            head.pack(fill="x", padx=22, pady=(18, 0))
+            head.pack(fill="x", padx=26, pady=(22, 0))
             ttk.Label(head, text=title, style="PageTitle.TLabel").pack(anchor="w")
-            ttk.Label(head, text=sub, style="PageSub.TLabel").pack(anchor="w", pady=(2, 0))
-            ttk.Frame(page, style="Rule.TFrame", height=1).pack(fill="x", padx=22, pady=(12, 0))
+            ttk.Label(head, text=sub, style="PageSub.TLabel").pack(anchor="w", pady=(3, 0))
             body = ttk.Frame(page)
             body.pack(fill="both", expand=True)
             self._pages[key] = page
@@ -312,10 +342,41 @@ class SwingApp:
         for k, page in self._pages.items():
             page.pack_forget()
         self._pages[key].pack(fill="both", expand=True)
-        for k, btn in self._nav_btns.items():
-            btn.configure(style="NavActive.TButton" if k == key else "Nav.TButton")
+        for k, item in self._nav_btns.items():
+            item.set_active(k == key)
         if key == "lessons":
             self._refresh_lessons()
+
+    # -- shared building blocks ---------------------------------------------
+    def _card(self, parent, title: str | None = None, subtitle: str | None = None,
+              expand: bool = False):
+        """A flat, layered content card with its section header ABOVE it —
+        the borderless-card look that replaces boxy labeled frames."""
+        wrap = ttk.Frame(parent)
+        wrap.pack(fill="both" if expand else "x", expand=expand,
+                  padx=26, pady=(16, 0))
+        if title:
+            head = ttk.Frame(wrap)
+            head.pack(fill="x", pady=(0, 7))
+            ttk.Label(head, text=title.upper(), style="Section.TLabel").pack(side="left")
+            if subtitle:
+                ttk.Label(head, text=subtitle, style="SectionSub.TLabel").pack(
+                    side="left", padx=(10, 0))
+        card = tk.Frame(wrap, bg=CARD, highlightbackground=BORDER,
+                        highlightthickness=1, bd=0)
+        card.pack(fill="both" if expand else "x", expand=expand)
+        inner = ttk.Frame(card, style="Card.TFrame")
+        inner.pack(fill="both", expand=True, padx=16, pady=13)
+        return inner
+
+    def _mkbtn(self, parent, text, command, accent=False, width=None):
+        b = ttk.Button(parent, text=text, command=command, cursor="hand2",
+                       takefocus=False,
+                       style="Accent.TButton" if accent else "TButton")
+        if width:
+            b.configure(width=width)
+        self._action_buttons.append(b)
+        return b
 
     def _add_fields(self, card, names):
         for i, name in enumerate(names):
@@ -340,12 +401,10 @@ class SwingApp:
         body = scroll.body
 
         for title, names in _GROUPS:
-            card = ttk.LabelFrame(body, text=f" {title} ")
-            card.pack(fill="x", padx=10, pady=(8, 4), ipady=4)
+            card = self._card(body, title)
             self._add_fields(card, names)
 
-        opts = ttk.LabelFrame(body, text=" Options ")
-        opts.pack(fill="x", padx=10, pady=(8, 4), ipady=4)
+        opts = self._card(body, "Options")
         self.vars["use_llm_agents"] = tk.BooleanVar(value=self.cfg.use_llm_agents)
         ttk.Checkbutton(opts, text="Use LLM agents (experimental — may spend tokens)",
                         variable=self.vars["use_llm_agents"]).pack(anchor="w", padx=8, pady=2)
@@ -378,9 +437,12 @@ class SwingApp:
             anchor="w", padx=8, pady=(6, 4))
 
         bar = ttk.Frame(parent)
-        bar.pack(fill="x", padx=14, pady=10)
+        bar.pack(fill="x", padx=26, pady=14)
         ttk.Button(bar, text="Save configuration", style="Accent.TButton",
+                   cursor="hand2", takefocus=False,
                    command=self._save).pack(side="left")
+        self._mkbtn(bar, "Test Alpaca connection",
+                    lambda: self._start(check_alpaca)).pack(side="left", padx=(10, 0))
         self.status = ttk.Label(bar, text="", style="OK.TLabel")
         self.status.pack(side="left", padx=14)
 
@@ -397,110 +459,65 @@ class SwingApp:
     def _build_run(self, parent):
         self._action_buttons: list[ttk.Button] = []
 
-        def btn(parent_, text, command, accent=False, width=None):
-            b = ttk.Button(parent_, text=text, command=command,
-                           style="Accent.TButton" if accent else "TButton")
-            if width:
-                b.configure(width=width)
-            self._action_buttons.append(b)
-            return b
-
         # ---- find opportunities: one screen control + single-name analysis ----
-        card1 = ttk.LabelFrame(parent, text=" FIND OPPORTUNITIES ")
-        card1.pack(fill="x", padx=16, pady=(12, 6), ipady=2)
-        g = ttk.Frame(card1, style="Card.TFrame")
-        g.pack(fill="x", padx=12, pady=(8, 10))
-
+        g = self._card(parent, "Find opportunities",
+                       "free pre-filter over the whole index, AI agent panel on the best few")
         ttk.Label(g, text="Screen", style="Card.TLabel").grid(
-            row=0, column=0, sticky="w", padx=(0, 10))
+            row=0, column=0, sticky="w", padx=(0, 12))
         self._screen_choice = tk.StringVar(value=next(iter(self._SCREENS)))
         ttk.Combobox(g, textvariable=self._screen_choice, values=list(self._SCREENS),
                      state="readonly", width=30).grid(row=0, column=1, sticky="w")
-        btn(g, "▶   Run screen", self._run_screen_choice, accent=True).grid(
-            row=0, column=2, sticky="w", padx=(10, 0))
-        ttk.Label(g, text="free pre-filter over the whole index, then the AI agent "
-                          "panel on the best few", style="CardMuted.TLabel").grid(
-            row=0, column=3, sticky="w", padx=(14, 0))
-
+        self._mkbtn(g, "Run screen  ▸", self._run_screen_choice, accent=True).grid(
+            row=0, column=2, sticky="w", padx=(12, 0))
         ttk.Label(g, text="Analyze", style="Card.TLabel").grid(
-            row=1, column=0, sticky="w", padx=(0, 10), pady=(10, 0))
-        self.ent_ticker = ttk.Entry(g, width=14)
+            row=0, column=3, sticky="e", padx=(36, 12))
+        self.ent_ticker = ttk.Entry(g, width=12)
         self.ent_ticker.insert(0, self.cfg.ticker or "")
-        self.ent_ticker.grid(row=1, column=1, sticky="w", pady=(10, 0))
+        self.ent_ticker.grid(row=0, column=4, sticky="w")
         self.ent_ticker.bind("<Return>", lambda e: self._analyze_ticker())
-        btn(g, "▶   Analyze ticker", self._analyze_ticker, accent=True).grid(
-            row=1, column=2, sticky="w", padx=(10, 0), pady=(10, 0))
-        ttk.Label(g, text="full multi-agent deep-dive on one name (any US ticker)",
-                  style="CardMuted.TLabel").grid(row=1, column=3, sticky="w",
-                                                 padx=(14, 0), pady=(10, 0))
+        self._mkbtn(g, "Deep-dive  ▸", self._analyze_ticker, accent=True).grid(
+            row=0, column=5, sticky="w", padx=(12, 0))
         g.columnconfigure(3, weight=1)
 
-        # ---- run the desk: trading + analysis actions ----
-        card2 = ttk.LabelFrame(parent, text=" RUN THE DESK ")
-        card2.pack(fill="x", padx=16, pady=6, ipady=2)
-        rows = ttk.Frame(card2, style="Card.TFrame")
-        rows.pack(fill="x", padx=12, pady=(8, 10))
+        # ---- trade & monitor ----
+        rows = self._card(parent, "Trade & monitor")
         actions = [
-            ("Scan core universe", lambda: self._start(run_recommendations, ticker="")),
             ("Momentum trade", lambda: self._start(run_momentum_trade)),
-            ("Live deliberation", lambda: self._start(run_deliberation)),
-            ("Reddit sentiment", lambda: self._start(run_reddit_scan)),
             ("Portfolio P&L", lambda: self._start(run_portfolio_status)),
-            ("Check Alpaca", lambda: self._start(check_alpaca)),
+            ("Strategy backtest", lambda: self._start(run_strategy_backtest)),
+            ("Reddit sentiment", lambda: self._start(run_reddit_scan)),
         ]
         for i, (label, cmd) in enumerate(actions):
-            btn(rows, label, cmd, width=22).grid(
-                row=i // 3, column=i % 3, sticky="ew", padx=(0, 8), pady=3)
-        for c in range(3):
-            rows.columnconfigure(c, weight=1, uniform="desk")
-
-        # ---- validation & research ----
-        card2b = ttk.LabelFrame(parent, text=" VALIDATE & RESEARCH ")
-        card2b.pack(fill="x", padx=16, pady=6, ipady=2)
-        rows2 = ttk.Frame(card2b, style="Card.TFrame")
-        rows2.pack(fill="x", padx=12, pady=(8, 10))
-        research = [
-            ("Validation harness", lambda: self._start(run_validation)),
-            ("Strategy backtest", lambda: self._start(run_strategy_backtest)),
-            ("Paper backtest", lambda: self._start(run_paper)),
-            ("Validate insider history", lambda: self._start(run_insider_validation)),
-            ("Validate filing history", lambda: self._start(run_filing_validation)),
-        ]
-        for i, (label, cmd) in enumerate(research):
-            btn(rows2, label, cmd, width=22).grid(
-                row=i // 3, column=i % 3, sticky="ew", padx=(0, 8), pady=3)
-        for c in range(3):
-            rows2.columnconfigure(c, weight=1, uniform="research")
+            self._mkbtn(rows, label, cmd).grid(
+                row=0, column=i, sticky="ew", padx=(0 if i == 0 else 8, 0))
+            rows.columnconfigure(i, weight=1, uniform="desk")
 
         # ---- selective execution: tickets from the last run ----
-        self.orders_card = ttk.LabelFrame(parent, text=" ORDER TICKETS — from the last run ")
-        self.orders_card.pack(fill="x", padx=16, pady=6)
-        self.orders_body = ttk.Frame(self.orders_card, style="Card.TFrame")
-        self.orders_body.pack(fill="x", padx=12, pady=8)
+        self.orders_body = self._card(parent, "Order tickets",
+                                      "BUY recommendations from the last run")
         self._orders_hint = ttk.Label(
             self.orders_body, style="CardMuted.TLabel",
-            text="Run a screen or analyze a ticker — BUY recommendations appear here "
-                 "as order tickets you can review and place individually.")
-        self._orders_hint.pack(anchor="w", padx=2, pady=2)
+            text="Run a screen or a deep-dive — BUY recommendations appear here as "
+                 "tickets you can review and place individually.")
+        self._orders_hint.pack(anchor="w")
 
         # ---- output console with its own toolbar ----
-        card3 = ttk.LabelFrame(parent, text=" OUTPUT ")
-        card3.pack(fill="both", expand=True, padx=16, pady=(6, 10))
-        tools = ttk.Frame(card3, style="Card.TFrame")
-        tools.pack(fill="x", padx=8, pady=(4, 0))
+        cons = self._card(parent, "Output", expand=True)
+        tools = ttk.Frame(cons, style="Card.TFrame")
+        tools.pack(fill="x", pady=(0, 6))
         self.progress = ttk.Progressbar(tools, mode="indeterminate",
                                         style="Accent.Horizontal.TProgressbar", length=180)
-        ttk.Button(tools, text="Open logs folder", style="Tool.TButton",
-                   command=self._open_logs).pack(side="right", padx=(6, 2))
-        ttk.Button(tools, text="Copy output", style="Tool.TButton",
-                   command=self._copy_output).pack(side="right", padx=(6, 0))
-        ttk.Button(tools, text="Clear", style="Tool.TButton",
-                   command=self._clear).pack(side="right")
+        ttk.Button(tools, text="Open logs folder", style="Tool.TButton", cursor="hand2",
+                   takefocus=False, command=self._open_logs).pack(side="right", padx=(6, 0))
+        ttk.Button(tools, text="Copy output", style="Tool.TButton", cursor="hand2",
+                   takefocus=False, command=self._copy_output).pack(side="right", padx=(6, 0))
+        ttk.Button(tools, text="Clear", style="Tool.TButton", cursor="hand2",
+                   takefocus=False, command=self._clear).pack(side="right")
         self.out = scrolledtext.ScrolledText(
-            card3, wrap="word", height=20, font=self.f_mono, bg=CONSOLE_BG,
+            cons, wrap="word", height=20, font=self.f_mono, bg=CONSOLE_BG,
             fg=CONSOLE_FG, insertbackground=CONSOLE_FG, relief="flat", bd=0,
-            padx=14, pady=10)
-        self.out.pack(fill="both", expand=True, padx=6, pady=(4, 6))
+            padx=14, pady=12)
+        self.out.pack(fill="both", expand=True)
         self.out.tag_configure("err", foreground=DANGER)
         self.out.tag_configure("warn", foreground="#d8a657")
         self.out.tag_configure("ok", foreground="#57c98a")
@@ -508,7 +525,8 @@ class SwingApp:
         self.out.tag_configure("gem", foreground=GEM)
         self.out.tag_configure("dim", foreground="#6f7b8e")
         self.out.configure(state="disabled")
-        self._log(f"{APP_NAME} ready. Pick a universe and run a screen, or analyze "
+        ttk.Frame(parent).pack(pady=5)            # bottom breathing room
+        self._log(f"{APP_NAME} ready. Pick a universe and run a screen, or deep-dive "
                   "a single ticker. Credentials live under Settings.")
 
     def _run_screen_choice(self):
@@ -521,22 +539,25 @@ class SwingApp:
         self.root.clipboard_append(text)
 
     def _build_lessons(self, parent):
-        bar = ttk.Frame(parent)
-        bar.pack(fill="x", padx=22, pady=(14, 4))
-        ttk.Label(bar, text="Advisory lessons + base rates that inform the agents "
-                  "on future runs.", style="PageSub.TLabel").pack(side="left")
-        ttk.Button(bar, text="Refresh", command=self._refresh_lessons).pack(side="right")
-        ttk.Button(bar, text="Approve all", style="Accent.TButton",
-                   command=self._approve_lessons).pack(side="right", padx=(0, 8))
-        ttk.Button(bar, text="Clear all", command=self._clear_lessons).pack(side="right", padx=(0, 8))
-
-        card = ttk.LabelFrame(parent, text=" Learning memory ")
-        card.pack(fill="both", expand=True, padx=14, pady=(4, 12))
+        card = self._card(parent, "Learning memory",
+                          "advisory lessons + base rates that inform future runs",
+                          expand=True)
+        bar = ttk.Frame(card, style="Card.TFrame")
+        bar.pack(fill="x", pady=(0, 8))
+        ttk.Button(bar, text="Refresh", style="Tool.TButton", cursor="hand2",
+                   takefocus=False, command=self._refresh_lessons).pack(side="right")
+        ttk.Button(bar, text="Clear all", style="Tool.TButton", cursor="hand2",
+                   takefocus=False, command=self._clear_lessons).pack(
+            side="right", padx=(0, 6))
+        ttk.Button(bar, text="Approve all", style="Tool.TButton", cursor="hand2",
+                   takefocus=False, command=self._approve_lessons).pack(
+            side="right", padx=(0, 6))
         self.lessons_out = scrolledtext.ScrolledText(
             card, wrap="word", font=self.f_mono, bg=CONSOLE_BG, fg=CONSOLE_FG,
-            relief="flat", bd=0, padx=12, pady=10)
-        self.lessons_out.pack(fill="both", expand=True, padx=4, pady=4)
+            relief="flat", bd=0, padx=14, pady=12)
+        self.lessons_out.pack(fill="both", expand=True)
         self.lessons_out.configure(state="disabled")
+        ttk.Frame(parent).pack(pady=5)
         self._refresh_lessons()
 
     def _refresh_lessons(self):
@@ -626,30 +647,35 @@ class SwingApp:
             entry = r.get("entry") or 0
             stop, target = r.get("stop"), r.get("target")
             default_qty = port.get(sym, {}).get("shares") or r.get("shares_at_ref_equity") or 0
-            gem = "  ◆" if r.get("hidden_gem") else ""
-            ttk.Label(grid, text=f"{sym}{gem}", style="Card.TLabel", width=9).grid(
-                row=i, column=0, sticky="w", padx=(0, 10), pady=2)
+            cell = ttk.Frame(grid, style="Card.TFrame")
+            cell.grid(row=i, column=0, sticky="w", padx=(0, 10), pady=5)
+            ttk.Label(cell, text=sym, style="Card.TLabel").pack(side="left")
+            if r.get("hidden_gem"):
+                tk.Label(cell, text=" ◆", bg=CARD, fg=GEM,
+                         font=self.f_base).pack(side="left")
             ttk.Label(grid, text=f"{r.get('conviction', 0):.2f}",
-                      style="CardMuted.TLabel").grid(row=i, column=1, sticky="w", padx=(0, 10))
+                      style="CardMuted.TLabel").grid(row=i, column=1, sticky="w",
+                                                     padx=(0, 10), pady=5)
             ttk.Label(grid, text=f"~${entry}", style="CardMuted.TLabel").grid(
-                row=i, column=2, sticky="w", padx=(0, 10))
+                row=i, column=2, sticky="w", padx=(0, 10), pady=5)
             qv = tk.StringVar(value=str(int(default_qty)))
-            ttk.Entry(grid, textvariable=qv, width=6).grid(row=i, column=3,
-                                                           sticky="w", padx=(0, 10))
+            ttk.Entry(grid, textvariable=qv, width=6).grid(
+                row=i, column=3, sticky="w", padx=(0, 10), pady=5)
             tv = tk.StringVar(value="limit")
             ttk.Combobox(grid, textvariable=tv, values=["market", "limit"],
-                         state="readonly", width=7).grid(row=i, column=4,
-                                                         sticky="w", padx=(0, 10))
+                         state="readonly", width=7).grid(
+                row=i, column=4, sticky="w", padx=(0, 10), pady=5)
             pv = tk.StringVar(value=str(entry))
-            ttk.Entry(grid, textvariable=pv, width=9).grid(row=i, column=5,
-                                                           sticky="w", padx=(0, 10))
+            ttk.Entry(grid, textvariable=pv, width=9).grid(
+                row=i, column=5, sticky="w", padx=(0, 10), pady=5)
             bv = tk.BooleanVar(value=bool(stop and target))
             ttk.Checkbutton(grid, text="stop/target", variable=bv).grid(
-                row=i, column=6, sticky="w", padx=(0, 10))
+                row=i, column=6, sticky="w", padx=(0, 14), pady=5)
             ttk.Button(grid, text="Place order", style="Accent.TButton",
+                       cursor="hand2", takefocus=False,
                        command=lambda r=r, qv=qv, tv=tv, pv=pv, bv=bv:
-                       self._place_order(r, qv, tv, pv, bv)).grid(row=i, column=7,
-                                                                  sticky="w")
+                       self._place_order(r, qv, tv, pv, bv)).grid(
+                row=i, column=7, sticky="w", pady=5)
         if any(r.get("hidden_gem") for r in recs):
             ttk.Label(self.orders_body, text="◆ = hidden-gem pick (early acceleration)",
                       style="CardMuted.TLabel").pack(anchor="w", padx=2, pady=(6, 0))
@@ -736,6 +762,7 @@ class SwingApp:
             setattr(cfg, k, v)
         self.running = True
         task = fn.__name__.replace("run_", "").replace("_", " ")
+        self._show("run")                          # output lives on the Desk
         self._set_busy(True, task)
         self._log(f"\n=== starting: {fn.__name__} ===")
 
