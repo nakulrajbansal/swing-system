@@ -85,11 +85,13 @@ def _live(index: str) -> tuple[tuple[str, ...], tuple[tuple[str, str], ...]]:
         "sp600": "https://en.wikipedia.org/wiki/List_of_S%26P_600_companies",
     }
     try:
-        import pandas as pd
-        df = pd.read_html(urls[index])[0]
+        from harness.data.wiki import constituents_table
+        df, col = constituents_table(urls[index], min_rows=250)
+        if df is None:
+            return (), ()
         syms, sect = [], {}
         for _, r in df.iterrows():
-            s = str(r.get("Symbol", "")).strip().upper().replace(".", "-")
+            s = str(r.get(col, "")).strip().upper().replace(".", "-")
             if not s or s == "NAN":
                 continue
             syms.append(s)

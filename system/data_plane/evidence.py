@@ -133,6 +133,16 @@ def _trajectory(view, symbol: str) -> dict:
     rev = h.set_index("period_end")["revenue"].astype(float)
     if len(rev) < 5:
         return {"available": False}
+    # Staleness guard: if the newest visible quarter is over ~13 months old, the
+    # history describes a DIFFERENT era of the business (e.g. a retired XBRL
+    # tag) — better no trajectory than a misleading one.
+    asof = pd.Timestamp(view.asof_date)
+    if asof.tz is not None:
+        asof = asof.tz_localize(None)
+    age_days = int((asof.normalize() - pd.Timestamp(rev.index.max())).days)
+    if age_days > 400:
+        return {"available": False, "stale": True,
+                "latest_period_end": str(pd.Timestamp(rev.index.max()).date())}
 
     def _margin(col):
         if col not in h.columns:
@@ -142,12 +152,16 @@ def _trajectory(view, symbol: str) -> dict:
                 for k, v in s.items() if v == v and rev.get(k)}
 
     gm, om = _margin("gross_profit"), _margin("operating_income")
+    # YoY aligned by DATE (the quarter ending ~a year earlier), not by position
+    # — positional alignment silently lies when the history has gaps.
     yoy = {}
     idx = list(rev.index)
-    for i in range(4, len(idx)):
-        prior = float(rev.iloc[i - 4])
-        if prior > 0:
-            yoy[idx[i]] = round((float(rev.iloc[i]) / prior - 1) * 100, 1)
+    for k in idx:
+        target = pd.Timestamp(k) - pd.Timedelta(days=365)
+        prior_k = next((p for p in idx
+                        if abs((pd.Timestamp(p) - target).days) <= 21), None)
+        if prior_k is not None and float(rev[prior_k]) > 0:
+            yoy[k] = round((float(rev[k]) / float(rev[prior_k]) - 1) * 100, 1)
     quarters = [{"q": str(pd.Timestamp(k).date())[:7],
                  "rev_yoy_pct": yoy.get(k),
                  "gross_margin_pct": gm.get(k),

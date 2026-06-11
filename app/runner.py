@@ -311,6 +311,29 @@ def place_manual_order(cfg: AppConfig, order: dict, emit: Emit) -> dict:
         bracket = bool(order.get("attach_bracket"))
         try:
             broker = _alpaca_broker(cfg)
+        except Exception as exc:
+            log(f"[error] could not open Alpaca broker: {exc}")
+            return {"ok": False, "error": str(exc)}
+        # Affordability pre-check: refuse with a useful message instead of
+        # letting Alpaca bounce the order with a raw 403.
+        ref_px = order.get("limit_price") or order.get("ref_price")
+        try:
+            acct = broker.account()
+            bp = float(acct.get("buying_power") or acct.get("cash") or 0.0)
+            log(f"[account] buying power: ${bp:,.0f}")
+            if ref_px and qty:
+                est = float(ref_px) * qty
+                if est > bp:
+                    afford = int(bp // float(ref_px))
+                    log(f"[blocked] {qty} {sym} @ ~${float(ref_px):,.2f} needs "
+                        f"~${est:,.0f} but buying power is ${bp:,.0f}.")
+                    log(f"[hint] max affordable qty at this price: {max(afford, 0)} "
+                        "shares. Reduce the quantity, free up cash (check open "
+                        "orders holding funds), or skip this trade.")
+                    return {"ok": False, "error": "insufficient buying power"}
+        except Exception:
+            pass                                    # pre-check is best-effort
+        try:
             o = broker.submit_manual(
                 sym, qty, side="buy", order_type=otype,
                 limit_price=order.get("limit_price"),
@@ -318,6 +341,11 @@ def place_manual_order(cfg: AppConfig, order: dict, emit: Emit) -> dict:
                 target=order.get("target") if bracket else None)
         except Exception as exc:
             log(f"[error] order failed: {exc}")
+            if "insufficient buying power" in str(exc).lower() or "40310000" in str(exc):
+                log("[hint] the account does not have enough free cash for this "
+                    "order. Open (unfilled) orders also reserve buying power - "
+                    "cancel stale ones from the Portfolio view or your Alpaca "
+                    "dashboard, or reduce the quantity.")
             return {"ok": False, "error": str(exc)}
         if isinstance(o, dict) and o.get("error"):
             log(f"[error] {o['error']}")
@@ -1291,6 +1319,14 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
         fetch_list = list(dict.fromkeys(universe + extras))
         log(f"[universe] {len(universe)} {label} names + benchmark/sector ETFs "
             f"({len(fetch_list)} series).")
+        # A suspiciously small universe means the live constituents fetch failed
+        # and the static fallback is in use — say so instead of shrinking quietly.
+        floors = {"sp500": 480, "qqq": 95, "sp400": 350, "sp600": 500,
+                  "midsmall": 850, "broad": 1300}
+        if len(universe) < floors.get(idx_key, 0) and not cfg.screen_universe:
+            log(f"[universe] WARNING: expected ~{floors[idx_key]}+ names for {label}; "
+                "the live constituents fetch likely failed (network/Wikipedia) and a "
+                "smaller static fallback is in use. Results still valid, coverage reduced.")
 
         today = datetime.date.today()
         start = (today - datetime.timedelta(days=420)).isoformat()

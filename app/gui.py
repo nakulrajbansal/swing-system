@@ -86,6 +86,9 @@ ACCENT_DK = "#37a074"
 ACCENT_SOFT = "#1f3a30"  # accent-tinted surface (active nav)
 ACCENT_INK = "#08120d"  # text on the accent
 OK = "#5fd39a"
+DANGER = "#e06c6c"
+DANGER_SOFT = "#3a2026"
+GEM = "#62c8d8"          # hidden-gem cyan
 BORDER = "#272d38"
 CONSOLE_BG = "#0b0e12"  # near-black console
 CONSOLE_FG = "#c8cfdb"
@@ -135,8 +138,8 @@ class SwingApp:
         self.running = False
 
         root.title(f"{APP_NAME} {APP_VERSION}")
-        root.geometry("1000x820")
-        root.minsize(820, 620)
+        root.geometry("1120x860")
+        root.minsize(940, 680)
         root.configure(bg=BG)
         self._setup_style()
         self._build()
@@ -228,6 +231,18 @@ class SwingApp:
         s.configure("Vertical.TScrollbar", background=SURF2, troughcolor=BG,
                     bordercolor=BG, arrowcolor=MUTED, relief="flat", width=12)
         s.map("Vertical.TScrollbar", background=[("active", SURF3)])
+        # Small toolbar buttons (console header), environment badges, busy strip.
+        s.configure("Tool.TButton", background=CARD, foreground=MUTED,
+                    bordercolor=BORDER, relief="flat", padding=(9, 4), font=self.f_sub)
+        s.map("Tool.TButton", background=[("active", SURF2)],
+              foreground=[("active", INK)])
+        s.configure("BadgePaper.TLabel", background=ACCENT_SOFT, foreground=OK,
+                    font=self.f_section, padding=(8, 2))
+        s.configure("BadgeLive.TLabel", background=DANGER_SOFT, foreground=DANGER,
+                    font=self.f_section, padding=(8, 2))
+        s.configure("Accent.Horizontal.TProgressbar", background=ACCENT,
+                    troughcolor=CARD, bordercolor=CARD,
+                    lightcolor=ACCENT, darkcolor=ACCENT, thickness=3)
 
     # -- layout ------------------------------------------------------------
     def _build(self):
@@ -256,9 +271,16 @@ class SwingApp:
 
         statusbox = ttk.Frame(side, style="Side.TFrame")
         statusbox.pack(side="bottom", fill="x", padx=18, pady=16)
-        self.spinner = ttk.Label(statusbox, text="● ready", style="Status.TLabel")
+        self.env_badge = ttk.Label(statusbox, text="PAPER", style="BadgePaper.TLabel")
+        self.env_badge.pack(anchor="w", pady=(0, 8))
+        self.spinner = ttk.Label(statusbox, text="●  ready", style="Status.TLabel")
         self.spinner.pack(anchor="w")
-        ttk.Label(statusbox, text=f"v{APP_VERSION}", style="SideMuted.TLabel").pack(anchor="w")
+        ttk.Label(statusbox, text=f"v{APP_VERSION}", style="SideMuted.TLabel").pack(
+            anchor="w", pady=(4, 0))
+        self._busy_task = ""
+        self._busy_t0 = 0.0
+        self._spin_i = 0
+        self._refresh_env_badge()
 
         ttk.Frame(outer, style="Rule.TFrame", width=1).pack(side="left", fill="y")
 
@@ -362,108 +384,141 @@ class SwingApp:
         self.status = ttk.Label(bar, text="", style="OK.TLabel")
         self.status.pack(side="left", padx=14)
 
+    # Screen universes shown in the picker (label -> screen_index).
+    _SCREENS = {
+        "S&P 500 — large caps": "sp500",
+        "Nasdaq-100 (QQQ)": "qqq",
+        "S&P 400 — mid caps": "sp400",
+        "S&P 600 — small caps": "sp600",
+        "Mid + small caps — hidden gems": "midsmall",
+        "S&P 1500 — broad sweep": "broad",
+    }
+
     def _build_run(self, parent):
-        # Single-ticker analysis.
-        card0 = ttk.LabelFrame(parent, text=" Analyze a single stock ")
-        card0.pack(fill="x", padx=14, pady=(12, 6), ipady=6)
-        bar0 = ttk.Frame(card0, style="Card.TFrame")
-        bar0.pack(fill="x", padx=8, pady=6)
-        ttk.Label(bar0, text="Ticker:", style="Card.TLabel").pack(side="left")
-        self.ent_ticker = ttk.Entry(bar0, width=12)
+        self._action_buttons: list[ttk.Button] = []
+
+        def btn(parent_, text, command, accent=False, width=None):
+            b = ttk.Button(parent_, text=text, command=command,
+                           style="Accent.TButton" if accent else "TButton")
+            if width:
+                b.configure(width=width)
+            self._action_buttons.append(b)
+            return b
+
+        # ---- find opportunities: one screen control + single-name analysis ----
+        card1 = ttk.LabelFrame(parent, text=" FIND OPPORTUNITIES ")
+        card1.pack(fill="x", padx=16, pady=(12, 6), ipady=2)
+        g = ttk.Frame(card1, style="Card.TFrame")
+        g.pack(fill="x", padx=12, pady=(8, 10))
+
+        ttk.Label(g, text="Screen", style="Card.TLabel").grid(
+            row=0, column=0, sticky="w", padx=(0, 10))
+        self._screen_choice = tk.StringVar(value=next(iter(self._SCREENS)))
+        ttk.Combobox(g, textvariable=self._screen_choice, values=list(self._SCREENS),
+                     state="readonly", width=30).grid(row=0, column=1, sticky="w")
+        btn(g, "▶   Run screen", self._run_screen_choice, accent=True).grid(
+            row=0, column=2, sticky="w", padx=(10, 0))
+        ttk.Label(g, text="free pre-filter over the whole index, then the AI agent "
+                          "panel on the best few", style="CardMuted.TLabel").grid(
+            row=0, column=3, sticky="w", padx=(14, 0))
+
+        ttk.Label(g, text="Analyze", style="Card.TLabel").grid(
+            row=1, column=0, sticky="w", padx=(0, 10), pady=(10, 0))
+        self.ent_ticker = ttk.Entry(g, width=14)
         self.ent_ticker.insert(0, self.cfg.ticker or "")
-        self.ent_ticker.pack(side="left", padx=(6, 8))
-        self.btn_ticker = ttk.Button(bar0, text="Analyze this ticker", style="Accent.TButton",
-                                     command=lambda: self._analyze_ticker())
-        self.btn_ticker.pack(side="left")
-        ttk.Label(bar0, text="  runs the full AI-agent panel on just this name",
-                  style="Muted.TLabel").pack(side="left")
+        self.ent_ticker.grid(row=1, column=1, sticky="w", pady=(10, 0))
+        self.ent_ticker.bind("<Return>", lambda e: self._analyze_ticker())
+        btn(g, "▶   Analyze ticker", self._analyze_ticker, accent=True).grid(
+            row=1, column=2, sticky="w", padx=(10, 0), pady=(10, 0))
+        ttk.Label(g, text="full multi-agent deep-dive on one name (any US ticker)",
+                  style="CardMuted.TLabel").grid(row=1, column=3, sticky="w",
+                                                 padx=(14, 0), pady=(10, 0))
+        g.columnconfigure(3, weight=1)
 
-        # Primary actions.
-        card1 = ttk.LabelFrame(parent, text=" Find opportunities ")
-        card1.pack(fill="x", padx=14, pady=6, ipady=6)
-        bar = ttk.Frame(card1, style="Card.TFrame")
-        bar.pack(fill="x", padx=8, pady=6)
-        self.btn_screen = ttk.Button(bar, text="◎  Screen S&P 500",
-                                     style="Accent.TButton",
-                                     command=lambda: self._start(run_screen, screen_index="sp500"))
-        self.btn_screen.pack(side="left", padx=(0, 8))
-        self.btn_screen_qqq = ttk.Button(bar, text="◎  Screen Nasdaq-100 (QQQ)",
-                                         style="Accent.TButton",
-                                         command=lambda: self._start(run_screen, screen_index="qqq"))
-        self.btn_screen_qqq.pack(side="left", padx=(0, 8))
-        self.btn_screen_ms = ttk.Button(bar, text="◎  Screen mid/small caps (hidden gems)",
-                                        style="Accent.TButton",
-                                        command=lambda: self._start(run_screen, screen_index="midsmall"))
-        self.btn_screen_ms.pack(side="left", padx=(0, 8))
-        self.btn_recs = ttk.Button(bar, text="Scan core universe",
-                                   command=lambda: self._start(run_recommendations, ticker=""))
-        self.btn_recs.pack(side="left", padx=(0, 8))
-        self.btn_momentum = ttk.Button(bar, text="Momentum trade (enter/exit)",
-                                       command=lambda: self._start(run_momentum_trade))
-        self.btn_momentum.pack(side="left", padx=(0, 8))
-        self.btn_reddit = ttk.Button(bar, text="Reddit scan",
-                                     command=lambda: self._start(run_reddit_scan))
-        self.btn_reddit.pack(side="left", padx=(0, 8))
-        self.btn_delib = ttk.Button(bar, text="Live deliberation (gated)",
-                                    command=lambda: self._start(run_deliberation))
-        self.btn_delib.pack(side="left", padx=(0, 8))
+        # ---- run the desk: trading + analysis actions ----
+        card2 = ttk.LabelFrame(parent, text=" RUN THE DESK ")
+        card2.pack(fill="x", padx=16, pady=6, ipady=2)
+        rows = ttk.Frame(card2, style="Card.TFrame")
+        rows.pack(fill="x", padx=12, pady=(8, 10))
+        actions = [
+            ("Scan core universe", lambda: self._start(run_recommendations, ticker="")),
+            ("Momentum trade", lambda: self._start(run_momentum_trade)),
+            ("Live deliberation", lambda: self._start(run_deliberation)),
+            ("Reddit sentiment", lambda: self._start(run_reddit_scan)),
+            ("Portfolio P&L", lambda: self._start(run_portfolio_status)),
+            ("Check Alpaca", lambda: self._start(check_alpaca)),
+        ]
+        for i, (label, cmd) in enumerate(actions):
+            btn(rows, label, cmd, width=22).grid(
+                row=i // 3, column=i % 3, sticky="ew", padx=(0, 8), pady=3)
+        for c in range(3):
+            rows.columnconfigure(c, weight=1, uniform="desk")
 
-        # Tools / validation.
-        card2 = ttk.LabelFrame(parent, text=" Validation & tools ")
-        card2.pack(fill="x", padx=14, pady=6, ipady=6)
-        bar2 = ttk.Frame(card2, style="Card.TFrame")
-        bar2.pack(fill="x", padx=8, pady=6)
-        self.btn_val = ttk.Button(bar2, text="Validation harness",
-                                  command=lambda: self._start(run_validation))
-        self.btn_val.pack(side="left", padx=(0, 8))
-        self.btn_backtest = ttk.Button(bar2, text="Strategy backtest (vs S&P 500)",
-                                       command=lambda: self._start(run_strategy_backtest))
-        self.btn_backtest.pack(side="left", padx=(0, 8))
-        self.btn_paper = ttk.Button(bar2, text="Paper backtest",
-                                    command=lambda: self._start(run_paper))
-        self.btn_paper.pack(side="left", padx=(0, 8))
-        self.btn_hist = ttk.Button(bar2, text="Validate history: insider",
-                                   command=lambda: self._start(run_insider_validation))
-        self.btn_hist.pack(side="left", padx=(0, 8))
-        self.btn_filings = ttk.Button(bar2, text="Validate history: filings",
-                                      command=lambda: self._start(run_filing_validation))
-        self.btn_filings.pack(side="left", padx=(0, 8))
-        self.btn_portfolio = ttk.Button(bar2, text="Paper portfolio (P&L)",
-                                        command=lambda: self._start(run_portfolio_status))
-        self.btn_portfolio.pack(side="left", padx=(0, 8))
-        self.btn_alpaca = ttk.Button(bar2, text="Check Alpaca",
-                                     command=lambda: self._start(check_alpaca))
-        self.btn_alpaca.pack(side="left", padx=(0, 8))
-        ttk.Button(bar2, text="Clear", command=self._clear).pack(side="left", padx=(0, 8))
-        ttk.Button(bar2, text="Open logs", command=self._open_logs).pack(side="left")
+        # ---- validation & research ----
+        card2b = ttk.LabelFrame(parent, text=" VALIDATE & RESEARCH ")
+        card2b.pack(fill="x", padx=16, pady=6, ipady=2)
+        rows2 = ttk.Frame(card2b, style="Card.TFrame")
+        rows2.pack(fill="x", padx=12, pady=(8, 10))
+        research = [
+            ("Validation harness", lambda: self._start(run_validation)),
+            ("Strategy backtest", lambda: self._start(run_strategy_backtest)),
+            ("Paper backtest", lambda: self._start(run_paper)),
+            ("Validate insider history", lambda: self._start(run_insider_validation)),
+            ("Validate filing history", lambda: self._start(run_filing_validation)),
+        ]
+        for i, (label, cmd) in enumerate(research):
+            btn(rows2, label, cmd, width=22).grid(
+                row=i // 3, column=i % 3, sticky="ew", padx=(0, 8), pady=3)
+        for c in range(3):
+            rows2.columnconfigure(c, weight=1, uniform="research")
 
-        # Selective execution: populated from the last run's BUY recommendations.
-        self.orders_card = ttk.LabelFrame(parent, text=" Place orders (from last run) ")
-        self.orders_card.pack(fill="x", padx=14, pady=6)
+        # ---- selective execution: tickets from the last run ----
+        self.orders_card = ttk.LabelFrame(parent, text=" ORDER TICKETS — from the last run ")
+        self.orders_card.pack(fill="x", padx=16, pady=6)
         self.orders_body = ttk.Frame(self.orders_card, style="Card.TFrame")
-        self.orders_body.pack(fill="x", padx=8, pady=6)
+        self.orders_body.pack(fill="x", padx=12, pady=8)
         self._orders_hint = ttk.Label(
-            self.orders_body, style="Muted.TLabel",
-            text="Run 'Screen S&P 500' or analyze a ticker — buyable tickets appear "
-                 "here with qty / price / order-type and a Place button.")
-        self._orders_hint.pack(anchor="w", padx=4, pady=4)
+            self.orders_body, style="CardMuted.TLabel",
+            text="Run a screen or analyze a ticker — BUY recommendations appear here "
+                 "as order tickets you can review and place individually.")
+        self._orders_hint.pack(anchor="w", padx=2, pady=2)
 
-        # Output console.
-        card3 = ttk.LabelFrame(parent, text=" Output ")
-        card3.pack(fill="both", expand=True, padx=14, pady=(6, 6))
+        # ---- output console with its own toolbar ----
+        card3 = ttk.LabelFrame(parent, text=" OUTPUT ")
+        card3.pack(fill="both", expand=True, padx=16, pady=(6, 10))
+        tools = ttk.Frame(card3, style="Card.TFrame")
+        tools.pack(fill="x", padx=8, pady=(4, 0))
+        self.progress = ttk.Progressbar(tools, mode="indeterminate",
+                                        style="Accent.Horizontal.TProgressbar", length=180)
+        ttk.Button(tools, text="Open logs folder", style="Tool.TButton",
+                   command=self._open_logs).pack(side="right", padx=(6, 2))
+        ttk.Button(tools, text="Copy output", style="Tool.TButton",
+                   command=self._copy_output).pack(side="right", padx=(6, 0))
+        ttk.Button(tools, text="Clear", style="Tool.TButton",
+                   command=self._clear).pack(side="right")
         self.out = scrolledtext.ScrolledText(
             card3, wrap="word", height=20, font=self.f_mono, bg=CONSOLE_BG,
             fg=CONSOLE_FG, insertbackground=CONSOLE_FG, relief="flat", bd=0,
-            padx=12, pady=10)
-        self.out.pack(fill="both", expand=True, padx=4, pady=4)
-        self.out.tag_configure("err", foreground="#e06c6c")
+            padx=14, pady=10)
+        self.out.pack(fill="both", expand=True, padx=6, pady=(4, 6))
+        self.out.tag_configure("err", foreground=DANGER)
         self.out.tag_configure("warn", foreground="#d8a657")
         self.out.tag_configure("ok", foreground="#57c98a")
-        self.out.tag_configure("hl", foreground="#7fa8e8", font=self.f_mono)
+        self.out.tag_configure("hl", foreground="#7fa8e8")
+        self.out.tag_configure("gem", foreground=GEM)
         self.out.tag_configure("dim", foreground="#6f7b8e")
         self.out.configure(state="disabled")
-        self._log(f"{APP_NAME} ready. Screen the S&P 500 to find the best names, or "
-                  "analyze a ticker. Set keys under Settings.")
+        self._log(f"{APP_NAME} ready. Pick a universe and run a screen, or analyze "
+                  "a single ticker. Credentials live under Settings.")
+
+    def _run_screen_choice(self):
+        key = self._SCREENS.get(self._screen_choice.get(), "sp500")
+        self._start(run_screen, screen_index=key)
+
+    def _copy_output(self):
+        text = self.out.get("1.0", "end-1c")
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
 
     def _build_lessons(self, parent):
         bar = ttk.Frame(parent)
@@ -557,32 +612,47 @@ class SwingApp:
             return
         env = self._collect().alpaca_env.upper()
         ttk.Label(self.orders_body, style="CardMuted.TLabel",
-                  text=f"{len(recs)} ticket(s) from the last run - set qty / price / type, "
-                       f"then Place. Orders route to your {env} Alpaca account.").pack(
-            anchor="w", padx=4, pady=(0, 6))
-        for r in recs:
+                  text=f"{len(recs)} ticket(s) — review qty / type / price, then Place. "
+                       f"Orders route to your {env} Alpaca account.").pack(
+            anchor="w", padx=2, pady=(0, 6))
+        grid = ttk.Frame(self.orders_body, style="Card.TFrame")
+        grid.pack(fill="x")
+        for c, head in enumerate(("symbol", "conv", "ref price", "qty", "type",
+                                  "limit $", "bracket", "")):
+            ttk.Label(grid, text=head, style="CardMuted.TLabel").grid(
+                row=0, column=c, sticky="w", padx=(0, 10), pady=(0, 3))
+        for i, r in enumerate(recs, start=1):
             sym = r["symbol"]
             entry = r.get("entry") or 0
             stop, target = r.get("stop"), r.get("target")
             default_qty = port.get(sym, {}).get("shares") or r.get("shares_at_ref_equity") or 0
-            row = ttk.Frame(self.orders_body, style="Card.TFrame")
-            row.pack(fill="x", pady=2)
-            ttk.Label(row, text=sym, style="Card.TLabel", width=7).pack(side="left")
-            ttk.Label(row, text=f"~${entry}", style="CardMuted.TLabel", width=11).pack(side="left")
-            ttk.Label(row, text="qty", style="CardMuted.TLabel").pack(side="left")
+            gem = "  ◆" if r.get("hidden_gem") else ""
+            ttk.Label(grid, text=f"{sym}{gem}", style="Card.TLabel", width=9).grid(
+                row=i, column=0, sticky="w", padx=(0, 10), pady=2)
+            ttk.Label(grid, text=f"{r.get('conviction', 0):.2f}",
+                      style="CardMuted.TLabel").grid(row=i, column=1, sticky="w", padx=(0, 10))
+            ttk.Label(grid, text=f"~${entry}", style="CardMuted.TLabel").grid(
+                row=i, column=2, sticky="w", padx=(0, 10))
             qv = tk.StringVar(value=str(int(default_qty)))
-            ttk.Entry(row, textvariable=qv, width=6).pack(side="left", padx=(3, 8))
+            ttk.Entry(grid, textvariable=qv, width=6).grid(row=i, column=3,
+                                                           sticky="w", padx=(0, 10))
             tv = tk.StringVar(value="limit")
-            ttk.Combobox(row, textvariable=tv, values=["market", "limit"],
-                         state="readonly", width=7).pack(side="left", padx=(0, 8))
+            ttk.Combobox(grid, textvariable=tv, values=["market", "limit"],
+                         state="readonly", width=7).grid(row=i, column=4,
+                                                         sticky="w", padx=(0, 10))
             pv = tk.StringVar(value=str(entry))
-            ttk.Label(row, text="$", style="CardMuted.TLabel").pack(side="left")
-            ttk.Entry(row, textvariable=pv, width=8).pack(side="left", padx=(2, 8))
+            ttk.Entry(grid, textvariable=pv, width=9).grid(row=i, column=5,
+                                                           sticky="w", padx=(0, 10))
             bv = tk.BooleanVar(value=bool(stop and target))
-            ttk.Checkbutton(row, text="stop/target", variable=bv).pack(side="left", padx=(0, 8))
-            ttk.Button(row, text="Place", style="Accent.TButton",
+            ttk.Checkbutton(grid, text="stop/target", variable=bv).grid(
+                row=i, column=6, sticky="w", padx=(0, 10))
+            ttk.Button(grid, text="Place order", style="Accent.TButton",
                        command=lambda r=r, qv=qv, tv=tv, pv=pv, bv=bv:
-                       self._place_order(r, qv, tv, pv, bv)).pack(side="left")
+                       self._place_order(r, qv, tv, pv, bv)).grid(row=i, column=7,
+                                                                  sticky="w")
+        if any(r.get("hidden_gem") for r in recs):
+            ttk.Label(self.orders_body, text="◆ = hidden-gem pick (early acceleration)",
+                      style="CardMuted.TLabel").pack(anchor="w", padx=2, pady=(6, 0))
 
     def _place_order(self, rec, qv, tv, pv, bv):
         try:
@@ -606,7 +676,8 @@ class SwingApp:
             return
         order = {"symbol": rec["symbol"], "qty": qty, "order_type": otype,
                  "limit_price": price, "stop": rec.get("stop"),
-                 "target": rec.get("target"), "attach_bracket": bool(bv.get())}
+                 "target": rec.get("target"), "attach_bracket": bool(bv.get()),
+                 "ref_price": rec.get("entry")}
         self._log(f"\n[order] submitting BUY {qty} {rec['symbol']} ({px}) ...")
         threading.Thread(
             target=lambda: place_manual_order(
@@ -619,8 +690,21 @@ class SwingApp:
             path = cfg.save()
             self.cfg = cfg
             self.status.config(text=f"Saved to {path}")
+            self._refresh_env_badge()
         except Exception as exc:
             messagebox.showerror("Save failed", str(exc))
+
+    def _refresh_env_badge(self):
+        """Always-visible trading-environment indicator (paper vs real money)."""
+        try:
+            env = str(self.vars["alpaca_env"].get() if "alpaca_env" in self.vars
+                      else self.cfg.alpaca_env).lower()
+        except Exception:
+            env = "paper"
+        if env == "live":
+            self.env_badge.configure(text="⚠ LIVE — REAL MONEY", style="BadgeLive.TLabel")
+        else:
+            self.env_badge.configure(text="PAPER TRADING", style="BadgePaper.TLabel")
 
     def _warn_live(self):
         if self.vars["enable_live_trading"].get():
@@ -651,7 +735,8 @@ class SwingApp:
         for k, v in overrides.items():             # per-button config overrides
             setattr(cfg, k, v)
         self.running = True
-        self._set_busy(True)
+        task = fn.__name__.replace("run_", "").replace("_", " ")
+        self._set_busy(True, task)
         self._log(f"\n=== starting: {fn.__name__} ===")
 
         def work():
@@ -682,37 +767,53 @@ class SwingApp:
             pass
         self.root.after(80, self._drain_queue)
 
-    def _set_busy(self, busy: bool):
+    _SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+    def _set_busy(self, busy: bool, task: str = ""):
         state = "disabled" if busy else "normal"
-        self.btn_ticker.config(state=state)
-        self.btn_screen.config(state=state)
-        self.btn_screen_qqq.config(state=state)
-        self.btn_backtest.config(state=state)
-        self.btn_recs.config(state=state)
-        self.btn_momentum.config(state=state)
-        self.btn_reddit.config(state=state)
-        self.btn_val.config(state=state)
-        self.btn_paper.config(state=state)
-        self.btn_delib.config(state=state)
-        self.btn_alpaca.config(state=state)
-        self.btn_portfolio.config(state=state)
-        self.btn_hist.config(state=state)
-        self.btn_filings.config(state=state)
-        self.spinner.config(text="● running…" if busy else "● ready")
+        for b in self._action_buttons:
+            b.config(state=state)
+        if busy:
+            import time
+            self._busy_task = task or "working"
+            self._busy_t0 = time.time()
+            self.progress.pack(side="left", padx=(4, 0), pady=2)
+            self.progress.start(24)
+            self._tick_spinner()
+        else:
+            self._busy_task = ""
+            self.progress.stop()
+            self.progress.pack_forget()
+            self.spinner.config(text="●  ready")
+
+    def _tick_spinner(self):
+        """Animated sidebar status with the running task + elapsed time."""
+        if not self._busy_task:
+            return
+        import time
+        self._spin_i = (self._spin_i + 1) % len(self._SPIN)
+        secs = int(time.time() - self._busy_t0)
+        self.spinner.config(
+            text=f"{self._SPIN[self._spin_i]}  {self._busy_task} · {secs // 60}:{secs % 60:02d}")
+        self.root.after(160, self._tick_spinner)
 
     @staticmethod
     def _tag_for(line: str) -> str | None:
         s = line.strip()
         low = s.lower()
-        if s.startswith("!!") or "[error]" in low or "verdict: do not buy" in low:
+        if (s.startswith("!!") or "[error]" in low or "[blocked]" in low
+                or "verdict: do not buy" in low):
             return "err"
-        if "[warn" in low or "warning" in low or low.startswith("[note]"):
+        if "[warn" in low or "warning" in low or low.startswith("[note]") \
+                or "[hint]" in low:
             return "warn"
+        if "hidden gem" in low or "hidden-gem" in low:
+            return "gem"
         if ("verdict: buy" in low or "recommend buy" in low or s.startswith("[done]")
                 or "[selftest] ok" in low):
             return "ok"
         if s.startswith("===") or s.startswith("ANALYSIS:") or ">>> AGENT" in s \
-                or s.startswith("====") or s.startswith("ANALYSIS") or "ANALYST" in s.upper()[:14]:
+                or s.startswith("####") or "ANALYST" in s.upper()[:14]:
             return "hl"
         if s.startswith("[") or s.startswith("  -") or s.startswith("  +"):
             return "dim"

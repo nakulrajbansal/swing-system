@@ -50,6 +50,41 @@ def test_companyfacts_parser_builds_pit_rows():
     assert len(parse_companyfacts(j, "GEMX")) == 9
 
 
+def test_companyfacts_prefers_tag_with_recent_coverage():
+    """A retired tag holding only years-old quarters must lose to a tag with
+    current coverage — otherwise the 'trajectory' describes a decade-old
+    business (the VECO-2017 bug)."""
+    ends_old = pd.date_range("2016-03-31", periods=8, freq="QE")
+    ends_new = pd.date_range("2024-03-31", periods=6, freq="QE")
+
+    def entries(ends, base):
+        return [{"start": (e - pd.Timedelta(days=90)).date().isoformat(),
+                 "end": e.date().isoformat(), "val": base + i,
+                 "filed": (e + pd.Timedelta(days=40)).date().isoformat(),
+                 "form": "10-Q"} for i, e in enumerate(ends)]
+
+    j = {"facts": {"us-gaap": {
+        # First-priority tag, but stale (retired in 2018).
+        "RevenueFromContractWithCustomerExcludingAssessedTax":
+            {"units": {"USD": entries(ends_old, 100)}},
+        # Lower-priority tag with CURRENT quarters: must win.
+        "Revenues": {"units": {"USD": entries(ends_new, 500)}},
+    }}}
+    df = parse_companyfacts(j, "VECO")
+    assert df["period_end"].max() >= pd.Timestamp("2025-03-31")
+    assert df["period_end"].min() >= pd.Timestamp("2024-01-01")
+
+
+def test_trajectory_marks_stale_history_unavailable():
+    """A history whose newest quarter is over ~13 months old must not produce
+    a trajectory at all — better nothing than a misleading inflection."""
+    from system.data_plane.evidence import _trajectory
+
+    store = _store_with_history()          # quarters end 2025-03-31
+    late = _trajectory(store.as_of(pd.Timestamp("2026-12-01", tz="UTC")), "GEMX")
+    assert late["available"] is False and late.get("stale") is True
+
+
 def _store_with_history():
     store = PITStore(tempfile.mkdtemp(prefix="traj_"))
     store.write_fundamentals_history(parse_companyfacts(_facts_json(), "GEMX"))

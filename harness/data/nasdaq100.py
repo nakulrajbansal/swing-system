@@ -29,13 +29,12 @@ _STATIC: list[str] = [
 def nasdaq100_symbols() -> list[str]:
     """Current Nasdaq-100 tickers (live if possible, else the static fallback)."""
     try:
-        import pandas as pd
-        tables = pd.read_html("https://en.wikipedia.org/wiki/Nasdaq-100")
-        for t in tables:
-            col = next((c for c in ("Ticker", "Symbol") if c in t.columns), None)
-            if col is None:
-                continue
-            syms = [str(s).strip().upper().replace(".", "-") for s in t[col] if str(s).strip()]
+        from harness.data.wiki import constituents_table
+        t, col = constituents_table("https://en.wikipedia.org/wiki/Nasdaq-100",
+                                    min_rows=90)
+        if t is not None:
+            syms = [str(s).strip().upper().replace(".", "-") for s in t[col]
+                    if str(s).strip()]
             if len(syms) >= 90:
                 return sorted(dict.fromkeys(syms))
     except Exception:

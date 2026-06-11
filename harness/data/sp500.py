@@ -101,13 +101,15 @@ _STATIC_SECTOR_OF: dict[str, str] = {s: sec for sec, syms in SECTORS.items() for
 def _live() -> tuple[tuple[str, ...], dict]:
     """(symbols, sector_of) from Wikipedia, or ((), {}) on any failure."""
     try:
-        import pandas as pd
+        from harness.data.wiki import constituents_table
         url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        df = pd.read_html(url)[0]
+        df, col = constituents_table(url, min_rows=400)
+        if df is None:
+            return (), {}
         syms, sect = [], {}
         for _, r in df.iterrows():
-            s = str(r.get("Symbol", "")).strip().upper().replace(".", "-")
-            if not s:
+            s = str(r.get(col, "")).strip().upper().replace(".", "-")
+            if not s or s == "NAN":
                 continue
             syms.append(s)
             sect[s] = str(r.get("GICS Sector", "")).strip() or _STATIC_SECTOR_OF.get(s, "")

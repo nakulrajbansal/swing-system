@@ -424,11 +424,18 @@ def parse_companyfacts(j: dict, symbol: str, quarters: int = 10) -> pd.DataFrame
     gaap = (j or {}).get("facts", {}).get("us-gaap", {})
     if not gaap:
         return pd.DataFrame()
+    # Companies switch revenue concepts over time (e.g. pre/post ASC 606), so a
+    # tag can hold ONLY years-old quarters. Pick the tag with the most RECENT
+    # coverage (ties -> more quarters), never merely the first with >=4 entries
+    # — otherwise the "trajectory" can silently describe a decade-old business.
     revenue: dict[str, dict] = {}
     for tag in _XBRL_REVENUE_TAGS:
-        revenue = _quarterly_usd(gaap, tag)
-        if len(revenue) >= 4:
-            break
+        cand = _quarterly_usd(gaap, tag)
+        if len(cand) < 4:
+            continue
+        if (not revenue or max(cand) > max(revenue)
+                or (max(cand) == max(revenue) and len(cand) > len(revenue))):
+            revenue = cand
     if not revenue:
         return pd.DataFrame()
     gross = _quarterly_usd(gaap, "GrossProfit")
