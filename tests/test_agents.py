@@ -96,6 +96,59 @@ def test_analysts_read_fundamentals_deterministically():
     assert empty.stance == "neutral"
 
 
+def test_moat_analyst_spots_compounder_with_secular_tailwind():
+    from system.agents.analysts import MoatAnalyst
+
+    ev = {"fundamentals": {
+        "available": True,
+        "growth": {"revenue_growth_pct": 60.0, "earnings_growth_pct": 120.0,
+                   "return_on_equity_pct": 45.0},
+        "moat": {"gross_margin_pct": 70.0, "operating_margin_pct": 40.0,
+                 "fcf_margin_pct": 30.0, "market_cap_bn": 800.0,
+                 "industry": "Semiconductors",
+                 "business_summary": ("Designs GPUs and accelerated computing "
+                                      "platforms for artificial intelligence and "
+                                      "data center workloads.")}}}
+    read = MoatAnalyst(CLIENT, M.framing).run({"symbol": "NVDA", "evidence": ev})
+    assert read.domain == "moat"
+    assert read.stance == "bullish"
+    assert any("secular" in p.lower() for p in read.positives)   # named the trend
+    assert any("AI" in p for p in read.positives)
+
+    # A commodity business with thin margins must not read as a moat.
+    weak = {"fundamentals": {"available": True, "growth": {},
+                             "moat": {"gross_margin_pct": 12.0,
+                                      "operating_margin_pct": 2.0,
+                                      "fcf_margin_pct": -3.0,
+                                      "business_summary": "Operates grocery stores."}}}
+    read2 = MoatAnalyst(CLIENT, M.framing).run({"symbol": "WEAK", "evidence": weak})
+    assert read2.stance == "bearish"
+    # Missing fundamentals -> neutral, never crashes.
+    read3 = MoatAnalyst(CLIENT, M.framing).run(
+        {"symbol": "X", "evidence": {"fundamentals": {"available": False}}})
+    assert read3.stance == "neutral"
+
+
+def test_valuation_analyst_growth_adjusts_high_multiples():
+    from system.agents.analysts import ValuationAnalyst
+
+    # A 45x forward P/E with PEG 1.1 is a compounder priced for growth, not an
+    # "expensive" stock — the raw-multiple reflex must not score it bearish.
+    ev = {"technicals": {"price": 100.0},
+          "fundamentals": {"available": True,
+                           "valuation": {"forward_pe": 45.0, "peg_ratio": 1.1,
+                                         "analyst_target_price": 125.0}}}
+    read = ValuationAnalyst(CLIENT, M.framing).run({"symbol": "GROW", "evidence": ev})
+    assert read.stance != "bearish"
+    assert not any("expensive" in c for c in read.concerns)
+    # The same multiple WITHOUT growth support is still expensive.
+    ev2 = {"technicals": {"price": 100.0},
+           "fundamentals": {"available": True,
+                            "valuation": {"forward_pe": 45.0, "peg_ratio": 3.5}}}
+    read2 = ValuationAnalyst(CLIENT, M.framing).run({"symbol": "RICH", "evidence": ev2})
+    assert any("expensive" in c for c in read2.concerns)
+
+
 def test_rebuttal_fallback_is_substantive_not_dismissive():
     agent = HypothesisAgent(CLIENT, M.synthesis)
     out = agent.rebut({"thesis": {"mechanism": "Uptrend continuation with cheap valuation",

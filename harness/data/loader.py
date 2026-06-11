@@ -324,11 +324,22 @@ def fetch_fundamentals_yahoo(symbol: str, available_at: pd.Timestamp | None = No
         "forward_eps": g("forwardEps"),
         "profit_margin": g("profitMargins"),
         "gross_margin": g("grossMargins"),
+        "operating_margin": g("operatingMargins"),
         "return_on_equity": g("returnOnEquity"),
+        "return_on_assets": g("returnOnAssets"),
+        "free_cash_flow": g("freeCashflow"),
+        "total_revenue": g("totalRevenue"),
+        "market_cap": g("marketCap"),
+        "held_percent_insiders": g("heldPercentInsiders"),
         "target_mean_price": g("targetMeanPrice"),
         "recommendation": g("recommendationKey"),
         "sector": g("sector"),
         "industry": g("industry"),
+        # Bounded business description: the moat / secular-trend analyst reads
+        # this to judge what the company actually does and which structural
+        # growth theme (if any) it is levered to.
+        "business_summary": (str(g("longBusinessSummary"))[:900]
+                             if g("longBusinessSummary") else None),
     }
     return pd.DataFrame([row])
 

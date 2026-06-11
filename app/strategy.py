@@ -25,7 +25,7 @@ import pandas as pd
 # (PEAD) and sector rotation are meaningful secondary edges.
 BASE_WEIGHTS = {
     "rs": 2.0, "mom6": 1.0, "mom3": 0.5, "trend": 0.30,
-    "near_high": 0.20, "earnings_gap": 0.80, "sector": 0.60,
+    "near_high": 0.20, "earnings_gap": 0.80, "sector": 0.60, "accel": 0.60,
 }
 
 
@@ -118,6 +118,9 @@ def composite_score(m: dict, weights: dict | None = None,
     elif dh < -0.30:
         s -= w["near_high"]
     s += w["earnings_gap"] * m.get("earnings_gap", 0.0)
+    # Momentum ACCELERATION: is the recent 3-month pace running ahead of the
+    # 6-month average pace? An igniting trend scores before it is consensus.
+    s += w.get("accel", 0.0) * _clamp(m.get("accel", 0.0), -0.3, 0.4)
     sec = m.get("sector")
     if sec and sec in sec_rs:
         s += w["sector"] * _clamp(sec_rs[sec], -0.3, 0.3)
@@ -130,6 +133,60 @@ def composite_score(m: dict, weights: dict | None = None,
         elif rsi < 35:
             s -= 0.10
     return round(s, 4)
+
+
+def hidden_gem_score(m: dict) -> float:
+    """Early-trend score: how much a name looks like a future leader BEFORE the
+    crowd owns it. Favors acceleration (the 3-month pace overtaking the 6-month
+    average pace), a held earnings gap, an intact trend, a 12-month record that
+    is NOT yet a consensus winner, and room left below the prior high. A pure
+    momentum ranking only surfaces names after the rally is obvious; this is the
+    complementary lens."""
+    if not m.get("above_200dma"):
+        return -1.0                        # igniting, not a falling knife
+    accel = m.get("accel", 0.0)
+    s = 2.0 * _clamp(accel, -0.3, 0.4)
+    s += 1.0 * m.get("earnings_gap", 0.0)
+    s += 0.5 * _clamp(m.get("mom3", 0.0), -0.3, 0.5)
+    if accel > 0.05:                       # bonuses only when genuinely igniting
+        mom12 = m.get("mom12")
+        if mom12 is not None and mom12 < 0.35:
+            s += 0.25                      # not already a crowded 12-month story
+        dh = m.get("dist_high", 0.0)
+        if -0.35 <= dh <= -0.10:
+            s += 0.20                      # re-rating room back to / through highs
+    rsi = m.get("rsi", float("nan"))
+    if rsi == rsi and rsi > 80:
+        s -= 0.30
+    return round(s, 4)
+
+
+def select_shortlist(ranked: list[dict], k: int, gem_slots: int = 2) -> list[dict]:
+    """The deep-dive shortlist: top names by composite score PLUS reserved
+    'hidden gem' slots for early-acceleration names the momentum ranking alone
+    would miss. Gems must clear a positive bar (marked ``hidden_gem=True``);
+    unused slots fall back to score order, so the list is always full when the
+    universe allows."""
+    k = max(1, k)
+    base = [m for m in ranked if m["score"] > 0]
+    core = base[: max(1, k - gem_slots)]
+    chosen = {m["symbol"] for m in core}
+    gems = sorted((m for m in ranked if m["symbol"] not in chosen),
+                  key=hidden_gem_score, reverse=True)
+    out = list(core)
+    for g in gems:
+        if len(out) >= k:
+            break
+        if hidden_gem_score(g) > 0.15:
+            g = dict(g)
+            g["hidden_gem"] = True
+            out.append(g)
+    for m in base:                          # backfill if too few gems qualified
+        if len(out) >= k:
+            break
+        if m["symbol"] not in {x["symbol"] for x in out}:
+            out.append(m)
+    return out
 
 
 def diversify(ranked: list[dict], k: int, max_per_sector: int = 2) -> list[dict]:

@@ -44,14 +44,16 @@ def _technicals(view, symbol: str) -> dict:
         "rsi14": round(float(rsi.iloc[-1]), 0) if len(rsi) else None,
         "above_200dma": bool(len(sma200) and last > float(sma200.iloc[-1])),
     }
-    # Plausibility guard: implausible single-name moves usually mean a bad source
-    # series (missed split, vendor error), not a real opportunity. Flag it so the
-    # agents and the user discount the read instead of theorizing on noise.
+    # Plausibility guard: corrupt source data (a missed split, vendor error)
+    # shows up as a single-session discontinuity, NOT as a large cumulative
+    # move — genuine multi-month leaders rally hundreds of percent and must not
+    # be smeared as bad data. Flag only true discontinuities.
     warns = []
-    if mom is not None and abs(mom) > 150:
-        warns.append(f"6-month move {mom:+.0f}% is implausibly large")
-    if pct_low is not None and pct_low > 400:
-        warns.append(f"{pct_low:+.0f}% above the 52-week low is implausibly large")
+    d1 = close.pct_change().iloc[-252:].abs()
+    jump = float(d1.max()) if len(d1) else 0.0
+    if jump > 0.45:
+        warns.append(f"a {jump * 100:.0f}% single-session move suggests a "
+                     "split/data error in the price series")
     if out["atr_pct_of_price"] is not None and out["atr_pct_of_price"] > 20:
         warns.append(f"ATR {out['atr_pct_of_price']:.0f}% of price is implausibly high")
     if warns:
@@ -135,6 +137,10 @@ def _fundamentals(view, symbol: str) -> dict:
         # an artifact, not a real growth signal — flag it so agents discount it.
         if tr_eps < 1.0 or abs(implied_eps_growth) > 80:
             eps_reliable = False
+    fcf, rev = _f(r, "free_cash_flow"), _f(r, "total_revenue")
+    fcf_margin = round(fcf / rev * 100, 1) if fcf is not None and rev else None
+    mc = _f(r, "market_cap")
+    summary = r.get("business_summary")
     return {
         "available": True,
         "valuation": {
@@ -161,6 +167,23 @@ def _fundamentals(view, symbol: str) -> dict:
             if _f(r, "profit_margin") is not None else None,
             "return_on_equity_pct": round(_f(r, "return_on_equity") * 100, 1)
             if _f(r, "return_on_equity") is not None else None,
+        },
+        # Business-quality / durability block: what the moat & secular-trend
+        # analyst reasons over (margins = pricing power, FCF = self-funding,
+        # the description = which structural theme the company is levered to).
+        "moat": {
+            "gross_margin_pct": round(_f(r, "gross_margin") * 100, 1)
+            if _f(r, "gross_margin") is not None else None,
+            "operating_margin_pct": round(_f(r, "operating_margin") * 100, 1)
+            if _f(r, "operating_margin") is not None else None,
+            "fcf_margin_pct": fcf_margin,
+            "return_on_assets_pct": round(_f(r, "return_on_assets") * 100, 1)
+            if _f(r, "return_on_assets") is not None else None,
+            "market_cap_bn": round(mc / 1e9, 1) if mc else None,
+            "insider_ownership_pct": round(_f(r, "held_percent_insiders") * 100, 1)
+            if _f(r, "held_percent_insiders") is not None else None,
+            "industry": r.get("industry"),
+            "business_summary": str(summary)[:700] if summary else None,
         },
         "analyst_recommendation": r.get("recommendation"),
     }

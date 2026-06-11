@@ -16,6 +16,7 @@ from system.agents.prompts import (
     FUNDAMENTAL_ANALYST,
     GROWTH_ANALYST,
     MACRO_ANALYST,
+    MOAT_ANALYST,
     TECHNICAL_ANALYST,
     VALUATION_ANALYST,
 )
@@ -201,13 +202,21 @@ class ValuationAnalyst(Agent):
         v = fu.get("valuation", {})
         pos, con, score = [], [], 0.5
         fpe = v.get("forward_pe")
+        peg0 = v.get("peg_ratio")
         if isinstance(fpe, (int, float)):
             if fpe <= 0:
                 con.append("negative forward earnings (no meaningful P/E)")
             elif fpe < 15:
                 pos.append(f"low forward P/E ({fpe:.0f}x) - inexpensive"); score += 0.12
             elif fpe > 35:
-                con.append(f"rich forward P/E ({fpe:.0f}x) - expensive"); score -= 0.12
+                # Growth-adjust: a high multiple with a PEG near/below ~1.5 is a
+                # compounder priced for its growth, not an expensive stock — the
+                # raw-multiple reflex is how the future leaders get missed.
+                if isinstance(peg0, (int, float)) and 0 < peg0 <= 1.5:
+                    pos.append(f"forward P/E {fpe:.0f}x looks rich but PEG {peg0:.2f} "
+                               "- the growth justifies the multiple")
+                else:
+                    con.append(f"rich forward P/E ({fpe:.0f}x) - expensive"); score -= 0.12
         peg = v.get("peg_ratio")
         if isinstance(peg, (int, float)) and peg > 0:
             if peg < 1:
@@ -235,6 +244,91 @@ class ValuationAnalyst(Agent):
         score = _f(raw, "score", 0.5)
         stance = str(raw.get("stance") or _stance(score))
         return AnalystRead("valuation", stance, score, str(raw.get("assessment", "")).strip(),
+                           _lst(raw.get("positives")), _lst(raw.get("concerns")))
+
+
+# Deterministic-mode keyword map for secular tailwinds. The real thematic read
+# comes from the LLM over the business summary; this keeps offline/CI mode
+# coherent (and is deliberately conservative: theme + numbers, never theme alone).
+_SECULAR_THEMES = [
+    ("artificial intelligence", "AI"), ("machine learning", "AI"),
+    ("gpu", "AI compute"), ("semiconductor", "AI/compute supply chain"),
+    ("data center", "AI/cloud infrastructure"), ("cloud", "cloud migration"),
+    ("cybersecurity", "cybersecurity"), ("electric vehicle", "electrification"),
+    ("battery", "electrification"), ("renewable", "energy transition"),
+    ("solar", "energy transition"), ("obesity", "GLP-1 therapeutics"),
+    ("weight loss", "GLP-1 therapeutics"), ("automation", "automation/robotics"),
+    ("robot", "automation/robotics"), ("aerospace and defense", "defense spending"),
+]
+
+
+class MoatAnalyst(Agent):
+    name = "moat_analyst"
+    schema_name = "AnalystRead"
+
+    def __init__(self, client, model):
+        super().__init__(client, model, MOAT_ANALYST, max_tokens=700)
+
+    def deterministic(self, inputs: dict) -> AnalystRead:
+        fu = inputs.get("evidence", {}).get("fundamentals", {})
+        if not fu.get("available"):
+            return AnalystRead("moat", "neutral", 0.5,
+                               "No business-quality data available.", [],
+                               ["no fundamentals data"])
+        m = fu.get("moat", {}) or {}
+        g = fu.get("growth", {}) or {}
+        pos, con, score = [], [], 0.5
+        gm = m.get("gross_margin_pct")
+        if isinstance(gm, (int, float)):
+            if gm >= 55:
+                pos.append(f"high gross margin ({gm:.0f}%) - pricing power"); score += 0.12
+            elif gm < 25:
+                con.append(f"thin gross margin ({gm:.0f}%) - commodity economics"); score -= 0.10
+        om = m.get("operating_margin_pct")
+        if isinstance(om, (int, float)):
+            if om >= 25:
+                pos.append(f"strong operating margin ({om:.0f}%)"); score += 0.08
+            elif om < 5:
+                con.append(f"weak operating margin ({om:.0f}%)"); score -= 0.08
+        fcf = m.get("fcf_margin_pct")
+        if isinstance(fcf, (int, float)):
+            if fcf >= 15:
+                pos.append(f"free-cash-flow margin {fcf:.0f}% - self-funding compounder"); score += 0.08
+            elif fcf < 0:
+                con.append("negative free cash flow (depends on external funding)"); score -= 0.05
+        roe = g.get("return_on_equity_pct")
+        if isinstance(roe, (int, float)) and roe >= 25:
+            pos.append(f"return on equity {roe:.0f}% - high returns on capital"); score += 0.06
+        rg, eg = g.get("revenue_growth_pct"), g.get("earnings_growth_pct")
+        if (isinstance(rg, (int, float)) and isinstance(eg, (int, float))
+                and rg > 0 and eg > rg):
+            pos.append(f"operating leverage: earnings ({eg:+.0f}%) outpacing revenue "
+                       f"({rg:+.0f}%)"); score += 0.08
+        if (isinstance(rg, (int, float)) and rg >= 25
+                and isinstance(gm, (int, float)) and gm >= 50):
+            pos.append("hyper-growth WITH high margins - the classic emerging-leader "
+                       "profile"); score += 0.08
+        # Secular-tailwind scan: theme keywords in the business description, only
+        # credited because the margin/growth checks above run independently.
+        text = (str(m.get("business_summary") or "") + " "
+                + str(m.get("industry") or "")).lower()
+        themes = sorted({theme for kw, theme in _SECULAR_THEMES if kw in text})
+        if themes:
+            pos.append("levered to secular trend(s): " + ", ".join(themes[:3]))
+            score += min(0.10, 0.05 * len(themes))
+        score = max(0.0, min(1.0, score))
+        moat_s = ("durable-advantage traits" if score >= 0.6
+                  else "no clear moat signal" if score > 0.4 else "weak business quality")
+        trend_s = f"; secular tailwind: {', '.join(themes[:3])}" if themes else ""
+        assess = (f"Gross margin {gm if gm is not None else 'n/a'}%, operating margin "
+                  f"{om if om is not None else 'n/a'}%, FCF margin "
+                  f"{fcf if fcf is not None else 'n/a'}% - {moat_s}{trend_s}.")
+        return AnalystRead("moat", _stance(score), score, assess, pos, con)
+
+    def parse(self, raw: dict, inputs: dict) -> AnalystRead:
+        score = _f(raw, "score", 0.5)
+        stance = str(raw.get("stance") or _stance(score))
+        return AnalystRead("moat", stance, score, str(raw.get("assessment", "")).strip(),
                            _lst(raw.get("positives")), _lst(raw.get("concerns")))
 
 

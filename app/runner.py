@@ -706,6 +706,7 @@ _AGENT_ROLE = {
     "memory": "Recalled lessons & base rates",
     "technical_analyst": "Technical analyst", "fundamental_analyst": "Fundamental analyst",
     "valuation_analyst": "Valuation analyst", "growth_analyst": "Growth analyst",
+    "moat_analyst": "Moat & secular-trend analyst",
     "hypothesis": "Strategist (thesis)", "skeptic": "Skeptic (bear case)",
     "hypothesis_rebuttal": "Strategist (rebuttal)", "portfolio_manager": "Portfolio manager (decision)",
 }
@@ -878,6 +879,35 @@ def _assess_fundamentals(fu: dict) -> list[str]:
     return out or ["  (fundamentals present but sparse)"]
 
 
+def _assess_moat(fu: dict) -> list[str]:
+    m = (fu or {}).get("moat", {}) or {}
+    if not fu.get("available") or not any(v is not None for v in m.values()):
+        return ["  (no business-quality data available)"]
+    out = []
+    gm = m.get("gross_margin_pct")
+    if isinstance(gm, (int, float)):
+        tag = "[pricing power]" if gm >= 55 else "[commodity]" if gm < 25 else "[moderate]"
+        out.append(f"  gross margin: {gm:.0f}% {tag}")
+    om = m.get("operating_margin_pct")
+    if isinstance(om, (int, float)):
+        out.append(f"  operating margin: {om:.0f}% "
+                   f"{'[strong]' if om >= 25 else '[weak]' if om < 5 else '[ok]'}")
+    fcf = m.get("fcf_margin_pct")
+    if isinstance(fcf, (int, float)):
+        out.append(f"  free-cash-flow margin: {fcf:.0f}% "
+                   f"{'[self-funding]' if fcf >= 15 else '[burning cash]' if fcf < 0 else '[ok]'}")
+    mc = m.get("market_cap_bn")
+    if isinstance(mc, (int, float)):
+        size = "mega" if mc >= 200 else "large" if mc >= 10 else "mid/small (more room to re-rate)"
+        out.append(f"  market cap: ${mc:,.0f}B [{size}]")
+    io = m.get("insider_ownership_pct")
+    if isinstance(io, (int, float)) and io >= 3:
+        out.append(f"  insider ownership: {io:.0f}% [aligned founders/management]")
+    if m.get("industry"):
+        out.append(f"  industry: {m['industry']}")
+    return out or ["  (business-quality data sparse)"]
+
+
 def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
                       rec: dict | None, equity: float) -> None:
     """Readable scorecard: technicals, valuation/growth, filings, what's good/bad,
@@ -887,6 +917,7 @@ def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
     fund = _step_out(transcript, "fundamental_analyst")
     val = _step_out(transcript, "valuation_analyst")
     grow = _step_out(transcript, "growth_analyst")
+    moat = _step_out(transcript, "moat_analyst")
     recalled = _step_out(transcript, "memory")
     hyp = _step_out(transcript, "hypothesis")
     crit = _step_out(transcript, "skeptic")
@@ -927,6 +958,9 @@ def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
     _h("VALUATION & GROWTH")
     for ln in _assess_fundamentals(evidence.get("fundamentals", {})):
         log(ln)
+    _h("MOAT & FUTURE GROWTH")
+    for ln in _assess_moat(evidence.get("fundamentals", {})):
+        log(ln)
     _h("FILINGS & INSIDER")
     for ln in _assess_filings(evidence.get("filings", {}), evidence.get("insider", {})):
         log(ln)
@@ -934,13 +968,14 @@ def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
     if mac.get("available"):
         _h("MACRO BACKDROP")
         log(f"  {mac.get('summary', '')}")
-    if macro_r or tech or fund or val or grow:
+    if macro_r or tech or fund or val or grow or moat:
         _h("ANALYST READS")
         _panel("Macro      ", macro_r)
         _panel("Technical  ", tech)
         _panel("Fundamental", fund)
         _panel("Valuation  ", val)
         _panel("Growth     ", grow)
+        _panel("Moat/Trend ", moat)
     if recalled:
         stats = recalled.get("setup_stats", {})
         _h("LEARNED FROM PAST TRADES (advisory)")
@@ -1278,22 +1313,30 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
         k = int(cfg.screen_top_k)
         if risk_off:
             k = max(2, k // 2)
-        # Best names by score regardless of sector (concentration is fine when the
-        # names are valid); only the bad-data drop and the score>0 bar apply.
-        top = [m for m in ranked if m["score"] > 0][:k]
+        # Top composite scores plus reserved HIDDEN-GEM slots: early-acceleration
+        # names a pure momentum ranking would only surface after the rally is
+        # consensus. Bad-data names were already dropped by the pre-filter.
+        top = strategy.select_shortlist(ranked, k, gem_slots=0 if risk_off else 2)
         if not top:
             log("\n[deep-dive] no name cleared the pre-filter bar (score > 0) in this "
                 "regime; standing down. Default is to do nothing.")
         else:
             log(f"\n[deep-dive] full AI agent panel on the top {len(top)}: "
-                f"{', '.join(m['symbol'] for m in top)}")
+                f"{', '.join(m['symbol'] + (' (gem)' if m.get('hidden_gem') else '') for m in top)}")
+            gems = [m for m in top if m.get("hidden_gem")]
+            if gems:
+                log("[deep-dive] hidden-gem slots (early acceleration, pre-consensus): "
+                    + ", ".join(f"{m['symbol']} (3mo {m['mom3'] * 100:+.0f}% vs 6mo "
+                                f"{m['mom6'] * 100:+.0f}%)" for m in gems))
 
         recs, considered = [], []
         sec_map = sec_of_map
         for m in top:
             sym = m["symbol"]
+            gem_tag = "  [HIDDEN GEM - early acceleration]" if m.get("hidden_gem") else ""
             log(f"\n{'#' * 60}\n# DEEP-DIVE: {sym}  (score {m['score']:.2f}, "
-                f"RS {m['rs'] * 100:+.0f}%, sector {m.get('sector') or '?'})\n{'#' * 60}")
+                f"RS {m['rs'] * 100:+.0f}%, sector {m.get('sector') or '?'})"
+                f"{gem_tag}\n{'#' * 60}")
             try:
                 with _redirect(log):
                     rec, action, decisive, conv = _analyze_symbol(
@@ -1427,6 +1470,9 @@ def run_strategy_backtest(cfg: AppConfig, emit: Emit) -> dict:
             f"{res['max_drawdown_pct']:.1f}%")
         log("\n[note] gross of slippage on the pre-filter alone (no agent gate). The "
             "agents + Risk Governor are an additional discipline layer on top.")
+        log("[note] the universe is TODAY's index membership, so this backtest has "
+            "survivorship bias (delisted/demoted names are missing) - treat the "
+            "excess return as an upper bound, not a promise.")
         log("[done] backtest complete.")
     return res
 

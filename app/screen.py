@@ -38,18 +38,23 @@ def _metrics(close: pd.Series, bench_mom6: float) -> dict | None:
         return None
     mom6 = last / float(c.iloc[-126]) - 1 if len(c) > 126 else 0.0
     mom3 = last / float(c.iloc[-63]) - 1 if len(c) > 63 else 0.0
+    mom12 = last / float(c.iloc[-252]) - 1 if len(c) > 252 else None
     sma200 = float(c.iloc[-200:].mean())
     win = c.iloc[-252:]
     high52 = float(win.max())
     low52 = float(win.min())
     dist_high = last / high52 - 1 if high52 else 0.0
     pct_above_low = last / low52 - 1 if low52 else 0.0
-    # Implausible single-name moves are almost always corrupt source data (bad
-    # split, vendor error), not real opportunities — flag so the ranker can drop
-    # them instead of wasting a deep-dive slot on garbage.
-    bad_data = abs(mom6) > 1.5 or pct_above_low > 4.0
-    return {"price": round(last, 2), "mom6": mom6, "mom3": mom3,
+    # Corrupt source data (missed split, vendor error) shows up as a single-
+    # session discontinuity — a one-day ±45%+ jump. A large CUMULATIVE move is
+    # not corruption: the genuine multi-month leaders (the NVDA-2023 kind) are
+    # exactly what the screen exists to find and must never be dropped.
+    d1 = c.pct_change().iloc[-252:].abs()
+    bad_data = bool(len(d1) and float(d1.max()) > 0.45)
+    return {"price": round(last, 2), "mom6": mom6, "mom3": mom3, "mom12": mom12,
+            "accel": mom3 - mom6 / 2.0,
             "above_200dma": last > sma200, "dist_high": dist_high,
+            "pct_above_low": pct_above_low,
             "rsi": _rsi(c), "rs": mom6 - bench_mom6,
             "earnings_gap": strategy.earnings_gap_drift(c), "bad_data": bad_data}
 

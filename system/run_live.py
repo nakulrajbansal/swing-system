@@ -24,6 +24,7 @@ from harness.data.pit_store import PITStore
 from system.agents.analysts import (
     FundamentalAnalyst,
     GrowthAnalyst,
+    MoatAnalyst,
     TechnicalAnalyst,
     ValuationAnalyst,
 )
@@ -95,7 +96,8 @@ class PaperTradingEngine:
         self.analysts = [TechnicalAnalyst(self.client, m.framing),
                          FundamentalAnalyst(self.client, m.framing),
                          ValuationAnalyst(self.client, m.framing),
-                         GrowthAnalyst(self.client, m.framing)]
+                         GrowthAnalyst(self.client, m.framing),
+                         MoatAnalyst(self.client, m.framing)]
         self.orchestrator = Orchestrator(
             store, self.specialists,
             HypothesisAgent(self.client, m.synthesis),
