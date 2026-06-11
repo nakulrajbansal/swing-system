@@ -510,6 +510,34 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
                         f"to breakeven (~{avg:.2f}): with risk removed, the "
                         "winner can run on the market's money.")
 
+        # Grade matured recommendations too (advice learning must not depend on
+        # a screen happening to run): fetch closes for just the due symbols.
+        due = sorted({r["symbol"] for r in reco_ledger.load()
+                      if r.get("status") == "open" and r.get("exit_by")
+                      and str(r["exit_by"]) <= today})
+        if due:
+            try:
+                from harness.data.loader import fetch_closes_batch
+                start = (datetime.date.today()
+                         - datetime.timedelta(days=120)).isoformat()
+                closes = fetch_closes_batch(due, start, emit=lambda s: None)
+                ev = reco_ledger.evaluate(closes, today, mem)
+                if ev["evaluated"]:
+                    log(f"\n[ledger] scored {ev['evaluated']} matured "
+                        f"recommendation(s): hit rate {ev['win_rate_pct']:.0f}%, "
+                        f"avg {ev['avg_return_pct']:+.1f}% ({ev['open']} still open).")
+                    co = ev.get("cohorts", {})
+                    gem, core = co.get("hidden_gem", {}), co.get("core", {})
+                    if gem.get("n"):
+                        log(f"[ledger] lens scoreboard - gems: {gem['n']} scored, "
+                            f"hit {gem['win_rate_pct']:.0f}%, "
+                            f"avg {gem['avg_return_pct']:+.1f}%  |  core: "
+                            f"{core.get('n', 0)} scored, "
+                            f"hit {core.get('win_rate_pct', 0):.0f}%, "
+                            f"avg {core.get('avg_return_pct', 0):+.1f}%")
+            except Exception as exc:
+                log(f"[ledger] scoring skipped ({type(exc).__name__}: {exc}).")
+
         _save_memory(cfg, mem, log, _memb)
         log(f"\n[done] review complete: {len(out['time_exits'])} time exit(s), "
             f"{len(out['guardian_exits'])} guardian exit(s), "
