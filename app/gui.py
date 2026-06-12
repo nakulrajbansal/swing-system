@@ -8,6 +8,7 @@ bundle stays self-contained and cross-platform. The look is a custom flat theme
 from __future__ import annotations
 
 import queue
+import re
 import sys
 import threading
 import tkinter as tk
@@ -609,6 +610,13 @@ class SwingApp:
         cons = self._card(parent, "Output", expand=True)
         tools = ttk.Frame(cons, style="Card.TFrame")
         tools.pack(fill="x", pady=(0, 6))
+        # Jump-to-section: long analyses become navigable instead of a scroll.
+        self._section_idx: dict[str, str] = {}
+        self.jumpbox = ttk.Combobox(tools, state="readonly", width=34,
+                                    values=["Jump to section…"])
+        self.jumpbox.set("Jump to section…")
+        self.jumpbox.pack(side="left")
+        self.jumpbox.bind("<<ComboboxSelected>>", self._jump_section)
         self.progress = ttk.Progressbar(tools, mode="indeterminate",
                                         style="Accent.Horizontal.TProgressbar", length=180)
         self.btn_stop = ttk.Button(tools, text="■  Stop run", style="Tool.TButton",
@@ -1204,9 +1212,44 @@ class SwingApp:
             return "dim"
         return None
 
+    _SECTION_PAT = re.compile(
+        r"^(DEEP-DIVE: \S+.*|TRADE RECOMMENDATIONS.*|.*SCREEN RESULTS.*|"
+        r"starting: \S+|TOP IDEAS.*|SUGGESTED PORTFOLIO.*|"
+        r"[A-Z][A-Z0-9.\-]{0,6}\s{3}(?:BUY|DO NOT BUY).*)$")
+
+    def _register_section(self, disp: str, index: str) -> None:
+        m = self._SECTION_PAT.match(disp.strip())
+        if not m:
+            return
+        label = disp.strip()
+        if label.startswith("starting:"):
+            self._section_idx.clear()              # new run: fresh outline
+            label = "▶ " + label
+        elif "BUY" in label and not label.startswith(("TRADE", "TOP")):
+            label = "verdict — " + label.split()[0]
+        label = label[:44]
+        n = 2
+        base = label
+        while label in self._section_idx:          # keep duplicates addressable
+            label = f"{base} ({n})"
+            n += 1
+        self._section_idx[label] = index
+        self.jumpbox.configure(values=["Jump to section…"]
+                               + list(self._section_idx))
+
+    def _jump_section(self, _event=None):
+        idx = self._section_idx.get(self.jumpbox.get())
+        if idx:
+            self.out.see(idx)
+            self.out.yview_moveto(
+                float(self.out.index(idx).split(".")[0])
+                / max(float(self.out.index("end-1c").split(".")[0]), 1.0))
+        self.jumpbox.set("Jump to section…")
+
     def _log(self, line: str):
         """Render a backend log line for humans: banner rows become thin rules,
-        section markers become headers; everything else is tag-colored."""
+        section markers become headers; everything else is tag-colored. Section
+        lines register in the jump-to outline."""
         s = line.rstrip()
         stripped = s.strip()
         if stripped and set(stripped) <= {"#", "=", "-"} and len(stripped) >= 8:
@@ -1216,11 +1259,16 @@ class SwingApp:
         else:
             disp, tag = s, self._tag_for(s)
         self.out.configure(state="normal")
+        index = self.out.index("end-1c linestart")
         self.out.insert("end", disp + "\n", tag or ())
         self.out.see("end")
         self.out.configure(state="disabled")
+        self._register_section(disp, index)
 
     def _clear(self):
+        self._section_idx.clear()
+        self.jumpbox.configure(values=["Jump to section…"])
+        self.jumpbox.set("Jump to section…")
         self.out.configure(state="normal")
         self.out.delete("1.0", "end")
         self.out.configure(state="disabled")

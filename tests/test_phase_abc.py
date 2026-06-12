@@ -116,6 +116,39 @@ def test_pm_weighs_rejoinder_outcome():
     assert conceded.final_conviction > stands.final_conviction
 
 
+def test_executed_link_and_full_open_list(tmp_path):
+    from app import reco_ledger
+
+    p = tmp_path / "ledger.json"
+    recs = [{"symbol": s, "entry": 100.0, "hold_days": 10,
+             "exit_by": f"2026-06-{17 + i}", "conviction": 0.5}
+            for i, s in enumerate(["AAA", "BBB", "CCC", "DDD", "EEE",
+                                   "FFF", "GGG", "HHH", "III", "JJJ"])]
+    reco_ledger.record(recs, "screen-sp500", "2026-06-11", path=p)
+    assert reco_ledger.mark_executed("CCC", qty=80, path=p)
+    assert not reco_ledger.mark_executed("ZZZ", path=p)        # unknown: no-op
+    text = reco_ledger.summarize(path=p)
+    # ALL ten open entries are listed (the old view truncated to 8).
+    assert all(s in text for s in ("AAA", "JJJ"))
+    assert "10 open (1 executed in your account)" in text
+    assert "● 2026-06-11  CCC" in text and "x80" in text
+    assert "○ 2026-06-11  AAA" in text                          # advisory-only
+
+
+def test_wrap_never_truncates():
+    from app.runner import _wrap
+
+    long = ("The fundamental engine is real and durable: revenue re-accelerating "
+            "for two consecutive quarters while operating margins inflect, and "
+            "the moat read confirms a defensible niche position. " * 3)
+    lines = _wrap(long, indent="      ")
+    assert "".join(lines).replace(" ", "") == ("      " + long).replace(" ", "")[:0] \
+        or " ".join(ln.strip() for ln in lines) == " ".join(long.split())
+    assert all(len(ln) <= 100 for ln in lines)
+    assert not any(ln.rstrip().endswith("...") for ln in lines)
+    assert _wrap("") == [] and _wrap(None) == []
+
+
 def test_watchlist_lifecycle_and_triggers(tmp_path):
     from app import watchlist as wl
 

@@ -383,6 +383,12 @@ def place_manual_order(cfg: AppConfig, order: dict, emit: Emit) -> dict:
         px = f"limit ${order.get('limit_price')}" if otype == "limit" else "market"
         log(f"[order] {cfg.alpaca_env.upper()}: BUY {qty} {sym} ({px}"
             f"{', + stop/target' if bracket else ''}) submitted - id {oid}, status {status}.")
+        # Link the order to its recommendation so Learning/Performance show
+        # which calls were actually taken.
+        from app import reco_ledger
+        if reco_ledger.mark_executed(sym, qty):
+            log(f"[ledger] {sym} marked EXECUTED on its recommendation - it now "
+                "shows with a ● on the Learning tab.")
         log("[order] check the Paper portfolio (P&L) button to see it once filled.")
         return {"ok": True, "id": oid, "status": status}
 
@@ -617,6 +623,13 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
             log(f"  plan: entry ~{plan.get('entry')}  stop {plan.get('stop')}  "
                 f"target {plan.get('target')}  exit by {plan.get('exit_by')}  "
                 f"(held {held}d)")
+            # Backfill the executed link: a broker position matching a plan IS
+            # that recommendation taken (covers orders placed before linking
+            # existed, and manual fills).
+            if not plan.get("executed"):
+                reco_ledger.mark_executed(sym, int(qty))
+                log("  linked: recommendation marked EXECUTED (now visible with "
+                    "a ● on the Learning tab).")
 
             # ARM MISSING PROTECTION: if no sell orders are resting, the plan's
             # stop/target are wishes, not protection. Placing them only reduces
@@ -1065,6 +1078,17 @@ def _short(obj, n: int = 300) -> str:
     import json
     s = obj if isinstance(obj, str) else json.dumps(obj, default=str, ensure_ascii=False)
     return s if len(s) <= n else s[:n] + " ..."
+
+
+def _wrap(text, indent: str = "    ", width: int = 100) -> list[str]:
+    """The FULL text as wrapped, indented lines — for the summary sections,
+    where a truncated sentence forces the reader to scroll back up."""
+    import textwrap
+    s = " ".join(str(text or "").split())
+    if not s:
+        return []
+    return textwrap.wrap(s, width=width, initial_indent=indent,
+                         subsequent_indent=indent)
 
 
 def _sent(text, n: int = 900) -> str:
@@ -1609,13 +1633,18 @@ def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
             log("    (no comparable past trades yet)")
     _h("WHY THIS VERDICT")
     if hyp.get("decision") == "propose" and str(hyp.get("mechanism", "")).strip() not in ("", "None"):
-        log(f"    bull thesis : {_sent(hyp.get('mechanism'), 900)}")
+        log("    bull thesis:")
+        for ln in _wrap(hyp.get("mechanism"), "      "):
+            log(ln)
     else:
         log("    bull thesis : the strategist declined to propose a thesis "
             "(the bull case was not strong enough to commit to).")
-    log(f"    main risk   : {_sent(crit.get('strongest', '-'), 400)} "
-        f"(skeptic verdict: {crit.get('verdict', '-')})")
-    log(f"    PM decision : {_sent(pm.get('decisive_factor', '-'), 900)}")
+    log(f"    main risk (skeptic verdict: {crit.get('verdict', '-')}):")
+    for ln in _wrap(crit.get("strongest", "-"), "      "):
+        log(ln)
+    log("    PM decision:")
+    for ln in _wrap(pm.get("decisive_factor", "-"), "      "):
+        log(ln)
     if action not in {"enter", "adjust"}:
         log("    => PASS is the disciplined default: a BUY needs a real edge that "
             "survives the bear case. The positives did not outweigh the risks here.")
@@ -1772,8 +1801,12 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
             log(f"    entry ~{r['entry']}   stop {r['stop']}   target {r['target']}")
             log(f"    hold ~{r['hold_days']} sessions  ->  exit by {r['exit_by']}")
             log(f"    size @ ${equity:,.0f}: {r['shares_at_ref_equity']} sh (1% risk)")
-            log(f"    thesis: {r['thesis'][:240]}")
-            log(f"    skeptic verdict: {r['skeptic']}   |   decisive: {r['decisive_factor'][:140]}")
+            log("    thesis:")
+            for ln in _wrap(r["thesis"], "      "):
+                log(ln)
+            log(f"    skeptic verdict: {r['skeptic']}   |   decisive:")
+            for ln in _wrap(r["decisive_factor"], "      "):
+                log(ln)
         if considered:
             log("\n  consensus per name:")
             for sym, act, why in considered:
@@ -1782,11 +1815,15 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
         if real_llm:
             log(f"\n[cost] LLM calls this run: {calls}")
         if recs:
-            from app import reco_ledger
-            n = reco_ledger.record(recs, "ticker" if ticker else "scan",
-                                   str(session.date()))
-            if n:
-                log(f"[ledger] saved {n} recommendation(s) for forward tracking.")
+            if cfg.data_source == "synthetic":
+                log("[ledger] synthetic run - recommendations NOT recorded (the "
+                    "ledger tracks real-market calls only).")
+            else:
+                from app import reco_ledger
+                n = reco_ledger.record(recs, "ticker" if ticker else "scan",
+                                       str(session.date()))
+                if n:
+                    log(f"[ledger] saved {n} recommendation(s) for forward tracking.")
         _save_memory(cfg, mem, log, _memb)
         log(f"\n[done] {len(recs)} recommendation(s).")
     return {"session": str(session.date()), "recommendations": recs}
@@ -2102,7 +2139,9 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
                   if r.get("suggested_entry") else "")
             log(f"    entry ~{r['entry']}   stop {r['stop']}   target {r['target']}{pb}")
             log(f"    hold ~{r['hold_days']} sessions  ->  exit by {r['exit_by']}")
-            log(f"    thesis: {_sent(r['thesis'], 240)}")
+            log("    thesis:")
+            for ln in _wrap(r["thesis"], "      "):
+                log(ln)
 
         # Portfolio construction: conviction-scaled, capped, regime-budgeted —
         # sized off the REAL account equity when broker keys are present.
@@ -2127,8 +2166,9 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
                 tier = "WATCH"
             else:
                 tier = "PASS "
-            log(f"    [{tier}] {c['symbol']:<6} conv {c['conviction']:.2f}  - "
-                f"{_sent(c['decisive'], 180)}")
+            log(f"    [{tier}] {c['symbol']:<6} conv {c['conviction']:.2f}")
+            for ln in _wrap(c["decisive"], "            "):
+                log(ln)
         watch = [c for c in considered if c["action"] not in {"enter", "adjust"}
                  and c["conviction"] >= 0.40]
         if watch and not recs:

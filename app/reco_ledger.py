@@ -68,6 +68,23 @@ def record(recs: list[dict], source: str, as_of: str, path=None) -> int:
     return added
 
 
+def mark_executed(symbol: str, qty: int | None = None, path=None) -> bool:
+    """Link a placed order to its recommendation: the latest open entry for
+    `symbol` is flagged executed, so the Learning/Performance views show which
+    calls you actually took (advice quality vs. account performance)."""
+    led = load(path)
+    cands = [r for r in led if r.get("symbol") == symbol and r.get("status") == "open"]
+    if not cands:
+        return False
+    r = max(cands, key=lambda x: x.get("date") or "")
+    r["executed"] = True
+    if qty:
+        r["executed_qty"] = int(qty)
+    r.setdefault("executed_on", pd.Timestamp.now().date().isoformat())
+    save(led, path)
+    return True
+
+
 def open_for(symbol: str, path=None) -> dict | None:
     """The most recent OPEN ledger entry for a symbol (the trade's intent:
     exit_by, stop, target, thesis), or None."""
@@ -208,20 +225,27 @@ def summarize(path=None) -> str:
     if not led:
         return "No recommendations recorded yet."
     done = [r for r in led if r.get("status") == "evaluated"]
-    openr = [r for r in led if r.get("status") == "open"]
-    lines = [f"Recommendation ledger: {len(led)} total - {len(openr)} open, "
-             f"{len(done)} scored."]
+    openr = sorted((r for r in led if r.get("status") == "open"),
+                   key=lambda r: (str(r.get("exit_by") or ""), r.get("symbol", "")))
+    n_exec = sum(1 for r in openr if r.get("executed"))
+    lines = [f"Recommendation ledger: {len(led)} total - {len(openr)} open "
+             f"({n_exec} executed in your account), {len(done)} scored."]
     if done:
         wins = sum(1 for r in done if (r.get("return_pct") or 0) > 0)
         avg = sum(r.get("return_pct") or 0 for r in done) / len(done)
         lines.append(f"  scored hit rate {100 * wins / len(done):.0f}%  |  "
                      f"avg forward return {avg:+.1f}%")
         for r in sorted(done, key=lambda x: x.get("return_pct") or 0, reverse=True)[:10]:
+            ex = "  [executed]" if r.get("executed") else ""
             lines.append(f"   {r['date']}  {r['symbol']:<6} {r.get('return_pct', 0):+6.1f}%  "
-                         f"({r.get('outcome', '?')})")
+                         f"({r.get('outcome', '?')}){ex}")
     if openr:
-        lines.append("  open (awaiting their exit date):")
-        for r in openr[-8:]:
-            lines.append(f"   {r['date']}  {r['symbol']:<6} entry {r.get('entry')}  "
-                         f"-> exit by {r.get('exit_by')}")
+        lines.append("  open, by exit date (● = executed in your account, "
+                     "○ = advisory only):")
+        for r in openr:
+            mark = "●" if r.get("executed") else "○"
+            qty = f" x{r['executed_qty']}" if r.get("executed_qty") else ""
+            lines.append(f"   {mark} {r['date']}  {r['symbol']:<6}{qty:<5} "
+                         f"entry {r.get('entry')}  -> exit by {r.get('exit_by')}  "
+                         f"[{r.get('source', '?')}]")
     return "\n".join(lines)
