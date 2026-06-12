@@ -556,7 +556,9 @@ def run_watch(cfg: AppConfig, emit: Emit) -> dict:
                 rv = f" on {h['rvol']}x volume" if h.get("rvol") else ""
                 msg = (f"{h['symbol']} broke out: {h['price']} through "
                        f"{h['breakout_level']}{rv}")
-            log(f"[ALERT] {msg}  -  reason on watch: {_sent(h.get('reason', ''), 160)}")
+            log(f"[ALERT] {msg}")
+            for ln in _wrap(h.get("reason"), "          ", first="        on watch: "):
+                log(ln)
             _toast("Swing System - entry trigger", msg)
         if not hits:
             log("[watch] no triggers - all watched names are still waiting.")
@@ -740,7 +742,9 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
                 log(f"  [guardian] failed ({exc}) - defaulting to HOLD.")
                 continue
             if d.action == "exit":
-                log(f"  [guardian] EXIT recommended: {_sent(d.reason, 280)}")
+                log("  [guardian] EXIT recommended:")
+                for ln in _wrap(d.reason, "      "):
+                    log(ln)
                 if cfg.place_orders:
                     try:
                         broker.close_position(sym)
@@ -756,8 +760,12 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
                     log("  [advice] advisory only - close manually or turn ON "
                         "'Place approved orders' to let the review close it.")
             else:
-                log(f"  [guardian] HOLD - thesis intact"
-                    f"{(': ' + _sent(d.reason, 200)) if d.reason else '.'}")
+                if d.reason:
+                    log("  [guardian] HOLD - thesis intact:")
+                    for ln in _wrap(d.reason, "      "):
+                        log(ln)
+                else:
+                    log("  [guardian] HOLD - thesis intact.")
                 # Winner management: at >=1R unrealized, advise de-risking.
                 r_mult = _r_multiple(avg, plan.get("stop"), cur)
                 if r_mult >= 1.0:
@@ -1163,14 +1171,16 @@ def _short(obj, n: int = 300) -> str:
     return s if len(s) <= n else s[:n] + " ..."
 
 
-def _wrap(text, indent: str = "    ", width: int = 100) -> list[str]:
-    """The FULL text as wrapped, indented lines — for the summary sections,
-    where a truncated sentence forces the reader to scroll back up."""
+def _wrap(text, indent: str = "    ", width: int = 100,
+          first: str | None = None) -> list[str]:
+    """The FULL text as wrapped, indented lines — nothing human-written gets
+    truncated; `first` lets the opening line carry a label/bullet prefix."""
     import textwrap
     s = " ".join(str(text or "").split())
     if not s:
         return []
-    return textwrap.wrap(s, width=width, initial_indent=indent,
+    return textwrap.wrap(s, width=width,
+                         initial_indent=first if first is not None else indent,
                          subsequent_indent=indent)
 
 
@@ -1354,7 +1364,8 @@ def _fmt_step_output(out) -> list[str]:
     """An agent's structured output -> readable lines (no raw JSON dumps —
     the deliberation must be scannable by a human, in the app and the logs)."""
     if not isinstance(out, dict):
-        return [_sent(out, 500)]
+        return _wrap(out, indent="", width=92)
+    W = 92                                                   # caller adds indent
     lines: list[str] = []
     if "stance" in out or "assessment" in out:               # analyst read
         sc = out.get("score")
@@ -1362,37 +1373,35 @@ def _fmt_step_output(out) -> list[str]:
         if isinstance(sc, (int, float)):
             head += f"   (score {sc:.2f})"
         lines.append(head)
-        if out.get("assessment"):
-            lines.append(_sent(out["assessment"], 460))
-        for p in (out.get("positives") or [])[:5]:
-            lines.append(f"  + {_sent(p, 200)}")
-        for c in (out.get("concerns") or [])[:5]:
-            lines.append(f"  - {_sent(c, 200)}")
+        lines += _wrap(out.get("assessment"), indent="", width=W)
+        for p in (out.get("positives") or [])[:6]:
+            lines += _wrap(p, indent="    ", width=W, first="  + ")
+        for c in (out.get("concerns") or [])[:6]:
+            lines += _wrap(c, indent="    ", width=W, first="  - ")
     elif "mechanism" in out or "decision" in out:            # hypothesis
         if out.get("decision") != "propose":
             lines.append(f"DECLINE   (conviction {out.get('raw_conviction', 0):.2f})")
         else:
             lines.append(f"PROPOSE   (conviction {out.get('raw_conviction', 0):.2f}, "
                          f"hold ~{out.get('expected_hold_days', '?')} sessions)")
-            if out.get("mechanism"):
-                lines.append("thesis: " + _sent(out["mechanism"], 600))
-            if out.get("invalidation"):
-                lines.append("invalidated if: " + _sent(out["invalidation"], 260))
+            lines += _wrap(out.get("mechanism"), indent="  ", width=W,
+                           first="thesis: ")
+            lines += _wrap(out.get("invalidation"), indent="  ", width=W,
+                           first="invalidated if: ")
     elif "objections" in out:                                # skeptic
         lines.append(f"verdict: {str(out.get('verdict', '?')).upper()}")
-        for o in (out.get("objections") or [])[:6]:
+        for o in (out.get("objections") or [])[:8]:
             if isinstance(o, dict):
-                lines.append(f"  - [{float(o.get('severity', 0)):.1f}] "
-                             f"{_sent(o.get('detail', ''), 240)}")
+                lines += _wrap(o.get("detail", ""), indent="        ", width=W,
+                               first=f"  - [{float(o.get('severity', 0)):.1f}] ")
     elif "rebuttal" in out:
-        lines.append(_sent(out["rebuttal"], 500))
+        lines += _wrap(out["rebuttal"], indent="", width=W)
     elif "stands" in out:                                    # rejoinder (round 2)
         fs = out.get("final_severity")
         sev = f"   (final severity {fs:.1f})" if isinstance(fs, (int, float)) else ""
         lines.append(("objection STANDS" if out.get("stands")
                       else "objection CONCEDED") + sev)
-        if out.get("counter"):
-            lines.append(_sent(out["counter"], 320))
+        lines += _wrap(out.get("counter"), indent="", width=W)
     elif "action" in out:                                    # PM / guardian
         act = str(out.get("action", "?")).upper()
         head = act
@@ -1402,9 +1411,8 @@ def _fmt_step_output(out) -> list[str]:
         if out.get("entry"):
             lines.append(f"entry ~{out['entry']:.2f}   stop {out.get('stop', 0):.2f}   "
                          f"target {out.get('target', 0):.2f}")
-        if out.get("decisive_factor") or out.get("reason"):
-            lines.append("decisive: "
-                         + _sent(out.get("decisive_factor") or out.get("reason"), 420))
+        lines += _wrap(out.get("decisive_factor") or out.get("reason"),
+                       indent="  ", width=W, first="decisive: ")
     else:
         lines.append(_short(out, 500))
     return lines
@@ -1673,12 +1681,14 @@ def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
         sc = r.get("score")
         sc_s = f"{sc:.2f}" if isinstance(sc, (int, float)) else "?"
         log(f"  {label} analyst: {str(r.get('stance', '?')).upper()} (score {sc_s})")
-        if r.get("assessment"):
-            log(f"    {_sent(r['assessment'], 400)}")
-        for g in (r.get("positives") or [])[:4]:
-            log(f"    + {g}")
-        for b in (r.get("concerns") or [])[:4]:
-            log(f"    - {b}")
+        for ln in _wrap(r.get("assessment"), "    "):
+            log(ln)
+        for g in (r.get("positives") or [])[:5]:
+            for ln in _wrap(g, "      ", first="    + "):
+                log(ln)
+        for b in (r.get("concerns") or [])[:5]:
+            for ln in _wrap(b, "      ", first="    - "):
+                log(ln)
 
     bar = "=" * 64
     log(f"\n{bar}")
@@ -1731,7 +1741,8 @@ def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
                 f"{stats.get('win_rate_pct', 0):.0f}%, "
                 f"avg return {stats.get('avg_return_pct', 0):+.1f}%")
         for les in (recalled.get("lessons") or [])[:3]:
-            log(f"    - {_sent(les, 220)}")
+            for ln in _wrap(les, "      ", first="    - "):
+                log(ln)
         if not stats.get("count") and not recalled.get("lessons"):
             log("    (no comparable past trades yet)")
     _h("WHY THIS VERDICT")
@@ -1913,7 +1924,8 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
         if considered:
             log("\n  consensus per name:")
             for sym, act, why in considered:
-                log(f"    {sym}: {act.upper()} - {_sent(why, 280)}")
+                for ln in _wrap(why, "        ", first=f"    {sym}: {act.upper()} - "):
+                    log(ln)
         calls = getattr(client, "calls", 0)
         if real_llm:
             log(f"\n[cost] LLM calls this run: {calls}")
@@ -2299,7 +2311,7 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
                 watch_items.append({
                     "symbol": c["symbol"], "sector": m.get("sector"),
                     "reason": f"WATCH tier (conviction {c['conviction']:.2f}): "
-                              + _sent(c.get("decisive", ""), 140),
+                              + _sent(c.get("decisive", ""), 300),
                     "pullback_target": round(price / (1 + ext), 2) if ext > 0.02 else None,
                     "breakout_level": round(price / (1 + dh), 2) if dh < -0.02 else None,
                 })
