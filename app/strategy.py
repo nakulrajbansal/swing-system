@@ -30,6 +30,41 @@ BASE_WEIGHTS = {
 }
 
 
+# Hand-built weight variants the nightly tuner chooses between: each leans the
+# screen toward a different market personality. Four candidates keeps the
+# in-sample selection bias mild.
+WEIGHT_PRESETS: dict[str, dict] = {
+    "base": dict(BASE_WEIGHTS),
+    "timing": {**BASE_WEIGHTS, "timing": 0.9, "accel": 0.9, "near_high": 0.10},
+    "discovery": {**BASE_WEIGHTS, "accel": 1.1, "volume": 0.6,
+                  "earnings_gap": 1.0, "rs": 1.5},
+    "defensive": {**BASE_WEIGHTS, "trend": 0.7, "rs": 2.3, "mom3": 0.3,
+                  "timing": 0.7, "near_high": 0.35},
+}
+
+
+def select_preset(closes, metrics_fn, top_k: int = 5, hold_days: int = 10,
+                  periods: int = 6) -> tuple[str, dict, dict]:
+    """Holly-style nightly self-tuning: walk-forward the trailing `periods`
+    hold-windows for every preset and return the one currently winning
+    (name, weights, scoreboard). In-sample selection across four candidates —
+    advisory by design; callers disclose it in the log."""
+    need = 215 + (periods + 1) * hold_days
+    cl = closes.iloc[-need:] if len(closes) > need else closes
+    board: dict[str, dict] = {}
+    for name, w in WEIGHT_PRESETS.items():
+        res = walk_forward_backtest(cl, metrics_fn, w, top_k=top_k,
+                                    hold_days=hold_days, warmup=210)
+        board[name] = {"total": float(res.get("strategy_total_return_pct", 0.0) or 0.0)
+                       if not res.get("error") else float("-inf"),
+                       "sharpe": float(res.get("strategy_sharpe", 0.0) or 0.0)
+                       if not res.get("error") else 0.0}
+    if all(v["total"] == float("-inf") for v in board.values()):
+        return "base", dict(WEIGHT_PRESETS["base"]), board
+    best = max(board, key=lambda nm: (board[nm]["total"], board[nm]["sharpe"]))
+    return best, dict(WEIGHT_PRESETS[best]), board
+
+
 def _clamp(x, lo, hi):
     return max(lo, min(hi, x))
 
@@ -78,11 +113,13 @@ def sector_strength(closes: pd.DataFrame, sector_etfs: dict[str, str],
     return out
 
 
-def factor_weights(regime: dict | None = None, memory=None) -> dict:
+def factor_weights(regime: dict | None = None, memory=None,
+                   base: dict | None = None) -> dict:
     """Adapt the base weights to (a) the market regime and (b) what the desk's own
-    recent realized trades say is working. Advisory/heuristic; never changes risk
-    limits."""
-    w = dict(BASE_WEIGHTS)
+    recent realized trades say is working. `base` lets the nightly preset tuner
+    supply its winning preset as the starting point. Advisory/heuristic; never
+    changes risk limits."""
+    w = dict(base or BASE_WEIGHTS)
     risk_off = bool(regime) and regime.get("available") and not regime.get("above_200dma")
     if risk_off:
         # In a downtrend, trust trend/momentum chasing less; keep PEAD.

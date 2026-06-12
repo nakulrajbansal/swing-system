@@ -645,7 +645,7 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
                 from harness.data.loader import fetch_closes_batch
                 start = (datetime.date.today()
                          - datetime.timedelta(days=120)).isoformat()
-                closes = fetch_closes_batch(due, start, emit=lambda s: None)
+                closes = fetch_closes_batch(due + ["SPY"], start, emit=lambda s: None)
                 ev = reco_ledger.evaluate(closes, today, mem)
                 if ev["evaluated"]:
                     log(f"\n[ledger] scored {ev['evaluated']} matured "
@@ -1276,10 +1276,13 @@ def _build_ticker_store(cfg: AppConfig, ticker: str, emit: Emit):
     if store.read_table("fundamentals").empty:
         try:
             emit(f"[data] fetching fundamentals for {ticker} ...")
-            from harness.data.loader import available_at_for_session
+            from harness.data.loader import (available_at_for_session,
+                                             fetch_options_positioning)
             last = pd.to_datetime(store.read_table("prices")["date"]).max()
             fund = fetch_fundamentals_yahoo(ticker, available_at=available_at_for_session(last))
             if not fund.empty:
+                for k_, v_ in fetch_options_positioning(ticker).items():
+                    fund[k_] = v_
                 store.write_fundamentals(fund)
         except Exception as exc:
             emit(f"[data] fundamentals skipped: {exc}")
@@ -1541,6 +1544,8 @@ def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
         rr = f"{abs((tg - e) / (e - s)):.1f}" if (e and s and tg and e != s) else "?"
         _h("TRADE PLAN (advisory)")
         log(f"    entry ~${e}   stop ${s} ({sp})   target ${tg} ({tp})   R/R {rr}:1")
+        if rec.get("p_win_label"):
+            log(f"    win probability: {rec['p_win_label']}")
         if rec.get("suggested_entry"):
             log(f"    PM advises WAITING for a pullback to ~${rec['suggested_entry']} "
                 "rather than chasing the current price")
@@ -1757,6 +1762,13 @@ def _analyze_symbol(cfg: AppConfig, sym: str, client, real_llm: bool, mem, log: 
             # What the account could actually buy (caps the GUI ticket default).
             if buying_power is not None and ref > 0:
                 rec["affordable_qty"] = int(buying_power // ref)
+            # Conviction -> evidence-based win probability (the desk's own record).
+            from app import reco_ledger as _rl
+            from system.reflection.calibration import (calibrated_probability,
+                                                       calibration_table, describe)
+            table = calibration_table(_rl.load())
+            rec["p_win"] = calibrated_probability(rec["conviction"], table)
+            rec["p_win_label"] = describe(rec["p_win"], table)
     _analysis_summary(log, sym, transcript.get("evidence", {}), transcript, rec, equity)
     conv = float(pm.get("final_conviction", 0) or 0)
     return rec, pm.get("action", "pass"), pm.get("decisive_factor", ""), conv
@@ -1860,7 +1872,31 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
             if mem is not None:
                 _run_curator(mem, client, log)
         regime0 = market_regime(closes)
-        weights = strategy.factor_weights(regime0, mem)
+        # Nightly self-tuning: pick the weight preset currently winning a
+        # trailing walk-forward, then stack regime/memory adaptation on top.
+        preset_base = None
+        if getattr(cfg, "self_tune_weights", True):
+            import json as _json
+            from app.screen import _metrics as _met
+            pcache = (CONFIG_DIR / "data_store" /
+                      f"preset_{today.isoformat()}_{idx_key}.json")
+            try:
+                if pcache.exists():
+                    sel = _json.loads(pcache.read_text(encoding="utf-8"))
+                else:
+                    name, _w, board = strategy.select_preset(closes, _met)
+                    sel = {"name": name, "board": board}
+                    pcache.write_text(_json.dumps(sel), encoding="utf-8")
+                preset_base = strategy.WEIGHT_PRESETS.get(sel["name"])
+                if sel["name"] != "base" and preset_base:
+                    b = sel["board"]
+                    log(f"[tuner] weight preset '{sel['name']}' leads the trailing "
+                        f"walk-forward ({b[sel['name']]['total']:+.1f}% vs base "
+                        f"{b['base']['total']:+.1f}%) - using it today "
+                        "(in-sample selection, advisory).")
+            except Exception as exc:
+                log(f"[tuner] preset selection skipped ({type(exc).__name__}: {exc}).")
+        weights = strategy.factor_weights(regime0, mem, base=preset_base)
         ranked, regime = prescreen(closes, top=max(15, int(cfg.screen_top_k) * 3),
                                    weights=weights, sector_etfs=SECTOR_ETFS,
                                    sector_of=sec_of_map,
@@ -1971,7 +2007,8 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
         if not recs:
             log("No BUY among the shortlist (the agents passed on all of them).")
         for r in sorted(recs, key=lambda x: x["conviction"], reverse=True):
-            log(f"\n  RECOMMEND BUY {r['symbol']}  (conviction {r['conviction']}, "
+            pw = f", P(win) {r['p_win'] * 100:.0f}%" if r.get("p_win") else ""
+            log(f"\n  RECOMMEND BUY {r['symbol']}  (conviction {r['conviction']}{pw}, "
                 f"{r.get('sector', '?')})")
             pb = (f"   << PM: wait for a pullback to ~{r['suggested_entry']}"
                   if r.get("suggested_entry") else "")

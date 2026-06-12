@@ -368,6 +368,10 @@ def fetch_fundamentals_yahoo(symbol: str, available_at: pd.Timestamp | None = No
         "total_revenue": g("totalRevenue"),
         "market_cap": g("marketCap"),
         "held_percent_insiders": g("heldPercentInsiders"),
+        # Positioning proxies: where money is already committed against/for
+        # the name (free approximations of institutional-flow data).
+        "short_pct_float": g("shortPercentOfFloat"),
+        "short_ratio": g("shortRatio"),
         "target_mean_price": g("targetMeanPrice"),
         "recommendation": g("recommendationKey"),
         "sector": g("sector"),
@@ -472,6 +476,29 @@ def fetch_fundamental_history(symbol: str, cik: str, user_agent: str,
     resp = requests.get(url, headers={"User-Agent": user_agent}, timeout=30)
     resp.raise_for_status()
     return parse_companyfacts(resp.json(), symbol, quarters=quarters)
+
+
+def fetch_options_positioning(symbol: str) -> dict:
+    """Nearest-expiry options posture from the free chain: call/put volume and
+    open-interest ratios. A rough proxy for where speculative money leans —
+    deep-dive names only (one extra request per symbol). Empty on failure."""
+    import yfinance as yf  # lazy
+
+    try:
+        tk = yf.Ticker(symbol)
+        expiries = tk.options
+        if not expiries:
+            return {}
+        ch = tk.option_chain(expiries[0])
+        cv = float(ch.calls["volume"].fillna(0).sum())
+        pv = float(ch.puts["volume"].fillna(0).sum())
+        coi = float(ch.calls["openInterest"].fillna(0).sum())
+        poi = float(ch.puts["openInterest"].fillna(0).sum())
+        return {"opt_expiry": str(expiries[0]),
+                "opt_call_put_vol_ratio": round(cv / pv, 2) if pv else None,
+                "opt_call_put_oi_ratio": round(coi / poi, 2) if poi else None}
+    except Exception:
+        return {}
 
 
 def fetch_news_yahoo(symbol: str, limit: int = 10) -> pd.DataFrame:

@@ -149,6 +149,15 @@ def evaluate(closes: pd.DataFrame, today: str, memory=None, path=None) -> dict:
         r["return_pct"] = round(pnl_pct, 2)
         r["outcome"] = reason
         r["evaluated_on"] = today
+        # Market-relative result over the same window (when SPY is in frame):
+        # beating cash and beating the market are different claims.
+        if "SPY" in closes.columns:
+            spy = closes["SPY"].dropna()
+            s0 = _price_on_or_after(spy, r["date"])
+            s1 = _price_on_or_after(spy, r["exit_by"]) or (float(spy.iloc[-1])
+                                                           if len(spy) else None)
+            if s0 and s1 and s0 > 0:
+                r["excess_pct"] = round(pnl_pct - (s1 / s0 - 1) * 100.0, 2)
         evaluated += 1
         wins += 1 if pnl_pct > 0 else 0
         rets.append(pnl_pct)

@@ -477,6 +477,10 @@ class SwingApp:
         self.vars["place_orders"] = tk.BooleanVar(value=self.cfg.place_orders)
         ttk.Checkbutton(opts, text="Place approved orders on Alpaca (live deliberation)",
                         variable=self.vars["place_orders"]).pack(anchor="w", padx=8, pady=2)
+        self.vars["self_tune_weights"] = tk.BooleanVar(value=self.cfg.self_tune_weights)
+        ttk.Checkbutton(opts, text="Self-tune screen weights nightly (trailing "
+                                   "walk-forward picks the preset)",
+                        variable=self.vars["self_tune_weights"]).pack(anchor="w", padx=8, pady=2)
         self.vars["learn_from_runs"] = tk.BooleanVar(value=self.cfg.learn_from_runs)
         ttk.Checkbutton(opts, text="Learn from runs (reflect on closed trades + recall lessons)",
                         variable=self.vars["learn_from_runs"]).pack(anchor="w", padx=8, pady=2)
@@ -703,6 +707,7 @@ class SwingApp:
         d["place_orders"] = bool(self.vars["place_orders"].get())
         d["enable_live_trading"] = bool(self.vars["enable_live_trading"].get())
         d["learn_from_runs"] = bool(self.vars["learn_from_runs"].get())
+        d["self_tune_weights"] = bool(self.vars["self_tune_weights"].get())
         d["auto_approve_lessons"] = bool(self.vars["auto_approve_lessons"].get())
         return AppConfig(**d)
 
@@ -725,8 +730,8 @@ class SwingApp:
             anchor="w", padx=2, pady=(0, 6))
         grid = ttk.Frame(self.orders_body, style="Card.TFrame")
         grid.pack(fill="x")
-        for c, head in enumerate(("symbol", "conv", "ref price", "qty", "type",
-                                  "limit $", "bracket", "")):
+        for c, head in enumerate(("symbol", "conv", "P(win)", "ref price", "qty",
+                                  "type", "limit $", "bracket", "")):
             ttk.Label(grid, text=head, style="CardMuted.TLabel").grid(
                 row=0, column=c, sticky="w", padx=(0, 10), pady=(0, 3))
         for i, r in enumerate(recs, start=1):
@@ -750,28 +755,32 @@ class SwingApp:
             ttk.Label(grid, text=f"{r.get('conviction', 0):.2f}",
                       style="CardMuted.TLabel").grid(row=i, column=1, sticky="w",
                                                      padx=(0, 10), pady=5)
+            pwin = r.get("p_win")
+            ttk.Label(grid, text=f"{pwin * 100:.0f}%" if pwin else "-",
+                      style="CardMuted.TLabel").grid(row=i, column=2, sticky="w",
+                                                     padx=(0, 10), pady=5)
             ttk.Label(grid, text=f"~${entry}", style="CardMuted.TLabel").grid(
-                row=i, column=2, sticky="w", padx=(0, 10), pady=5)
+                row=i, column=3, sticky="w", padx=(0, 10), pady=5)
             qv = tk.StringVar(value=str(int(default_qty)))
             ttk.Entry(grid, textvariable=qv, width=6).grid(
-                row=i, column=3, sticky="w", padx=(0, 10), pady=5)
+                row=i, column=4, sticky="w", padx=(0, 10), pady=5)
             tv = tk.StringVar(value="limit")
             ttk.Combobox(grid, textvariable=tv, values=["market", "limit"],
                          state="readonly", width=7).grid(
-                row=i, column=4, sticky="w", padx=(0, 10), pady=5)
+                row=i, column=5, sticky="w", padx=(0, 10), pady=5)
             # The PM's pullback entry (an 'adjust' decision) pre-fills the limit:
             # the most actionable number in the deliberation, not the last close.
             pv = tk.StringVar(value=str(r.get("suggested_entry") or entry))
             ttk.Entry(grid, textvariable=pv, width=9).grid(
-                row=i, column=5, sticky="w", padx=(0, 10), pady=5)
+                row=i, column=6, sticky="w", padx=(0, 10), pady=5)
             bv = tk.BooleanVar(value=bool(stop and target))
             ttk.Checkbutton(grid, text="stop/target", variable=bv).grid(
-                row=i, column=6, sticky="w", padx=(0, 14), pady=5)
+                row=i, column=7, sticky="w", padx=(0, 14), pady=5)
             ttk.Button(grid, text="Place order", style="Accent.TButton",
                        cursor="hand2", takefocus=False,
                        command=lambda r=r, qv=qv, tv=tv, pv=pv, bv=bv:
                        self._place_order(r, qv, tv, pv, bv)).grid(
-                row=i, column=7, sticky="w", pady=5)
+                row=i, column=8, sticky="w", pady=5)
         notes = []
         if any(r.get("hidden_gem") for r in recs):
             notes.append("◆ = hidden-gem pick (early acceleration)")

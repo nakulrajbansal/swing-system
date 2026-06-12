@@ -61,6 +61,7 @@ class AppConfig:
     enable_live_trading: bool = False    # extra gate: must be on to use env="live"
     learn_from_runs: bool = True         # reflect on closed trades + recall lessons across runs
     auto_approve_lessons: bool = True    # new lessons are active immediately (else review first)
+    self_tune_weights: bool = True       # nightly preset tuner steers the screen's weights
 
     # -- persistence -------------------------------------------------------
     @classmethod

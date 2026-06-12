@@ -271,6 +271,17 @@ def _fundamentals(view, symbol: str) -> dict:
                            "them are period effects, not data errors"),
         },
         "trajectory": _trajectory(view, symbol),
+        # Positioning: where money is already committed for/against the name.
+        # Two-sided by nature: heavy short interest is both a bear thesis and
+        # squeeze fuel — context decides which.
+        "positioning": {
+            "short_pct_of_float": round(_f(r, "short_pct_float") * 100, 1)
+            if _f(r, "short_pct_float") is not None else None,
+            "short_days_to_cover": _f(r, "short_ratio"),
+            "options_call_put_volume_ratio": _f(r, "opt_call_put_vol_ratio"),
+            "options_call_put_oi_ratio": _f(r, "opt_call_put_oi_ratio"),
+            "options_expiry_sampled": r.get("opt_expiry"),
+        },
         "next_earnings_date": r.get("next_earnings_date"),
         "analyst_recommendation": r.get("recommendation"),
     }
