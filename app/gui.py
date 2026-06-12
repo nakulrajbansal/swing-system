@@ -21,7 +21,7 @@ from app.runner import (RunStopped, check_alpaca, clear_stop, place_manual_order
                         request_stop, run_curation, run_momentum_trade,
                         run_portfolio_status, run_position_review,
                         run_recommendations, run_reddit_scan, run_screen,
-                        run_strategy_backtest, run_watch)
+                        run_strategy_backtest, run_trade_history, run_watch)
 
 # (field, label, kind)  kind: "secret" | "text" | "int" | "float" | "choice"
 _FIELDS = [
@@ -685,8 +685,12 @@ class SwingApp:
                                      highlightthickness=0, bd=0)
         self.perf_canvas.pack(fill="x")
         card = self._card(parent, "Scorecard",
-                          "calibration, lens cohorts, recent closed calls",
+                          "calibration, lens cohorts, closed calls, executed trades",
                           expand=True)
+        pbar = ttk.Frame(card, style="Card.TFrame")
+        pbar.pack(fill="x", pady=(0, 6))
+        self._mkbtn(pbar, "Refresh trade history",
+                    lambda: self._start(run_trade_history)).pack(side="right")
         self.perf_out = scrolledtext.ScrolledText(
             card, wrap="word", font=self.f_mono, bg=CONSOLE_BG, fg=CONSOLE_FG,
             relief="flat", bd=0, padx=14, pady=12, spacing1=2, spacing3=2)
@@ -773,6 +777,28 @@ class SwingApp:
             n_open = sum(1 for r in rows if r.get("status") == "open")
             lines.append(f"No scored calls yet - {n_open} open recommendation(s) "
                          "awaiting their exit windows.")
+        # ---- executed trades (broker fills, cached by Refresh) ----
+        import json as _json
+
+        from app.runner import TRADES_CACHE
+        lines.append("")
+        lines.append("EXECUTED TRADES (your account's actual fills)")
+        try:
+            trades = (_json.loads(TRADES_CACHE.read_text(encoding="utf-8"))
+                      if TRADES_CACHE.exists() else [])
+        except Exception:
+            trades = []
+        if trades:
+            lines.append("  when              side  qty    symbol   price")
+            for t in trades[-40:]:
+                lines.append(f"  {t['when']:<17} {t['side']:<5} {t['qty']:>5.0f}  "
+                             f"{t['symbol']:<7} {t['price']:>9.2f}")
+            if len(trades) > 40:
+                lines.append(f"  ... ({len(trades) - 40} older fill(s) - see the "
+                             "console after Refresh trade history)")
+        else:
+            lines.append("  press 'Refresh trade history' to pull your fills "
+                         "from the broker.")
         self.perf_out.configure(state="normal")
         self.perf_out.delete("1.0", "end")
         self.perf_out.insert("end", "\n".join(lines) + "\n")

@@ -270,6 +270,13 @@ class AlpacaBroker(Broker):
                             "stop_loss": {"stop_price": round(float(stop), 2)}})
         return self._req("POST", "/v2/orders", payload)
 
+    def fills(self, limit: int = 100) -> list[dict]:
+        """Recent FILL activities (both sides), newest first — the account's
+        actual trade history."""
+        out = self._req("GET",
+                        f"/v2/account/activities?activity_types=FILL&page_size={int(limit)}")
+        return out or []
+
     def submit_exit_orders(self, symbol, qty, stop=None, target=None):
         """Protective exit orders for an EXISTING long position: an OCO pair
         (take-profit limit + stop-loss) when both levels exist, else a single

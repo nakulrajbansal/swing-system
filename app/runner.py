@@ -453,6 +453,49 @@ def run_curation(cfg: AppConfig, emit: Emit) -> dict:
     return rep
 
 
+TRADES_CACHE = CONFIG_DIR / "trades.json"
+
+
+def run_trade_history(cfg: AppConfig, emit: Emit) -> dict:
+    """Every trade actually executed in the account (broker FILL activities),
+    printed chronologically and cached for the Performance page. Read-only."""
+    import json
+
+    cfg.apply_to_env()
+    with _run_logger(emit, "trades") as (log, _path):
+        if not (cfg.alpaca_key_id and cfg.alpaca_secret):
+            log("[error] Alpaca key id + secret required (Settings).")
+            return {"fills": 0}
+        try:
+            fills = _alpaca_broker(cfg).fills(200)
+        except Exception as exc:
+            log(f"[error] could not read trade history: {exc}")
+            return {"fills": 0}
+        if not fills:
+            log("[trades] no executed trades yet.")
+            TRADES_CACHE.write_text("[]", encoding="utf-8")
+            return {"fills": 0}
+        rows = []
+        for f in fills:
+            rows.append({"when": str(f.get("transaction_time", ""))[:16].replace("T", " "),
+                         "side": str(f.get("side", "?")).upper(),
+                         "qty": float(f.get("qty", 0) or 0),
+                         "symbol": f.get("symbol", "?"),
+                         "price": float(f.get("price", 0) or 0)})
+        rows.sort(key=lambda r: r["when"])
+        log(f"[trades] {len(rows)} fill(s) on the {cfg.alpaca_env.upper()} account "
+            "(oldest first):")
+        log("  when              side  qty    symbol   price")
+        for r in rows:
+            log(f"  {r['when']:<17} {r['side']:<5} {r['qty']:>5.0f}  "
+                f"{r['symbol']:<7} {r['price']:>9.2f}")
+        TRADES_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        TRADES_CACHE.write_text(json.dumps(rows, indent=1), encoding="utf-8")
+        log(f"\n[done] trade history cached - the Performance page shows it under "
+            "EXECUTED TRADES.")
+    return {"fills": len(rows)}
+
+
 def _toast(title: str, message: str) -> bool:
     """Best-effort Windows toast notification (no extra dependencies)."""
     import subprocess
@@ -704,7 +747,8 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
                         reco_ledger.mark_closed(sym, cur, today, "guardian",
                                                 entry_price=avg, memory=mem)
                         out["guardian_exits"].append(sym)
-                        log("  [exit] closed at market (place_orders is ON).")
+                        log(f"  [exit] closed at market ({plpc:+.1f}% realized) - "
+                            "scored and fed to learning (place_orders is ON).")
                     except Exception as exc:
                         log(f"  [error] close failed: {exc}")
                 else:
@@ -720,6 +764,45 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
                     log(f"  [manage] up {r_mult:.1f}R - consider raising the stop "
                         f"to breakeven (~{avg:.2f}): with risk removed, the "
                         "winner can run on the market's money.")
+
+        # CLOSED AT THE BROKER: an executed plan whose position is gone was
+        # sold by its resting stop/target (or manually). Score it NOW from the
+        # actual fills — learning must not wait for the exit date.
+        held_syms = {p.get("symbol") for p in raw}
+        gone = [r for r in reco_ledger.load()
+                if r.get("status") == "open" and r.get("executed")
+                and r["symbol"] not in held_syms
+                and r["symbol"] not in momentum_syms]
+        if gone:
+            sells: dict[str, dict] = {}
+            buys: dict[str, dict] = {}
+            try:
+                for f in broker.fills(200):          # newest first
+                    side = str(f.get("side", ""))
+                    sym_f = f.get("symbol")
+                    if side == "sell":
+                        sells.setdefault(sym_f, f)
+                    elif side == "buy":
+                        buys.setdefault(sym_f, f)
+            except Exception as exc:
+                log(f"[fills] could not read trade history ({exc}).")
+            for r in gone:
+                f = sells.get(r["symbol"])
+                if not f:
+                    continue
+                px = float(f.get("price") or 0)
+                entry_f = buys.get(r["symbol"], {})
+                entry_px = float(entry_f.get("price") or r.get("entry") or 0)
+                when = str(f.get("transaction_time", today))[:10] or today
+                reason = _infer_exit_reason(px, r.get("stop"), r.get("target"))
+                closed = reco_ledger.mark_closed(r["symbol"], px, when, reason,
+                                                 entry_price=entry_px or None,
+                                                 memory=mem)
+                if closed:
+                    log(f"\n[closed] {r['symbol']} was sold at the broker: "
+                        f"{reason.upper()} fill @ {px:.2f} on {when} "
+                        f"({closed['return_pct']:+.1f}% realized) - scored and "
+                        "fed to learning.")
 
         # Grade matured recommendations too (advice learning must not depend on
         # a screen happening to run): fetch closes for just the due symbols.
@@ -1103,6 +1186,26 @@ def _sent(text, n: int = 900) -> str:
 
 def _step_out(transcript: dict, agent: str) -> dict:
     return next((s["output"] for s in transcript.get("steps", []) if s["agent"] == agent), {})
+
+
+def _infer_exit_reason(exit_price, stop, target) -> str:
+    """Why a broker-side sell most plausibly fired: proximity to the plan's
+    levels (within 1.5%) names the trigger; anything else reads as manual."""
+    try:
+        px = float(exit_price)
+    except (TypeError, ValueError):
+        return "manual"
+    try:
+        if target and abs(px / float(target) - 1) <= 0.015:
+            return "target"
+    except (TypeError, ValueError, ZeroDivisionError):
+        pass
+    try:
+        if stop and px <= float(stop) * 1.015:
+            return "stop"
+    except (TypeError, ValueError, ZeroDivisionError):
+        pass
+    return "manual"
 
 
 def _r_multiple(entry_price, stop, current) -> float:

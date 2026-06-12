@@ -116,6 +116,32 @@ def test_pm_weighs_rejoinder_outcome():
     assert conceded.final_conviction > stands.final_conviction
 
 
+def test_infer_exit_reason_names_the_trigger():
+    from app.runner import _infer_exit_reason
+
+    # AMAT-style plan: stop 443.79, target 588.92.
+    assert _infer_exit_reason(588.10, 443.79, 588.92) == "target"   # ~target fill
+    assert _infer_exit_reason(443.00, 443.79, 588.92) == "stop"     # stopped out
+    assert _infer_exit_reason(440.00, 443.79, 588.92) == "stop"     # gapped through
+    assert _infer_exit_reason(520.00, 443.79, 588.92) == "manual"   # neither level
+    assert _infer_exit_reason(None, 443.79, 588.92) == "manual"
+    assert _infer_exit_reason(100.0, None, None) == "manual"
+
+
+def test_broker_fills_uses_activities_endpoint(monkeypatch):
+    from system.execution.broker import AlpacaBroker
+
+    b = AlpacaBroker("key", "secret", env="paper")
+    seen = {}
+    monkeypatch.setattr(b, "_req", lambda m, p, payload=None:
+                        (seen.update(method=m, path=p) or
+                         [{"symbol": "AMAT", "side": "sell", "price": "588.9"}]))
+    fills = b.fills(200)
+    assert seen["method"] == "GET"
+    assert "activities?activity_types=FILL" in seen["path"]
+    assert fills[0]["symbol"] == "AMAT"
+
+
 def test_executed_link_and_full_open_list(tmp_path):
     from app import reco_ledger
 
