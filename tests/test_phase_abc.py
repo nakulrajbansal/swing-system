@@ -116,6 +116,39 @@ def test_pm_weighs_rejoinder_outcome():
     assert conceded.final_conviction > stands.final_conviction
 
 
+def test_watchlist_lifecycle_and_triggers(tmp_path):
+    from app import watchlist as wl
+
+    p = tmp_path / "watch.json"
+    n = wl.add([{"symbol": "SITM", "reason": "PM pullback", "pullback_target": 630.0},
+                {"symbol": "ARCB", "reason": "WATCH tier", "breakout_level": 150.0},
+                {"symbol": "NOLEVELS", "reason": "ignored"}],     # no triggers: skipped
+               "2026-06-11", path=p)
+    assert n == 2
+    assert len(wl.active("2026-06-12", path=p)) == 2
+    assert wl.active("2026-08-01", path=p) == []                  # expired + pruned
+
+    wl.add([{"symbol": "SITM", "reason": "PM pullback", "pullback_target": 630.0},
+            {"symbol": "ARCB", "reason": "WATCH tier", "breakout_level": 150.0}],
+           "2026-06-11", path=p)
+    idx = pd.date_range("2026-05-01", periods=30, freq="B")
+    closes = pd.DataFrame({"SITM": 660.0, "ARCB": 140.0}, index=idx)
+    closes.loc[idx[-1], "SITM"] = 633.0                           # entered the window
+    vols = pd.DataFrame(1_000_000.0, index=idx, columns=closes.columns)
+    hits = wl.watch_hits(wl.active("2026-06-12", path=p), closes, vols)
+    assert [h["kind"] for h in hits] == ["pullback"]
+    # Breakout requires the level AND unusual volume.
+    closes.loc[idx[-1], "ARCB"] = 151.0
+    vols.loc[idx[-1], "ARCB"] = 900_000.0                         # rvol < 1.5: no hit
+    hits = wl.watch_hits(wl.active("2026-06-12", path=p), closes, vols)
+    assert not any(h["symbol"] == "ARCB" for h in hits)
+    vols.loc[idx[-1], "ARCB"] = 2_000_000.0                       # rvol 2.0: hit
+    hits = wl.watch_hits(wl.active("2026-06-12", path=p), closes, vols)
+    assert any(h["symbol"] == "ARCB" and h["kind"] == "breakout" for h in hits)
+    wl.remove({"ARCB"}, path=p)
+    assert [it["symbol"] for it in wl.active("2026-06-12", path=p)] == ["SITM"]
+
+
 def test_factor_weights_stacks_on_a_preset_base():
     from app.strategy import WEIGHT_PRESETS, factor_weights
 

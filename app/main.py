@@ -115,6 +115,9 @@ def main(argv: list[str] | None = None) -> int:
         rc1 = _headless(run_position_review, "review")
         rc2 = _headless(run_screen, "screen")
         return rc1 or rc2
+    if "--watch" in argv:
+        from app.runner import run_watch
+        return _headless(run_watch, "watch")
     from app.gui import launch          # imported lazily so --selftest needs no display
     launch()
     return 0

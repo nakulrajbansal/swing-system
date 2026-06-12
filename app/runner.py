@@ -447,6 +447,79 @@ def run_curation(cfg: AppConfig, emit: Emit) -> dict:
     return rep
 
 
+def _toast(title: str, message: str) -> bool:
+    """Best-effort Windows toast notification (no extra dependencies)."""
+    import subprocess
+    import sys as _sys
+    if _sys.platform != "win32":
+        return False
+    script = (
+        "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, "
+        "ContentType=WindowsRuntime] > $null;"
+        "$t=[Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent("
+        "[Windows.UI.Notifications.ToastTemplateType]::ToastText02);"
+        "$x=$t.GetElementsByTagName('text');"
+        f"$x.Item(0).AppendChild($t.CreateTextNode('{title}')) > $null;"
+        f"$x.Item(1).AppendChild($t.CreateTextNode('{message}')) > $null;"
+        "$n=[Windows.UI.Notifications.ToastNotification]::new($t);"
+        "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("
+        "'Swing System').Show($n)")
+    try:
+        subprocess.run(["powershell", "-NoProfile", "-Command", script],
+                       capture_output=True, timeout=15)
+        return True
+    except Exception:
+        return False
+
+
+def run_watch(cfg: AppConfig, emit: Emit) -> dict:
+    """Check the watchlist for triggered entries: a watched name reaching its
+    pullback window, or breaking out on unusual volume. Fires a Windows toast
+    per hit; never places orders. Cheap (only the watched symbols are fetched)
+    — schedule it during market hours via the Automation card."""
+    import datetime
+
+    from app import watchlist as wl
+    from harness.data.loader import fetch_closes_volumes_batch
+
+    cfg.apply_to_env()
+    today = datetime.date.today().isoformat()
+    with _run_logger(emit, "watch") as (log, _path):
+        items = wl.active(today)
+        if not items:
+            log("[watch] watchlist is empty - screens add WATCH-tier names and "
+                "PM pullback calls automatically.")
+            return {"hits": [], "watching": 0}
+        log(f"[watch] checking {len(items)} watched name(s): "
+            + ", ".join(it["symbol"] for it in items))
+        start = (datetime.date.today() - datetime.timedelta(days=60)).isoformat()
+        closes, volumes = fetch_closes_volumes_batch(
+            [it["symbol"] for it in items], start, emit=lambda s: None)
+        if closes.empty:
+            log("[error] no price data for the watchlist (network?).")
+            return {"hits": [], "watching": len(items)}
+        hits = wl.watch_hits(items, closes, volumes if not volumes.empty else None)
+        for h in hits:
+            if h["kind"] == "pullback":
+                msg = (f"{h['symbol']} entered its entry window: {h['price']} vs "
+                       f"pullback target {h['pullback_target']}")
+            else:
+                rv = f" on {h['rvol']}x volume" if h.get("rvol") else ""
+                msg = (f"{h['symbol']} broke out: {h['price']} through "
+                       f"{h['breakout_level']}{rv}")
+            log(f"[ALERT] {msg}  -  reason on watch: {_sent(h.get('reason', ''), 160)}")
+            _toast("Swing System - entry trigger", msg)
+        if not hits:
+            log("[watch] no triggers - all watched names are still waiting.")
+        else:
+            # A triggered name has served its purpose: hand it to a deep-dive.
+            wl.remove({h["symbol"] for h in hits})
+            log(f"\n[watch] {len(hits)} trigger(s). These names left the watchlist - "
+                "run a deep-dive to re-evaluate them at TODAY'S price before acting.")
+        log(f"[done] watch check complete ({len(items)} watched).")
+    return {"hits": hits, "watching": len(items)}
+
+
 def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
     """Manage the OPEN side of the book — the other half of the trade lifecycle.
 
@@ -2061,6 +2134,38 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
             if n:
                 log(f"\n[ledger] saved {n} recommendation(s) to track forward "
                     "performance (scored automatically after the hold window).")
+
+        # WATCHLIST: names whose time hasn't come — WATCH-tier ideas and PM
+        # pullback calls persist with trigger levels for the watch check.
+        from app import watchlist as wl
+        watch_items = []
+        by_sym = {m["symbol"]: m for m in top}
+        for c in considered:
+            m = by_sym.get(c["symbol"], {})
+            price = m.get("price")
+            if (c["action"] not in {"enter", "adjust"}
+                    and 0.40 <= c["conviction"] < 0.55 and price):
+                ext = m.get("ext20", 0.0) or 0.0
+                dh = m.get("dist_high", 0.0) or 0.0
+                watch_items.append({
+                    "symbol": c["symbol"], "sector": m.get("sector"),
+                    "reason": f"WATCH tier (conviction {c['conviction']:.2f}): "
+                              + _sent(c.get("decisive", ""), 140),
+                    "pullback_target": round(price / (1 + ext), 2) if ext > 0.02 else None,
+                    "breakout_level": round(price / (1 + dh), 2) if dh < -0.02 else None,
+                })
+        for r in recs:
+            if r.get("suggested_entry"):
+                watch_items.append({
+                    "symbol": r["symbol"], "sector": r.get("sector"),
+                    "reason": f"PM advised waiting for a pullback to "
+                              f"~{r['suggested_entry']}",
+                    "pullback_target": r["suggested_entry"],
+                })
+        n_watch = wl.add(watch_items, today.isoformat()) if watch_items else 0
+        if n_watch:
+            log(f"[watchlist] tracking {n_watch} name(s) for entry triggers - "
+                "the watch check alerts when price reaches them.")
         if real_llm:
             log(f"\n[cost] LLM calls this screen: {getattr(client, 'calls', 0)}")
         _save_memory(cfg, mem, log, _memb)

@@ -20,7 +20,7 @@ from app.runner import (RunStopped, check_alpaca, clear_stop, place_manual_order
                         request_stop, run_curation, run_momentum_trade,
                         run_portfolio_status, run_position_review,
                         run_recommendations, run_reddit_scan, run_screen,
-                        run_strategy_backtest)
+                        run_strategy_backtest, run_watch)
 
 # (field, label, kind)  kind: "secret" | "text" | "int" | "float" | "choice"
 _FIELDS = [
@@ -348,8 +348,8 @@ class SwingApp:
         self._nav_btns: dict[str, _NavItem] = {}
         navwrap = ttk.Frame(side, style="Side.TFrame")
         navwrap.pack(fill="x", pady=(22, 0))
-        for key, label in (("run", "Desk"), ("lessons", "Learning"),
-                           ("settings", "Settings")):
+        for key, label in (("run", "Desk"), ("performance", "Performance"),
+                           ("lessons", "Learning"), ("settings", "Settings")):
             item = _NavItem(navwrap, label, self.f_nav, lambda k=key: self._show(k))
             item.pack(fill="x")
             self._nav_btns[key] = item
@@ -375,6 +375,7 @@ class SwingApp:
         self._pages: dict[str, ttk.Frame] = {}
         for key, title, sub in (
             ("run", "Desk", "Screen the market, analyze a name, run the agents"),
+            ("performance", "Performance", "How the desk's calls have actually done"),
             ("lessons", "Learning", "What the desk has learned from closed trades"),
             ("settings", "Settings", "Credentials, data, strategy parameters")):
             page = ttk.Frame(self._content)
@@ -393,6 +394,7 @@ class SwingApp:
             page._body = body
 
         self._build_run(self._pages["run"]._body)
+        self._build_performance(self._pages["performance"]._body)
         self._build_lessons(self._pages["lessons"]._body)
         self._build_config(self._pages["settings"]._body)
         self._refresh_chips()
@@ -406,6 +408,8 @@ class SwingApp:
             item.set_active(k == key)
         if key == "lessons":
             self._refresh_lessons()
+        elif key == "performance":
+            self._refresh_performance()
 
     # -- shared building blocks ---------------------------------------------
     def _card(self, parent, title: str | None = None, subtitle: str | None = None,
@@ -504,11 +508,11 @@ class SwingApp:
         auto = self._card(body, "Automation",
                           "let the desk run itself on weekday afternoons")
         ttk.Label(auto, style="CardMuted.TLabel", wraplength=760, justify="left",
-                  text="The daily run reviews open positions (closing any held past "
-                       "their planned exit) and then screens your saved universe, "
-                       "feeding the learning ledger - all with your saved settings. "
-                       "Scheduled weekdays at 4:45 pm via Windows Task Scheduler.").pack(
-            anchor="w", pady=(0, 8))
+                  text="Two scheduled tasks (weekdays, Windows Task Scheduler): the "
+                       "daily run at 4:45 pm reviews open positions then screens your "
+                       "saved universe; the watchlist check at 12:30 + 3:30 pm fires "
+                       "a notification when a watched name reaches its entry "
+                       "trigger.").pack(anchor="w", pady=(0, 8))
         abar = ttk.Frame(auto, style="Card.TFrame")
         abar.pack(fill="x")
         ttk.Button(abar, text="Schedule daily run", style="TButton", cursor="hand2",
@@ -591,6 +595,16 @@ class SwingApp:
                  "tickets you can review and place individually.")
         self._orders_hint.pack(anchor="w")
 
+        # ---- watchlist: names waiting for their entry trigger ----
+        wb = self._card(parent, "Watchlist", "names waiting for their entry trigger")
+        wrow = ttk.Frame(wb, style="Card.TFrame")
+        wrow.pack(fill="x")
+        self.watch_label = ttk.Label(wrow, style="CardMuted.TLabel", justify="left")
+        self.watch_label.pack(side="left", fill="x", expand=True)
+        self._mkbtn(wrow, "Check triggers now",
+                    lambda: self._start(run_watch)).pack(side="right")
+        self._refresh_watchcard()
+
         # ---- output console with its own toolbar ----
         cons = self._card(parent, "Output", expand=True)
         tools = ttk.Frame(cons, style="Card.TFrame")
@@ -630,10 +644,131 @@ class SwingApp:
         key = self._SCREENS.get(self._screen_choice.get(), "sp500")
         self._start(run_screen, screen_index=key)
 
+    def _refresh_watchcard(self):
+        import datetime
+
+        from app import watchlist as wl
+        try:
+            items = wl.active(datetime.date.today().isoformat())
+        except Exception:
+            items = []
+        if not items:
+            text = ("empty - screens add WATCH-tier ideas and the PM's "
+                    "wait-for-pullback calls automatically.")
+        else:
+            parts = []
+            for it in items[:8]:
+                lvl = (f"dip to {it['pullback_target']}" if it.get("pullback_target")
+                       else f"break {it.get('breakout_level')}")
+                parts.append(f"{it['symbol']} ({lvl})")
+            text = (f"{len(items)} watched:   " + "    ".join(parts)
+                    + ("   …" if len(items) > 8 else ""))
+        self.watch_label.config(text=text)
+
     def _copy_output(self):
         text = self.out.get("1.0", "end-1c")
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
+
+    def _build_performance(self, parent):
+        curve = self._card(parent, "Equity curve",
+                           "cumulative return of scored recommendations, in order")
+        self.perf_canvas = tk.Canvas(curve, bg=CONSOLE_BG, height=170,
+                                     highlightthickness=0, bd=0)
+        self.perf_canvas.pack(fill="x")
+        card = self._card(parent, "Scorecard",
+                          "calibration, lens cohorts, recent closed calls",
+                          expand=True)
+        self.perf_out = scrolledtext.ScrolledText(
+            card, wrap="word", font=self.f_mono, bg=CONSOLE_BG, fg=CONSOLE_FG,
+            relief="flat", bd=0, padx=14, pady=12, spacing1=2, spacing3=2)
+        self.perf_out.pack(fill="both", expand=True)
+        self.perf_out.configure(state="disabled")
+        ttk.Frame(parent).pack(pady=5)
+
+    def _refresh_performance(self):
+        from app import reco_ledger
+        from system.reflection.calibration import calibration_table
+
+        rows = reco_ledger.load()
+        scored = sorted((r for r in rows if r.get("status") == "evaluated"
+                         and isinstance(r.get("return_pct"), (int, float))),
+                        key=lambda r: str(r.get("evaluated_on") or ""))
+        # ---- equity curve ----
+        c = self.perf_canvas
+        c.delete("all")
+        self.root.update_idletasks()
+        w = max(c.winfo_width(), 420)
+        h = 170
+        eq, v = [1.0], 1.0
+        for r in scored:
+            v *= 1 + float(r["return_pct"]) / 100.0
+            eq.append(v)
+        if len(eq) < 3:
+            c.create_text(w // 2, h // 2, fill=MUTED, font=self.f_sub,
+                          text="The curve starts once recommendations mature and "
+                               "are scored - check back after the first exits.")
+        else:
+            lo, hi = min(eq + [1.0]), max(eq + [1.0])
+            pad = (hi - lo) * 0.12 or 0.05
+            lo, hi = lo - pad, hi + pad
+
+            def xy(i, val):
+                return (16 + i * (w - 60) / (len(eq) - 1),
+                        h - 14 - (val - lo) * (h - 28) / (hi - lo))
+
+            y1 = xy(0, 1.0)[1]
+            c.create_line(16, y1, w - 44, y1, fill="#39414f", dash=(3, 4))
+            pts = [coord for i, val in enumerate(eq) for coord in xy(i, val)]
+            c.create_line(*pts, fill=ACCENT, width=2, smooth=False)
+            tot = (eq[-1] - 1) * 100
+            c.create_text(w - 40, xy(len(eq) - 1, eq[-1])[1], anchor="w",
+                          fill=OK if tot >= 0 else DANGER, font=self.f_sub,
+                          text=f"{tot:+.1f}%")
+        # ---- scorecard text ----
+        lines = []
+        if scored:
+            wins = sum(1 for r in scored if r["return_pct"] > 0)
+            avg = sum(r["return_pct"] for r in scored) / len(scored)
+            lines.append(f"SCORED CALLS  {len(scored)}   |   hit rate "
+                         f"{100 * wins / len(scored):.0f}%   |   avg {avg:+.2f}%")
+            exc = [r["excess_pct"] for r in scored
+                   if isinstance(r.get("excess_pct"), (int, float))]
+            if exc:
+                lines.append(f"vs SPY (same windows): avg excess "
+                             f"{sum(exc) / len(exc):+.2f}% over {len(exc)} calls")
+            lines.append("")
+            lines.append("CALIBRATION (trailing window)")
+            table = calibration_table(rows)
+            for b in table["bands"]:
+                rate = (f"{b['win_rate_pct']:.0f}%" if b["win_rate_pct"] is not None
+                        else "  -")
+                lines.append(f"  conviction {b['lo']:.2f}-{min(b['hi'], 1.0):.2f}: "
+                             f"n={b['n']:<3} realized {rate}")
+            lines.append("")
+            lines.append("LENS COHORTS")
+            for key, label in (("hidden_gem", "hidden-gem"), ("core", "core"),
+                               ("moat_bullish", "moat-bullish")):
+                co = reco_ledger.cohort_stats(rows).get(key, {})
+                if co.get("n"):
+                    lines.append(f"  {label:<12} n={co['n']:<3} hit "
+                                 f"{co['win_rate_pct']:.0f}%  avg "
+                                 f"{co['avg_return_pct']:+.2f}%")
+            lines.append("")
+            lines.append("RECENT CLOSED CALLS")
+            for r in scored[-10:][::-1]:
+                gem = " ◆" if r.get("hidden_gem") else ""
+                lines.append(f"  {r.get('evaluated_on', '?')}  {r['symbol']:<6}{gem} "
+                             f"{r['return_pct']:+6.1f}%  ({r.get('outcome', '?')}, "
+                             f"conviction {r.get('conviction', 0):.2f})")
+        else:
+            n_open = sum(1 for r in rows if r.get("status") == "open")
+            lines.append(f"No scored calls yet - {n_open} open recommendation(s) "
+                         "awaiting their exit windows.")
+        self.perf_out.configure(state="normal")
+        self.perf_out.delete("1.0", "end")
+        self.perf_out.insert("end", "\n".join(lines) + "\n")
+        self.perf_out.configure(state="disabled")
 
     def _build_lessons(self, parent):
         card = self._card(parent, "Learning memory",
@@ -890,6 +1025,8 @@ class SwingApp:
         exe = Path(__file__).resolve().parents[1] / "dist" / "SwingSystem.exe"
         return f'"{exe}" --daily' if exe.exists() else None
 
+    _WATCH_TASK = "SwingSystem Watchlist"
+
     def _schedule_daily(self):
         import subprocess
         if sys.platform != "win32":
@@ -908,6 +1045,13 @@ class SwingApp:
                             "/D", "MON,TUE,WED,THU,FRI", "/TN", self._TASK_NAME,
                             "/TR", cmd, "/ST", "16:45"],
                            check=True, capture_output=True, text=True)
+            # Watchlist triggers fire DURING market hours: 12:30 + every 3h for
+            # 4h (=> 12:30 and 15:30) on weekdays.
+            subprocess.run(["schtasks", "/Create", "/F", "/SC", "WEEKLY",
+                            "/D", "MON,TUE,WED,THU,FRI", "/TN", self._WATCH_TASK,
+                            "/TR", cmd.replace("--daily", "--watch"),
+                            "/ST", "12:30", "/RI", "180", "/DU", "04:00"],
+                           check=True, capture_output=True, text=True)
         except Exception as exc:
             err = getattr(exc, "stderr", "") or str(exc)
             messagebox.showerror("Scheduling failed", err.strip()[:400])
@@ -916,11 +1060,12 @@ class SwingApp:
 
     def _unschedule_daily(self):
         import subprocess
-        try:
-            subprocess.run(["schtasks", "/Delete", "/F", "/TN", self._TASK_NAME],
-                           check=True, capture_output=True, text=True)
-        except Exception:
-            pass
+        for name in (self._TASK_NAME, self._WATCH_TASK):
+            try:
+                subprocess.run(["schtasks", "/Delete", "/F", "/TN", name],
+                               check=True, capture_output=True, text=True)
+            except Exception:
+                pass
         self._refresh_sched_status()
 
     def _refresh_sched_status(self):
@@ -989,6 +1134,7 @@ class SwingApp:
                     self.running = False
                     self._set_busy(False)
                     self._refresh_lessons()    # curator may have changed the set
+                    self._refresh_watchcard()  # screens/watch runs change it
         except queue.Empty:
             pass
         self.root.after(80, self._drain_queue)
