@@ -1750,6 +1750,12 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
                         }
                         if buying_power is not None and ref > 0:
                             rec["affordable_qty"] = int(buying_power // ref)
+                        from app import reco_ledger as _rl
+                        from system.reflection.calibration import (
+                            calibrated_probability, calibration_table, describe)
+                        _tbl = calibration_table(_rl.load())
+                        rec["p_win"] = calibrated_probability(rec["conviction"], _tbl)
+                        rec["p_win_label"] = describe(rec["p_win"], _tbl)
                         recs.append(rec)
                 _analysis_summary(log, cand.symbol, transcript.get("evidence", {}),
                                   transcript, rec, equity)
