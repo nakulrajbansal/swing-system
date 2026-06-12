@@ -57,6 +57,65 @@ def test_preset_selector_picks_the_winning_personality():
     assert nm == "base"
 
 
+def test_contested_debate_fires_second_round(synth_store):
+    from harness.signals import Edge01Filing, Edge06Insider, Edge08Momentum
+    from system.agents.core import (HypothesisAgent, PortfolioManagerAgent,
+                                    SkepticAgent)
+    from system.agents.llm_client import MockLLMClient
+    from system.agents.specialists import EdgeSpecialist
+    from system.config import SystemConfig
+    from system.orchestrator import Orchestrator
+    from harness.data.loader import available_at_for_session
+
+    store, sector_map = synth_store
+    cfg = SystemConfig()
+    client = MockLLMClient()
+
+    class SevereSkeptic(SkepticAgent):
+        def deterministic(self, inputs):
+            crit = super().deterministic(inputs)
+            for o in crit.objections:
+                o.severity = 0.65                       # contested, not a kill
+            crit.verdict = "caution"
+            return crit
+
+    specs = [EdgeSpecialist(E(), client, cfg.models.framing)
+             for E in (Edge01Filing, Edge06Insider, Edge08Momentum)]
+    orch = Orchestrator(store, specs, HypothesisAgent(client, cfg.models.synthesis),
+                        SevereSkeptic(client, cfg.models.adversarial),
+                        PortfolioManagerAgent(client, cfg.models.adversarial), cfg)
+    sessions = pd.to_datetime(sorted(store.read_table("prices")["date"].unique()))
+    saw_rejoinder = False
+    for d in sessions[len(sessions) // 2:]:
+        res = orch.run_cycle(available_at_for_session(d))
+        for rec in res.deliberation.values():
+            agents = [s["agent"] for s in rec.get("steps", [])]
+            if "skeptic_rejoinder" in agents:
+                saw_rejoinder = True
+                out = next(s["output"] for s in rec["steps"]
+                           if s["agent"] == "skeptic_rejoinder")
+                assert out["stands"] is True            # deterministic: unchanged
+        if saw_rejoinder:
+            break
+    assert saw_rejoinder, "high-severity critique should trigger round 2"
+
+
+def test_pm_weighs_rejoinder_outcome():
+    from system.agents.core import PortfolioManagerAgent
+    from system.agents.llm_client import MockLLMClient
+    from system.config import SystemConfig
+
+    pm = PortfolioManagerAgent(MockLLMClient(), SystemConfig().models.adversarial)
+    base = {"symbol": "AAA",
+            "hypothesis": {"decision": "propose", "raw_conviction": 0.85},
+            "critique": {"verdict": "caution", "max_severity": 0.6},
+            "rebuttal": "addressed", "price": 100.0, "atr": 2.0}
+    conceded = pm.run({**base, "rejoinder": {"stands": False, "final_severity": 0.6}})
+    stands = pm.run({**base, "rejoinder": {"stands": True, "final_severity": 0.8}})
+    # A conceded objection frees conviction; a standing one drags it down.
+    assert conceded.final_conviction > stands.final_conviction
+
+
 def test_factor_weights_stacks_on_a_preset_base():
     from app.strategy import WEIGHT_PRESETS, factor_weights
 

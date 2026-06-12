@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass, field
 
 import pandas as pd
 
-from system.agents.prompts import REBUTTAL
+from system.agents.prompts import REBUTTAL, REJOINDER
 from system.agents.specialists import EdgeSpecialist
 from system.config import SystemConfig
 from system.confluence import Candidate, run_confluence
@@ -202,6 +202,34 @@ class Orchestrator:
                 except Exception:
                     rebuttal = ""
 
+            # CONTESTED-DEBATE ESCALATION: when the critique is severe or the
+            # analyst panel disagrees sharply, the skeptic gets a second round
+            # to judge whether its objection SURVIVED the rebuttal. Decision
+            # quality improves exactly where the call is hard, at the cost of
+            # one extra step on the contested names only.
+            rejoinder: dict = {}
+            scores = [r.get("score") for r in analyst_reads
+                      if isinstance(r.get("score"), (int, float))
+                      and r.get("domain") != "macro"]
+            contested = (hyp.decision == "propose" and bool(rebuttal)
+                         and (crit.max_severity() >= self.cfg.debate_severity_threshold
+                              or (len(scores) >= 3
+                                  and max(scores) - min(scores)
+                                  >= self.cfg.debate_analyst_spread)))
+            if contested:
+                rj_in = {"symbol": cand.symbol, "thesis": asdict(hyp),
+                         "objection": crit.strongest, "rebuttal": rebuttal,
+                         "max_severity": crit.max_severity()}
+                try:
+                    rejoinder = self.skeptic.rejoin(rj_in)
+                    transcript["steps"].append({
+                        "agent": "skeptic_rejoinder", "model": self.skeptic.model,
+                        "system_prompt": REJOINDER,
+                        "inputs": {"objection": crit.strongest},
+                        "output": rejoinder})
+                except Exception:
+                    rejoinder = {}
+
             px = self.price_lookup(cand.symbol, view)
             price = float(px["close"].iloc[-1]) if len(px) else 0.0
             atr = last_atr(px, self.cfg.sizing.atr_len) if len(px) else 0.0
@@ -210,7 +238,8 @@ class Orchestrator:
                      "critique": {"verdict": crit.verdict, "max_severity": crit.max_severity(),
                                   "strongest": crit.strongest},
                      "analyst_reads": analyst_reads, "lessons": recalled,
-                     "rebuttal": rebuttal, "evidence": evidence,
+                     "rebuttal": rebuttal, "rejoinder": rejoinder,
+                     "evidence": evidence,
                      "price": price, "atr": atr if atr == atr else 0.0}
             decision = self._with_retry(self.pm, pm_in)
             transcript["steps"].append(

@@ -1144,7 +1144,9 @@ _AGENT_ROLE = {
     "valuation_analyst": "Valuation analyst", "growth_analyst": "Growth analyst",
     "moat_analyst": "Moat & secular-trend analyst",
     "hypothesis": "Strategist (thesis)", "skeptic": "Skeptic (bear case)",
-    "hypothesis_rebuttal": "Strategist (rebuttal)", "portfolio_manager": "Portfolio manager (decision)",
+    "hypothesis_rebuttal": "Strategist (rebuttal)",
+    "skeptic_rejoinder": "Skeptic (round 2 - contested call)",
+    "portfolio_manager": "Portfolio manager (decision)",
 }
 
 
@@ -1184,6 +1186,13 @@ def _fmt_step_output(out) -> list[str]:
                              f"{_sent(o.get('detail', ''), 240)}")
     elif "rebuttal" in out:
         lines.append(_sent(out["rebuttal"], 500))
+    elif "stands" in out:                                    # rejoinder (round 2)
+        fs = out.get("final_severity")
+        sev = f"   (final severity {fs:.1f})" if isinstance(fs, (int, float)) else ""
+        lines.append(("objection STANDS" if out.get("stands")
+                      else "objection CONCEDED") + sev)
+        if out.get("counter"):
+            lines.append(_sent(out["counter"], 320))
     elif "action" in out:                                    # PM / guardian
         act = str(out.get("action", "?")).upper()
         head = act

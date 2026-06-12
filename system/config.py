@@ -74,6 +74,11 @@ class SystemConfig:
     confluence_strong_single: float = 0.95   # one exceptionally strong family
     top_k: int = 5
 
+    # Contested-debate escalation: a second skeptic round fires when the
+    # critique is severe or the analyst panel disagrees sharply.
+    debate_severity_threshold: float = 0.60
+    debate_analyst_spread: float = 0.35
+
     # Execution
     paper_only: bool = True                  # live trading requires explicit opt-in
     correlation_lookback: int = 60

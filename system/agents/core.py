@@ -189,6 +189,28 @@ class SkepticAgent(Agent):
         crit.verdict = "kill" if mx >= 0.7 else "caution" if mx >= 0.45 else "clean"
         return crit
 
+    def rejoin(self, inputs: dict) -> dict:
+        """Second debate round on contested calls: judge whether the strongest
+        objection SURVIVES the proposer's rebuttal. Deterministic mode keeps
+        the objection standing at unchanged severity (today's behavior)."""
+        from system.agents.prompts import REJOINDER
+        sev = float(inputs.get("max_severity", 0.5) or 0.5)
+        if self.client.deterministic:
+            return {"stands": True, "counter": "", "final_severity": sev}
+        try:
+            raw = self.client.complete(REJOINDER, inputs, "Rejoinder",
+                                       model=self.model, max_tokens=300,
+                                       temperature=self.temperature)
+        except Exception:
+            return {"stands": True, "counter": "", "final_severity": sev}
+        try:
+            fs = min(max(float(raw.get("final_severity", sev)), 0.0), 1.0)
+        except (TypeError, ValueError):
+            fs = sev
+        return {"stands": bool(raw.get("stands", True)),
+                "counter": str(raw.get("counter", "")).strip()[:400],
+                "final_severity": fs}
+
     def parse(self, raw: dict, inputs: dict) -> Critique:
         objs: list[Objection] = []
         for o in raw.get("objections", []) or []:
@@ -233,6 +255,17 @@ class PortfolioManagerAgent(Agent):
             return decision_pass
 
         max_sev = float(crit.get("max_severity", 0.0))
+        # Second debate round (contested calls): a conceded objection stops
+        # dragging conviction; one that stands after the exchange drags harder.
+        rej = inputs.get("rejoinder") or {}
+        if rej:
+            if rej.get("stands") is False:
+                max_sev *= 0.5
+            else:
+                try:
+                    max_sev = max(max_sev, float(rej.get("final_severity", max_sev)))
+                except (TypeError, ValueError):
+                    pass
         # A rebuttal that addressed the objection softens (not erases) its weight.
         penalty = 0.35 if inputs.get("rebuttal") else 0.5
         # final_conviction is LOWER than the proposer's whenever objections stand.

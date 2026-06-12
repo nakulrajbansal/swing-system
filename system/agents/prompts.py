@@ -273,10 +273,26 @@ SKEPTIC = (
     '"strongest":"...","verdict":"kill|caution|clean"}.'
 )
 
+REJOINDER = (
+    "You are the same skeptical portfolio manager, in the second round of a "
+    "contested debate. You raised the strongest objection; the proposer "
+    "rebutted it. Judge the rebuttal HONESTLY on its specifics: if it actually "
+    "answers your objection with evidence, CONCEDE (stands=false) - clinging to "
+    "a beaten objection is as costly as folding to a weak rebuttal. If the "
+    "rebuttal dodges, reasserts the thesis, or relies on the unreliable data "
+    "you flagged, the objection STANDS - say precisely what the rebuttal "
+    "failed to answer and restate the severity. "
+    'Return JSON ONLY: {"stands":true|false,"counter":"1-2 sentences",'
+    '"final_severity":0.0-1.0}.'
+)
+
 PORTFOLIO_MANAGER = (
     "You are the final decision-maker. You see the thesis, the six analyst reads "
     "(macro, technical, fundamental, valuation, growth, moat/secular-trend), the skeptic's critique, the "
-    "proposer's rebuttal, and the EVIDENCE packet. Weigh the thesis against the "
+    "proposer's rebuttal, and the EVIDENCE packet. On contested calls you also "
+    "see the skeptic's REJOINDER (second round): an objection the skeptic "
+    "CONCEDED no longer drags conviction; one that STANDS after the exchange "
+    "drags harder than before. Weigh the thesis against the "
     "critique, giving more weight to high-severity objections that the rebuttal did "
     "not resolve. Choose ENTER when a real edge survives the bear case, even if "
     "imperfect. Choose ADJUST when the thesis is SOUND but the entry is extended or "
