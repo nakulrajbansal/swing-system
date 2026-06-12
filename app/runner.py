@@ -1583,6 +1583,14 @@ def run_recommendations(cfg: AppConfig, emit: Emit) -> dict:
                 cfg = dataclasses.replace(cfg, end_date=today)
 
         equity, buying_power = _resolve_equity(cfg, log)
+        # The live "core universe" scan is retired: the screens cover the full
+        # indices with the same agent panel and bounded LLM cost.
+        if not ticker and cfg.data_source == "live":
+            log("[mode] universe scanning now lives in the screens (S&P 500 / "
+                "QQQ / 400 / 600 / broad) - run one of those, or enter a ticker "
+                "for a single-name deep-dive.")
+            return {"session": None, "recommendations": []}
+
         mem = _load_memory(cfg, log)
         _memb = (len(mem.entries), len(mem.outcomes)) if mem else (0, 0)
         macro, macro_read = _macro_context(cfg, client, log)
@@ -2104,13 +2112,12 @@ def run_momentum_trade(cfg: AppConfig, emit: Emit) -> dict:
     import datetime
 
     from harness.data import calendar as cal
-    from harness.data.loader import LiveLoader, available_at_for_session, live_symbols
-    from harness.data.pit_store import PITStore
-    from harness.signals import Edge08Momentum
+    from harness.data.loader import fetch_closes_volumes_batch, fetch_prices_yahoo
     from system.config import DEFAULT_CONFIG
     from system.data_plane.indicators import last_atr
     from system.risk.governor import GovernorContext, RiskGovernor
     from app.momentum import load_positions, save_positions
+    from app.screen import prescreen
 
     cfg.apply_to_env()
     with _run_logger(emit, "momentum") as (log, _path):
@@ -2132,21 +2139,38 @@ def run_momentum_trade(cfg: AppConfig, emit: Emit) -> dict:
         if cfg.alpaca_env == "live":
             log("[warn] LIVE (real-money) momentum trading.")
 
-        # Prices-only live store through today (momentum needs ~1y of history).
-        syms = live_symbols(int(cfg.n_symbols))
+        # The momentum scan covers the SAME universe as the configured screen —
+        # the old tiny "core universe" is retired now that screens span the
+        # full indices. Batched closes/volumes, cached per day.
+        universe, sec_of_map, label, idx_key = _screen_universe(cfg)
         today = datetime.date.today()
-        start = (today - datetime.timedelta(days=500)).isoformat()
-        cache = CONFIG_DIR / "data_store" / f"momentum_{len(syms)}_{today.isoformat()}"
-        store = PITStore(cache)
-        loader = LiveLoader(store, symbols=syms, start=start, end=today.isoformat(), emit=log)
-        with _redirect(log):
-            if not (cache / "prices.parquet").exists():
-                log(f"[data] fetching prices for {len(syms)} symbols ...")
-                loader.load_all()
-        sector_map = loader.sector_map()
-        last = pd.to_datetime(store.read_table("prices")["date"]).max()
-        view = store.as_of(available_at_for_session(last))
+        start = (today - datetime.timedelta(days=420)).isoformat()
+        fetch_list = list(dict.fromkeys(universe + ["SPY"]))
+        cache = (CONFIG_DIR / "data_store" /
+                 f"momentum_{today.isoformat()}_{idx_key}_{len(fetch_list)}.parquet")
+        vcache = cache.with_name(cache.name.replace("momentum_", "momentum_vol_"))
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        closes = pd.read_parquet(cache) if cache.exists() else pd.DataFrame()
+        volumes = pd.read_parquet(vcache) if vcache.exists() else pd.DataFrame()
+        if closes.empty or closes.shape[1] < 0.8 * len(fetch_list):
+            log(f"[data] downloading prices for {len(fetch_list)} {label} series ...")
+            with _redirect(log):
+                closes, volumes = fetch_closes_volumes_batch(
+                    fetch_list, start, today.isoformat(), emit=log)
+            if not closes.empty:
+                closes.to_parquet(cache)
+            if not volumes.empty:
+                volumes.to_parquet(vcache)
+        else:
+            log(f"[data] using cached prices ({closes.shape[1]} series).")
+        if closes.empty:
+            log("[error] no price data; aborting.")
+            return {}
+        log(f"[universe] momentum scan over {label}: {len(universe)} names.")
+        last = pd.Timestamp(closes.index.max())
         d_today = last.date().isoformat()
+        _staleness_note(last, log)
+        days_behind = len(pd.bdate_range(last.normalize(), pd.Timestamp(today))) - 1
 
         env = cfg.alpaca_env
         state = load_positions()
@@ -2163,7 +2187,7 @@ def run_momentum_trade(cfg: AppConfig, emit: Emit) -> dict:
             from system.agents.meta import ReflectionAgent
             from system.reflection.memory import TradeOutcome
             try:
-                cur = float(view.prices(sym, adjust=True)["close"].iloc[-1])
+                cur = float(closes[sym].dropna().iloc[-1])
             except Exception:
                 return
             entry_px = float(info.get("entry_price", cur) or cur)
@@ -2203,27 +2227,46 @@ def run_momentum_trade(cfg: AppConfig, emit: Emit) -> dict:
 
         # --- 2) ENTRY ---
         result_entry = None
-        if len(tracked) < int(cfg.momentum_max_positions):
-            ranked = []
-            for s in view.universe():
-                sc = Edge08Momentum().score(view, s, last)
-                if sc["raw_score"] > 0:
-                    ranked.append((s, sc["raw_score"], sc.get("evidence", {})))
-            ranked.sort(key=lambda x: x[1], reverse=True)
-            log("\n[scan] top momentum names:")
-            for s, sc, ev in ranked[:5]:
-                log(f"  {s}: score={sc:.3f}  {ev}")
+        if days_behind >= 2:
+            log("\n[enter] price data is stale - not entering on old prices "
+                "(exits above still ran).")
+        elif len(tracked) < int(cfg.momentum_max_positions):
+            rows, _regime = prescreen(closes, top=10 ** 6,
+                                      volumes=volumes if not volumes.empty else None,
+                                      sector_of=sec_of_map)
+            ranked = [m for m in rows if m["above_200dma"] and m["mom6"] > 0]
+            ranked.sort(key=lambda m: m["mom6"], reverse=True)
+            log("\n[scan] strongest momentum (trend-confirmed, liquid):")
+            for m in ranked[:5]:
+                log(f"  {m['symbol']}: 6mo {m['mom6'] * 100:+.0f}%  RS "
+                    f"{m['rs'] * 100:+.0f}%  vs20d {m.get('ext20', 0) * 100:+.0f}%  "
+                    f"[{(m.get('sector') or '?')[:18]}]")
 
-            pick = next((r for r in ranked if r[0] not in tracked and r[0] not in live_pos), None)
+            pick = next((m for m in ranked if m["symbol"] not in tracked
+                         and m["symbol"] not in live_pos), None)
             if pick is None:
                 log("[enter] no eligible momentum name to enter.")
             else:
-                sym, score, ev = pick
-                px = view.prices(sym).set_index("date")
+                sym, score = pick["symbol"], pick["mom6"]
+                px = pd.DataFrame()
+                with _redirect(log):
+                    try:
+                        px, _acts = fetch_prices_yahoo(
+                            sym, (today - datetime.timedelta(days=200)).isoformat(),
+                            today.isoformat())
+                    except Exception as exc:
+                        log(f"[enter] {sym}: OHLC fetch failed ({exc}).")
+                if px.empty:
+                    log(f"[enter] {sym}: no OHLC data - skipping entry.")
+                    state[env] = tracked
+                    save_positions(state)
+                    _save_memory(cfg, mem, log, _memb)
+                    return {"entered": None, "open": sorted(tracked)}
                 ref = float(px["close"].iloc[-1])
-                atr = last_atr(px.reset_index())
-                ctx = GovernorContext(equity=equity, reference_price=ref, atr_value=atr,
-                                      sector=sector_map.get(sym, "?"))
+                atr = last_atr(px)
+                ctx = GovernorContext(equity=equity, reference_price=ref,
+                                      atr_value=atr if atr == atr else 0.0,
+                                      sector=sec_of_map.get(sym, "?"))
                 ticket = RiskGovernor(DEFAULT_CONFIG).evaluate(sym, "enter", ctx)
                 if not ticket.approved:
                     log(f"[enter] {sym} rejected by Risk Governor: {ticket.reason}")
@@ -2240,7 +2283,8 @@ def run_momentum_trade(cfg: AppConfig, emit: Emit) -> dict:
                                         "shares": ticket.shares, "entry_price": ref}
                         state[env] = tracked
                         save_positions(state)    # persist before any log can stop us
-                        log(f"\n[enter] {sym} = strongest momentum (score {score:.3f}). "
+                        log(f"\n[enter] {sym} = strongest momentum "
+                            f"(6mo {score * 100:+.0f}%). "
                             f"BUY {ticket.shares} sh @ ~{ref:.2f}, protective stop "
                             f"{ticket.stop:.2f}; exit on {exit_on} ({hd} sessions). "
                             f"Order id {o.get('id', '?')} status {o.get('status', '?')}.")
@@ -2264,7 +2308,6 @@ def run_reddit_scan(cfg: AppConfig, emit: Emit) -> dict:
     on the most-mentioned names. Needs Reddit API credentials; uses the model when
     Anthropic credits are present (else reports buzz only)."""
     from harness.data import reddit as rd
-    from harness.data.loader import live_symbols
     from system.config import DEFAULT_CONFIG
 
     cfg.apply_to_env()
@@ -2286,7 +2329,15 @@ def run_reddit_scan(cfg: AppConfig, emit: Emit) -> dict:
         posts = rd.fetch_posts(token, ua, limit=100)
         log(f"[reddit] {len(posts)} posts across {len(rd.DEFAULT_SUBREDDITS)} subreddits.")
 
-        universe = live_symbols(int(cfg.n_symbols))
+        # Match mentions against the FULL tradable coverage (S&P 1500 + QQQ) —
+        # buzz on a small cap is exactly the early signal worth catching.
+        from harness.data import midsmall as ms
+        from harness.data import nasdaq100 as nq
+        from harness.data.sp500 import sp500_symbols
+        ms_syms, _sect = ms.midsmall_universe()
+        universe = sorted(set(sp500_symbols()) | set(nq.nasdaq100_symbols())
+                          | set(ms_syms))
+        log(f"[reddit] matching against {len(universe)} names (S&P 1500 + QQQ).")
         mentions = rd.extract_mentions(posts, universe)
         if not mentions:
             log("[reddit] no universe tickers mentioned in the current posts.")

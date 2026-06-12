@@ -35,7 +35,7 @@ _FIELDS = [
     ("reddit_password", "Reddit password (script app)", "secret"),
     ("data_source", "Data source", "choice"),
     ("ticker", "Analyze one ticker (blank = scan universe)", "text"),
-    ("n_symbols", "Universe size (symbols)", "int"),
+    ("n_symbols", "Synthetic universe size (offline demo)", "int"),
     ("start_date", "Start date (YYYY-MM-DD)", "text"),
     ("end_date", "End date (YYYY-MM-DD)", "text"),
     ("seed", "Random seed", "int"),
