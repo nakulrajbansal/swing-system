@@ -13,7 +13,7 @@ import sys
 import threading
 import tkinter as tk
 from tkinter import font as tkfont
-from tkinter import messagebox, scrolledtext, ttk
+from tkinter import messagebox, ttk
 
 from app import APP_NAME, APP_VERSION
 from app.config import SECRET_FIELDS, AppConfig
@@ -190,6 +190,11 @@ class SwingApp:
         # and once after the first map (covers both cold start and restore).
         self._theme_titlebar()
         self.root.after(200, self._theme_titlebar)
+        # Keyboard-first flow: the three most-used actions never need the mouse.
+        root.bind("<Control-r>", lambda e: None if self.running
+                  else self._run_screen_choice())
+        root.bind("<Escape>", lambda e: self._stop_run() if self.running else None)
+        root.bind("<Control-s>", lambda e: self._save())
 
     def _theme_titlebar(self):
         """Make the native Windows title bar part of the design: dark caption
@@ -285,14 +290,16 @@ class SwingApp:
         s.configure("TButton", background=SURF2, foreground=INK, bordercolor=SURF2,
                     relief="flat", padding=(14, 9), font=self.f_base, focuscolor=SURF2)
         s.map("TButton",
-              background=[("active", SURF3), ("disabled", "#171b22")],
+              background=[("pressed", "#1d2330"), ("active", SURF3),
+                          ("disabled", "#171b22")],
               foreground=[("disabled", FAINT)],
               bordercolor=[("active", SURF3)])
         s.configure("Accent.TButton", background=ACCENT, foreground=ACCENT_INK,
                     bordercolor=ACCENT, relief="flat", padding=(18, 9), font=self.f_bold,
                     focuscolor=ACCENT)
         s.map("Accent.TButton",
-              background=[("active", ACCENT_DK), ("disabled", "#27483a")],
+              background=[("pressed", "#2d8a64"), ("active", ACCENT_DK),
+                          ("disabled", "#27483a")],
               foreground=[("disabled", "#7f8b85")])
 
         s.configure("TCheckbutton", background=CARD, foreground=INK, font=self.f_base)
@@ -323,6 +330,14 @@ class SwingApp:
                     font=self.f_section, padding=(8, 2))
         s.configure("BadgeLive.TLabel", background=DANGER_SOFT, foreground=DANGER,
                     font=self.f_section, padding=(8, 2))
+        s.configure("CardFaint.TLabel", background=CARD, foreground=FAINT,
+                    font=self.f_sub)
+        # Slim themed scrollbar for consoles (the stock Windows bar breaks the
+        # dark surface).
+        s.configure("Console.Vertical.TScrollbar", background=SURF2,
+                    troughcolor=CONSOLE_BG, bordercolor=CONSOLE_BG,
+                    arrowcolor=CONSOLE_BG, relief="flat", width=8)
+        s.map("Console.Vertical.TScrollbar", background=[("active", SURF3)])
         s.configure("Accent.Horizontal.TProgressbar", background=ACCENT,
                     troughcolor=CARD, bordercolor=CARD,
                     lightcolor=ACCENT, darkcolor=ACCENT, thickness=3)
@@ -433,6 +448,22 @@ class SwingApp:
         inner = ttk.Frame(card, style="Card.TFrame")
         inner.pack(fill="both", expand=True, padx=16, pady=13)
         return inner
+
+    def _console(self, parent, height: int = 20):
+        """Dark text surface with the THEMED slim scrollbar (stock Windows
+        scrollbars break the dark design). Returns the Text widget, packed."""
+        wrap = ttk.Frame(parent, style="Card.TFrame")
+        wrap.pack(fill="both", expand=True)
+        txt = tk.Text(wrap, wrap="word", height=height, font=self.f_mono,
+                      bg=CONSOLE_BG, fg=CONSOLE_FG, insertbackground=CONSOLE_FG,
+                      relief="flat", bd=0, padx=18, pady=14,
+                      spacing1=2, spacing3=2)
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=txt.yview,
+                           style="Console.Vertical.TScrollbar")
+        txt.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        txt.pack(side="left", fill="both", expand=True)
+        return txt
 
     def _mkbtn(self, parent, text, command, accent=False, width=None):
         b = ttk.Button(parent, text=text, command=command, cursor="hand2",
@@ -582,16 +613,15 @@ class SwingApp:
         ]
         for i, (label, cmd) in enumerate(actions):
             self._mkbtn(rows, label, cmd).grid(
-                row=i // 3, column=i % 3, sticky="ew",
-                padx=(0 if i % 3 == 0 else 8, 0), pady=(0 if i < 3 else 6, 0))
-        for c in range(3):
+                row=0, column=i, sticky="ew", padx=(0 if i == 0 else 8, 0))
+        for c in range(len(actions)):
             rows.columnconfigure(c, weight=1, uniform="desk")
 
         # ---- selective execution: tickets from the last run ----
         self.orders_body = self._card(parent, "Order tickets",
                                       "BUY recommendations from the last run")
         self._orders_hint = ttk.Label(
-            self.orders_body, style="CardMuted.TLabel",
+            self.orders_body, style="CardFaint.TLabel",
             text="Run a screen or a deep-dive — BUY recommendations appear here as "
                  "tickets you can review and place individually.")
         self._orders_hint.pack(anchor="w")
@@ -607,7 +637,9 @@ class SwingApp:
         self._refresh_watchcard()
 
         # ---- output console with its own toolbar ----
-        cons = self._card(parent, "Output", expand=True)
+        cons = self._card(parent, "Output",
+                          "Ctrl+R runs the selected screen · Esc stops a run",
+                          expand=True)
         tools = ttk.Frame(cons, style="Card.TFrame")
         tools.pack(fill="x", pady=(0, 6))
         # Jump-to-section: long analyses become navigable instead of a scroll.
@@ -624,15 +656,13 @@ class SwingApp:
                                    command=self._stop_run)
         ttk.Button(tools, text="Open logs folder", style="Tool.TButton", cursor="hand2",
                    takefocus=False, command=self._open_logs).pack(side="right", padx=(6, 0))
-        ttk.Button(tools, text="Copy output", style="Tool.TButton", cursor="hand2",
-                   takefocus=False, command=self._copy_output).pack(side="right", padx=(6, 0))
+        self._btn_copy = ttk.Button(tools, text="Copy output", style="Tool.TButton",
+                                    cursor="hand2", takefocus=False,
+                                    command=self._copy_output)
+        self._btn_copy.pack(side="right", padx=(6, 0))
         ttk.Button(tools, text="Clear", style="Tool.TButton", cursor="hand2",
                    takefocus=False, command=self._clear).pack(side="right")
-        self.out = scrolledtext.ScrolledText(
-            cons, wrap="word", height=20, font=self.f_mono, bg=CONSOLE_BG,
-            fg=CONSOLE_FG, insertbackground=CONSOLE_FG, relief="flat", bd=0,
-            padx=18, pady=14, spacing1=2, spacing3=2)
-        self.out.pack(fill="both", expand=True)
+        self.out = self._console(cons)
         self.out.tag_configure("err", foreground=DANGER)
         self.out.tag_configure("warn", foreground="#d8a657")
         self.out.tag_configure("ok", foreground="#57c98a")
@@ -645,8 +675,10 @@ class SwingApp:
         self.out.tag_configure("rule", foreground="#39414f", spacing1=8, spacing3=4)
         self.out.configure(state="disabled")
         ttk.Frame(parent).pack(pady=5)            # bottom breathing room
-        self._log(f"{APP_NAME} ready. Pick a universe and run a screen, or deep-dive "
-                  "a single ticker. Credentials live under Settings.")
+        self._log(f"{APP_NAME} ready.  Pick a universe and Run screen (Ctrl+R), or "
+                  "deep-dive a single ticker.")
+        self._log("    keyboard: Ctrl+R run screen · Esc stop · Ctrl+S save settings"
+                  "  ·  credentials live under Settings")
 
     def _run_screen_choice(self):
         key = self._SCREENS.get(self._screen_choice.get(), "sp500")
@@ -677,6 +709,9 @@ class SwingApp:
         text = self.out.get("1.0", "end-1c")
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
+        self._btn_copy.config(text="✓ Copied")
+        self.root.after(1800, lambda: self._btn_copy.winfo_exists()
+                        and self._btn_copy.config(text="Copy output"))
 
     def _build_performance(self, parent):
         curve = self._card(parent, "Equity curve",
@@ -691,10 +726,7 @@ class SwingApp:
         pbar.pack(fill="x", pady=(0, 6))
         self._mkbtn(pbar, "Refresh trade history",
                     lambda: self._start(run_trade_history)).pack(side="right")
-        self.perf_out = scrolledtext.ScrolledText(
-            card, wrap="word", font=self.f_mono, bg=CONSOLE_BG, fg=CONSOLE_FG,
-            relief="flat", bd=0, padx=14, pady=12, spacing1=2, spacing3=2)
-        self.perf_out.pack(fill="both", expand=True)
+        self.perf_out = self._console(card, height=18)
         self.perf_out.configure(state="disabled")
         ttk.Frame(parent).pack(pady=5)
 
@@ -824,10 +856,7 @@ class SwingApp:
                        command=lambda: self._start(run_curation))
         b.pack(side="right", padx=(0, 6))
         self._action_buttons.append(b)
-        self.lessons_out = scrolledtext.ScrolledText(
-            card, wrap="word", font=self.f_mono, bg=CONSOLE_BG, fg=CONSOLE_FG,
-            relief="flat", bd=0, padx=14, pady=12)
-        self.lessons_out.pack(fill="both", expand=True)
+        self.lessons_out = self._console(card, height=18)
         self.lessons_out.configure(state="disabled")
         ttk.Frame(parent).pack(pady=5)
         self._refresh_lessons()
@@ -921,14 +950,16 @@ class SwingApp:
             if r.get("already_held"):
                 tk.Label(cell, text=" ●", bg=CARD, fg="#d8a657",
                          font=self.f_base).pack(side="left")
-            ttk.Label(grid, text=f"{r.get('conviction', 0):.2f}",
+            ttk.Label(grid, text=f"{r.get('conviction', 0):.2f}", font=self.f_mono,
                       style="CardMuted.TLabel").grid(row=i, column=1, sticky="w",
                                                      padx=(0, 10), pady=5)
             pwin = r.get("p_win")
             ttk.Label(grid, text=f"{pwin * 100:.0f}%" if pwin else "-",
+                      font=self.f_mono,
                       style="CardMuted.TLabel").grid(row=i, column=2, sticky="w",
                                                      padx=(0, 10), pady=5)
-            ttk.Label(grid, text=f"~${entry}", style="CardMuted.TLabel").grid(
+            ttk.Label(grid, text=f"~${entry}", font=self.f_mono,
+                      style="CardMuted.TLabel").grid(
                 row=i, column=3, sticky="w", padx=(0, 10), pady=5)
             qv = tk.StringVar(value=str(int(default_qty)))
             ttk.Entry(grid, textvariable=qv, width=6).grid(
@@ -945,11 +976,12 @@ class SwingApp:
             bv = tk.BooleanVar(value=bool(stop and target))
             ttk.Checkbutton(grid, text="stop/target", variable=bv).grid(
                 row=i, column=7, sticky="w", padx=(0, 14), pady=5)
-            ttk.Button(grid, text="Place order", style="Accent.TButton",
-                       cursor="hand2", takefocus=False,
-                       command=lambda r=r, qv=qv, tv=tv, pv=pv, bv=bv:
-                       self._place_order(r, qv, tv, pv, bv)).grid(
-                row=i, column=8, sticky="w", pady=5)
+            btn_place = ttk.Button(grid, text="Place order", style="Accent.TButton",
+                                   cursor="hand2", takefocus=False)
+            btn_place.configure(
+                command=lambda r=r, qv=qv, tv=tv, pv=pv, bv=bv, b=btn_place:
+                self._place_order(r, qv, tv, pv, bv, b))
+            btn_place.grid(row=i, column=8, sticky="w", pady=5)
         notes = []
         if any(r.get("hidden_gem") for r in recs):
             notes.append("◆ = hidden-gem pick (early acceleration)")
@@ -962,7 +994,7 @@ class SwingApp:
             ttk.Label(self.orders_body, text="   ·   ".join(notes),
                       style="CardMuted.TLabel").pack(anchor="w", padx=2, pady=(6, 0))
 
-    def _place_order(self, rec, qv, tv, pv, bv):
+    def _place_order(self, rec, qv, tv, pv, bv, btn=None):
         try:
             qty = int(float(qv.get()))
             otype = tv.get()
@@ -986,18 +1018,24 @@ class SwingApp:
                  "limit_price": price, "stop": rec.get("stop"),
                  "target": rec.get("target"), "attach_bracket": bool(bv.get()),
                  "ref_price": rec.get("entry")}
+        if btn is not None:                       # instant feedback on THIS row
+            btn.config(text="Placing…", state="disabled")
         self._log(f"\n[order] submitting BUY {qty} {rec['symbol']} ({px}) ...")
-        threading.Thread(
-            target=lambda: place_manual_order(
-                cfg, order, lambda line: self.q.put(("log", line))),
-            daemon=True).start()
+
+        def work():
+            res = place_manual_order(cfg, order, lambda line: self.q.put(("log", line)))
+            self.q.put(("ticket", (btn, bool(res.get("ok")))))
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _save(self):
         try:
             cfg = self._collect()
             path = cfg.save()
             self.cfg = cfg
-            self.status.config(text=f"Saved to {path}")
+            self.status.config(text=f"✓  Saved  ·  {path}")
+            self.root.after(4000, lambda: self.status.winfo_exists()
+                            and self.status.config(text=""))
             self._refresh_env_badge()
             self._refresh_chips()
         except Exception as exc:
@@ -1164,6 +1202,12 @@ class SwingApp:
                 elif kind == "result":
                     if isinstance(payload, dict) and payload.get("recommendations"):
                         self._show_orders(payload)
+                elif kind == "ticket":             # per-row order feedback
+                    btn, ok = payload
+                    if btn is not None and btn.winfo_exists():
+                        btn.config(text="✓ Sent" if ok else "✗ Failed")
+                        self.root.after(3000, lambda b=btn: b.winfo_exists() and
+                                        b.config(text="Place order", state="normal"))
                 elif kind == "done":
                     self.running = False
                     self._set_busy(False)
