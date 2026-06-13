@@ -322,10 +322,11 @@ def test_exit_order_payloads_are_risk_reducing(monkeypatch):
     assert b.submit_exit_orders("SITM", 3)["error"]
 
 
-def test_stop_request_cancels_at_next_log_line():
+def test_stop_request_cancels_at_next_log_line(tmp_path, monkeypatch):
     import pytest
     from app import runner
 
+    monkeypatch.setattr(runner, "LOGS_DIR", tmp_path)   # never touch real logs
     runner.clear_stop()
     lines: list[str] = []
     with pytest.raises(runner.RunStopped):

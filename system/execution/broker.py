@@ -270,12 +270,25 @@ class AlpacaBroker(Broker):
                             "stop_loss": {"stop_price": round(float(stop), 2)}})
         return self._req("POST", "/v2/orders", payload)
 
-    def fills(self, limit: int = 100) -> list[dict]:
-        """Recent FILL activities (both sides), newest first — the account's
-        actual trade history."""
-        out = self._req("GET",
-                        f"/v2/account/activities?activity_types=FILL&page_size={int(limit)}")
-        return out or []
+    def fills(self, limit: int = 200) -> list[dict]:
+        """FILL activities (both sides), newest first — the account's actual
+        trade history. Alpaca caps page_size at 100, so pages with page_token
+        until `limit` is reached or the history is exhausted."""
+        out: list[dict] = []
+        token = None
+        while len(out) < limit:
+            page = min(100, limit - len(out))
+            url = f"/v2/account/activities?activity_types=FILL&page_size={page}"
+            if token:
+                url += f"&page_token={token}"
+            chunk = self._req("GET", url) or []
+            if not chunk:
+                break
+            out.extend(chunk)
+            token = chunk[-1].get("id")        # cursor = id of the last row
+            if len(chunk) < page:
+                break
+        return out
 
     def submit_exit_orders(self, symbol, qty, stop=None, target=None):
         """Protective exit orders for an EXISTING long position: an OCO pair

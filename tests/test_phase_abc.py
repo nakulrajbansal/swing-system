@@ -128,18 +128,26 @@ def test_infer_exit_reason_names_the_trigger():
     assert _infer_exit_reason(100.0, None, None) == "manual"
 
 
-def test_broker_fills_uses_activities_endpoint(monkeypatch):
+def test_broker_fills_pages_within_alpaca_cap(monkeypatch):
     from system.execution.broker import AlpacaBroker
 
     b = AlpacaBroker("key", "secret", env="paper")
-    seen = {}
-    monkeypatch.setattr(b, "_req", lambda m, p, payload=None:
-                        (seen.update(method=m, path=p) or
-                         [{"symbol": "AMAT", "side": "sell", "price": "588.9"}]))
+    calls = []
+    # 150 fills across two pages; Alpaca caps page_size at 100.
+    full = [{"id": f"f{i}", "symbol": "AMAT", "side": "sell"} for i in range(150)]
+
+    def fake(method, path, payload=None):
+        calls.append(path)
+        assert "page_size=100" in path or "page_size=50" in path   # never >100
+        if "page_token=" in path:
+            return full[100:]
+        return full[:100]
+
+    monkeypatch.setattr(b, "_req", fake)
     fills = b.fills(200)
-    assert seen["method"] == "GET"
-    assert "activities?activity_types=FILL" in seen["path"]
-    assert fills[0]["symbol"] == "AMAT"
+    assert len(fills) == 150
+    assert "activities?activity_types=FILL" in calls[0]
+    assert any("page_token=f99" in c for c in calls)               # cursor advanced
 
 
 def test_executed_link_and_full_open_list(tmp_path):
