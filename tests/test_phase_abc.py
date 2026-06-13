@@ -183,6 +183,61 @@ def test_wrap_never_truncates():
     assert _wrap("") == [] and _wrap(None) == []
 
 
+def test_correlation_diversify_drops_near_duplicates_only():
+    import numpy as np
+    from app.strategy import correlation_diversify
+
+    idx = pd.date_range("2025-01-01", periods=120, freq="B")
+    rng = np.random.default_rng(3)
+    base = np.cumprod(1 + rng.normal(0.001, 0.01, 120))
+    twin = base * (1 + rng.normal(0, 0.0005, 120))      # ~identical to base
+    indep = np.cumprod(1 + rng.normal(0.001, 0.01, 120))
+    closes = pd.DataFrame({"AAA": base, "ATWIN": twin, "BBB": indep}, index=idx)
+    # AAA ranked first, its twin second, independent BBB third; k=2 should skip
+    # the twin and take the independent name instead.
+    out = correlation_diversify(["AAA", "ATWIN", "BBB"], closes, k=2)
+    assert out == ["AAA", "BBB"]
+    # k>=len always returns everyone (redundant ones just pushed to the back).
+    assert set(correlation_diversify(["AAA", "ATWIN", "BBB"], closes, k=3)) == {
+        "AAA", "ATWIN", "BBB"}
+    # No data / single slot: graceful passthrough.
+    assert correlation_diversify(["AAA", "BBB"], None, k=2) == ["AAA", "BBB"]
+
+
+def test_growth_analyst_reads_estimate_revisions():
+    from system.agents.analysts import GrowthAnalyst
+    from system.agents.llm_client import MockLLMClient
+    from system.config import SystemConfig
+
+    m = SystemConfig().models.framing
+    up = {"fundamentals": {"available": True, "growth": {
+        "revenue_growth_pct": 18.0, "eps_revision_90d_pct": 12.0, "num_analysts": 20}}}
+    r = GrowthAnalyst(MockLLMClient(), m).run({"symbol": "X", "evidence": up})
+    assert any("REVISED UP" in p for p in r.positives)
+    down = {"fundamentals": {"available": True, "growth": {
+        "revenue_growth_pct": 5.0, "eps_revision_90d_pct": -10.0, "num_analysts": 15}}}
+    r2 = GrowthAnalyst(MockLLMClient(), m).run({"symbol": "Y", "evidence": down})
+    assert any("CUT" in c for c in r2.concerns) and r2.score < 0.5
+    # Thin coverage (no analysts) -> the revision is ignored, not trusted.
+    thin = {"fundamentals": {"available": True, "growth": {
+        "revenue_growth_pct": 5.0, "eps_revision_90d_pct": 30.0, "num_analysts": 1}}}
+    r3 = GrowthAnalyst(MockLLMClient(), m).run({"symbol": "Z", "evidence": thin})
+    assert not any("REVISED UP" in p for p in r3.positives)
+
+
+def test_skeptic_flags_poor_earnings_quality():
+    from system.agents.core import SkepticAgent
+    from system.agents.llm_client import MockLLMClient
+    from system.config import SystemConfig
+
+    crit = SkepticAgent(MockLLMClient(), SystemConfig().models.adversarial).run(
+        {"symbol": "AAA",
+         "evidence": {"earnings_quality": {"rating": "poor", "profit_margin_pct": 22.0,
+                                           "fcf_margin_pct": 3.0, "accrual_gap_pp": 19.0}},
+         "max_corr_to_book": 0.0, "min_read_confidence": 0.9, "priced_in": 0.0})
+    assert any(o.kind == "earnings_quality" for o in crit.objections)
+
+
 def test_watchlist_lifecycle_and_triggers(tmp_path):
     from app import watchlist as wl
 

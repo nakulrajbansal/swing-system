@@ -244,7 +244,8 @@ def gem_slot_count(cohorts: dict | None, default: int = 2) -> int:
     return default
 
 
-def select_shortlist(ranked: list[dict], k: int, gem_slots: int = 2) -> list[dict]:
+def select_shortlist(ranked: list[dict], k: int, gem_slots: int = 2,
+                     closes=None) -> list[dict]:
     """The deep-dive shortlist: top names by composite score PLUS reserved
     'hidden gem' slots for early-acceleration names the momentum ranking alone
     would miss. Gems must clear a positive bar (marked ``hidden_gem=True``);
@@ -252,6 +253,13 @@ def select_shortlist(ranked: list[dict], k: int, gem_slots: int = 2) -> list[dic
     universe allows."""
     k = max(1, k)
     base = [m for m in ranked if m["score"] > 0]
+    # De-duplicate by correlation first: push near-identical names (e.g. dual-
+    # class shares, or two names that move as one) DOWN the order so the
+    # deep-dive doesn't spend slots on the same bet twice.
+    if closes is not None and len(base) > 1:
+        order = correlation_diversify([m["symbol"] for m in base], closes, len(base))
+        pos = {s: i for i, s in enumerate(order)}
+        base = sorted(base, key=lambda m: pos.get(m["symbol"], 10 ** 9))
     # Core slots: best scores with a light sector cap (3) so one hot sector
     # cannot monopolize the whole deep-dive — breadth is where the un-crowded
     # opportunities live.
@@ -294,6 +302,56 @@ def diversify(ranked: list[dict], k: int, max_per_sector: int = 2) -> list[dict]
             if len(out) >= k:
                 break
     return out
+
+
+# Correlation cap for selection: only genuinely redundant names (moving almost
+# identically) are skipped, so diversification trims duplicate RISK without
+# sacrificing the strongest momentum names. Tuned on a real-data walk-forward.
+CORR_CAP = 0.90
+CORR_LOOKBACK = 90
+
+
+def correlation_diversify(ranked_syms: list[str], closes, k: int,
+                          cap: float = CORR_CAP, lookback: int = CORR_LOOKBACK,
+                          history=None) -> list[str]:
+    """Greedy correlation-aware top-k: walk the ranked order and take a name
+    unless its recent return-correlation to an ALREADY-taken name exceeds
+    `cap`; backfill in rank order if too few qualify. `history` (a prices frame
+    up to the decision day) keeps it point-in-time; falls back to `closes`.
+
+    Reduces hidden duplicate risk — five names that move as one are one bet with
+    five tickets' worth of exposure — without dropping the best ideas (the cap
+    is high, so only near-identical names are skipped)."""
+    import numpy as np
+
+    frame = history if history is not None else closes
+    if frame is None or getattr(frame, "empty", True) or k <= 1:
+        return ranked_syms[:k]
+    rets = frame.tail(lookback + 1).pct_change().iloc[1:]
+    chosen: list[str] = []
+    skipped: list[str] = []
+    for s in ranked_syms:
+        if len(chosen) >= k:
+            break
+        if s not in rets.columns:
+            chosen.append(s)
+            continue
+        redundant = False
+        for c in chosen:
+            if c not in rets.columns:
+                continue
+            pair = rets[[s, c]].dropna()
+            if len(pair) >= 30:
+                corr = float(pair[s].corr(pair[c]))
+                if corr == corr and corr > cap:    # not-NaN and above the cap
+                    redundant = True
+                    break
+        (skipped if redundant else chosen).append(s)
+    for s in skipped:                              # backfill if we came up short
+        if len(chosen) >= k:
+            break
+        chosen.append(s)
+    return chosen[:k]
 
 
 def construct_portfolio(recs: list[dict], equity: float, regime: dict | None = None,
@@ -354,12 +412,14 @@ def _ann(returns: list[float], periods_per_year: float) -> dict:
 
 def walk_forward_backtest(closes: pd.DataFrame, metrics_fn, weights: dict,
                           top_k: int = 10, hold_days: int = 10,
-                          benchmark: str = "SPY", warmup: int = 210) -> dict:
+                          benchmark: str = "SPY", warmup: int = 210,
+                          diversify_corr: bool = False) -> dict:
     """Honest walk-forward of the screen: every `hold_days` sessions, rank the
     universe by the composite score using ONLY history up to that day, buy the
     top-K equal-weight, hold for the period, record the realized return. Compares
     to the benchmark over the same span. `metrics_fn(close_slice, bench_mom6)`
-    returns the metrics dict for one name (see app.screen._metrics)."""
+    returns the metrics dict for one name (see app.screen._metrics). With
+    `diversify_corr`, the top-K is correlation-pruned (same PIT history)."""
     cols = [c for c in closes.columns if c != benchmark]
     dates = closes.index
     if len(dates) <= warmup + hold_days:
@@ -380,7 +440,10 @@ def walk_forward_backtest(closes: pd.DataFrame, metrics_fn, weights: dict,
                 continue
             scored.append((sym, composite_score(m, weights), m))
         scored.sort(key=lambda x: x[1], reverse=True)
-        picks = [s for s, _, _ in scored[:top_k]]
+        if diversify_corr:
+            picks = correlation_diversify([s for s, _, _ in scored], hist, top_k)
+        else:
+            picks = [s for s, _, _ in scored[:top_k]]
 
         def _fwd(syms):
             out = []

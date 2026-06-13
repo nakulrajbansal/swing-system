@@ -338,6 +338,30 @@ def fetch_fundamentals_yahoo(symbol: str, available_at: pd.Timestamp | None = No
     except Exception:
         next_earnings = None
 
+    # Estimate-revision momentum: how the analyst forward-EPS consensus has moved
+    # over the past ~90 days (a documented leading signal — upward revisions drift).
+    # yfinance eps_trend rows are periods (0q/+1q/0y/+1y), columns the estimate
+    # now vs 7/30/60/90 days ago.
+    eps_rev_90d = None
+    eps_rev_30d = None
+    try:
+        et = tk.eps_trend
+        if et is not None and hasattr(et, "loc") and not et.empty:
+            # Prefer the next fiscal year (+1y) as the forward anchor; fall back to +1q.
+            for key in ("+1y", "+1q", "0y"):
+                if key in et.index:
+                    row = et.loc[key]
+                    cur = float(row.get("current"))
+                    a90 = row.get("90daysAgo")
+                    a30 = row.get("30daysAgo")
+                    if cur == cur and a90 is not None and float(a90) != 0:
+                        eps_rev_90d = round((cur / float(a90) - 1) * 100, 1)
+                    if cur == cur and a30 is not None and float(a30) != 0:
+                        eps_rev_30d = round((cur / float(a30) - 1) * 100, 1)
+                    break
+    except Exception:
+        pass
+
     def g(*keys):
         for k in keys:
             v = info.get(k)
@@ -382,6 +406,9 @@ def fetch_fundamentals_yahoo(symbol: str, available_at: pd.Timestamp | None = No
         "business_summary": (str(g("longBusinessSummary"))[:900]
                              if g("longBusinessSummary") else None),
         "next_earnings_date": next_earnings,
+        "eps_revision_90d_pct": eps_rev_90d,
+        "eps_revision_30d_pct": eps_rev_30d,
+        "num_analysts": g("numberOfAnalystOpinions"),
     }
     return pd.DataFrame([row])
 

@@ -221,6 +221,18 @@ def _fundamentals(view, symbol: str) -> dict:
             eps_reliable = False
     fcf, rev = _f(r, "free_cash_flow"), _f(r, "total_revenue")
     fcf_margin = round(fcf / rev * 100, 1) if fcf is not None and rev else None
+    profit_margin = round(_f(r, "profit_margin") * 100, 1) \
+        if _f(r, "profit_margin") is not None else None
+    # EARNINGS QUALITY (accruals proxy): reported profit margin running well
+    # ABOVE the free-cash-flow margin means earnings aren't converting to cash —
+    # the classic accrual red flag (value-trap / aggressive-accounting risk).
+    accrual_gap = (round(profit_margin - fcf_margin, 1)
+                   if isinstance(profit_margin, (int, float))
+                   and isinstance(fcf_margin, (int, float)) else None)
+    earnings_quality = None
+    if accrual_gap is not None:
+        earnings_quality = ("poor" if accrual_gap >= 8 else
+                            "strong" if accrual_gap <= 0 else "fair")
     mc = _f(r, "market_cap")
     summary = r.get("business_summary")
     return {
@@ -245,10 +257,21 @@ def _fundamentals(view, symbol: str) -> dict:
             "forward_eps_guidance": fwd_eps,
             "implied_fwd_eps_growth_pct": implied_eps_growth,
             "fwd_eps_reliable": eps_reliable,
-            "profit_margin_pct": round(_f(r, "profit_margin") * 100, 1)
-            if _f(r, "profit_margin") is not None else None,
+            "profit_margin_pct": profit_margin,
             "return_on_equity_pct": round(_f(r, "return_on_equity") * 100, 1)
             if _f(r, "return_on_equity") is not None else None,
+            # Estimate-revision momentum: forward-EPS consensus drift (a leading
+            # signal — analysts revise toward the new reality, price drifts after).
+            "eps_revision_90d_pct": _f(r, "eps_revision_90d_pct"),
+            "eps_revision_30d_pct": _f(r, "eps_revision_30d_pct"),
+            "num_analysts": _f(r, "num_analysts"),
+        },
+        # Earnings quality: does reported profit convert to cash? (accruals)
+        "earnings_quality": {
+            "rating": earnings_quality,
+            "profit_margin_pct": profit_margin,
+            "fcf_margin_pct": fcf_margin,
+            "accrual_gap_pp": accrual_gap,
         },
         # Business-quality / durability block: what the moat & secular-trend
         # analyst reasons over (margins = pricing power, FCF = self-funding,

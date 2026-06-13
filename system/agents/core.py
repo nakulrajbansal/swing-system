@@ -167,6 +167,14 @@ class SkepticAgent(Agent):
                 "event_risk",
                 f"earnings on {ev.get('next_earnings_date')} ({d2e:.0f} days away) fall "
                 "inside the hold window — a binary print can gap through any stop", 0.55))
+        eq = inputs.get("evidence", {}).get("earnings_quality", {})
+        if eq.get("rating") == "poor":
+            objs.append(Objection(
+                "earnings_quality",
+                f"reported profit margin ({eq.get('profit_margin_pct')}%) runs "
+                f"{eq.get('accrual_gap_pp')}pp above the cash-flow margin "
+                f"({eq.get('fcf_margin_pct')}%) — earnings are not converting to "
+                "cash (accrual red flag, weak earnings quality)", 0.5))
         corr = float(inputs.get("max_corr_to_book", 0.0))
         if corr > 0.6:
             objs.append(Objection("crowding",

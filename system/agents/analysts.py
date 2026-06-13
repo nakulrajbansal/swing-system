@@ -400,6 +400,22 @@ class GrowthAnalyst(Agent):
         pm = g.get("profit_margin_pct")
         if isinstance(pm, (int, float)) and pm < 0:
             con.append(f"unprofitable (margin {pm:+.0f}%)"); score -= 0.05
+        # ESTIMATE-REVISION MOMENTUM: where the analyst consensus is HEADING.
+        # Upward forward-EPS revisions lead price (post-revision drift); the
+        # crowd of analysts is revising toward a reality the price hasn't fully
+        # caught. A real leading signal, weighted by analyst coverage.
+        rev90 = g.get("eps_revision_90d_pct")
+        na = g.get("num_analysts")
+        covered = isinstance(na, (int, float)) and na >= 4
+        if isinstance(rev90, (int, float)) and covered:
+            if rev90 >= 5:
+                pos.append(f"forward-EPS estimates REVISED UP {rev90:+.0f}% over 90 "
+                           "days - analysts catching up to improving fundamentals "
+                           "(a leading signal)"); score += 0.14
+            elif rev90 <= -5:
+                con.append(f"forward-EPS estimates CUT {rev90:+.0f}% over 90 days - "
+                           "deteriorating consensus, price tends to drift down after");
+                score -= 0.14
         score = max(0.0, min(1.0, score))
         assess = (f"Revenue growth {rg if rg is not None else 'n/a'}%, earnings growth "
                   f"{eg if eg is not None else 'n/a'}%, forward-EPS guidance "

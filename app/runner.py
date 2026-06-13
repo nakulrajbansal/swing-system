@@ -1608,6 +1608,18 @@ def _assess_fundamentals(fu: dict) -> list[str]:
         ig = g["implied_fwd_eps_growth_pct"]
         gtag = "[guided up]" if ig > 5 else "[guided down]" if ig < -5 else "[flat]"
         out.append(f"  forward EPS guidance vs trailing: {ig:+.0f}% {gtag}")
+    rev90 = g.get("eps_revision_90d_pct")
+    if isinstance(rev90, (int, float)):
+        rtag = ("[GOOD: analysts raising]" if rev90 >= 5
+                else "[BAD: analysts cutting]" if rev90 <= -5 else "[stable]")
+        out.append(f"  est. revisions (fwd EPS, 90d): {rev90:+.0f}% {rtag}")
+    eq = (fu or {}).get("earnings_quality", {})
+    if eq.get("rating"):
+        qtag = {"poor": "[BAD: earnings not converting to cash]",
+                "strong": "[GOOD: cash-backed earnings]"}.get(eq["rating"], "[fair]")
+        out.append(f"  earnings quality: {eq['rating']} (profit margin "
+                   f"{eq.get('profit_margin_pct')}% vs FCF margin "
+                   f"{eq.get('fcf_margin_pct')}%) {qtag}")
     if fu.get("analyst_recommendation"):
         out.append(f"  street rating: {fu['analyst_recommendation']}")
     return out or ["  (fundamentals present but sparse)"]
@@ -2201,7 +2213,7 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
         if not risk_off and gems_n != 2 and gco.get("n"):
             log(f"[lens] hidden-gem slots tuned to {gems_n} from realized results "
                 f"({gco['n']} scored, {gco.get('win_rate_pct', 0):.0f}% hit rate).")
-        top = strategy.select_shortlist(ranked, k, gem_slots=gems_n)
+        top = strategy.select_shortlist(ranked, k, gem_slots=gems_n, closes=closes)
         if not top:
             log("\n[deep-dive] no name cleared the pre-filter bar (score > 0) in this "
                 "regime; standing down. Default is to do nothing.")
@@ -2382,7 +2394,8 @@ def run_strategy_backtest(cfg: AppConfig, emit: Emit) -> dict:
             f"equal-weight, hold {hold} sessions, repeat. No look-ahead.")
         with _redirect(log):
             res = strategy.walk_forward_backtest(closes, _metrics, weights,
-                                                 top_k=k, hold_days=hold)
+                                                 top_k=k, hold_days=hold,
+                                                 diversify_corr=True)
         if res.get("error"):
             log(f"[backtest] {res['error']}")
             return res
