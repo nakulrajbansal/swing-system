@@ -1,28 +1,46 @@
-# Swing Trading System
+# Swing Trading System — contributor & agent guide
 
 ## What this is
-An AI-native multi-agent swing trading system. The complete design is in
-docs/design/ai_native_MASTER_design_v1.0.md. READ IT before proposing changes.
+An AI-native multi-agent swing-trading desk: a desktop app + engine that screens
+the market, runs LLM analyst agents over the best names, manages the full trade
+lifecycle on a broker (paper by default), and learns from its own results.
 
-## Current phase
-Phase 1 ONLY: build the validation harness per
-docs/design/ai_native_validation_harness_spec_v1.0.md.
-Do NOT build agents, LLM calls, execution, or live data yet (out of scope, see spec section 9).
+**Start here:** [`README.md`](README.md) for the overview, then
+[`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) (operating the app),
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (modules & flows), and
+[`docs/SIGNALS.md`](docs/SIGNALS.md) (the signal catalogue). The original design
+is in `docs/design/`.
 
-## Non-negotiable rules (from the design)
-- Point-in-time integrity: nothing timestamped after T is ever visible at decision time T.
-  Add a CI leakage test and never weaken it.
-- Deterministic-first: this harness uses NO LLM calls.
-- Gap-aware fills: never assume a fill at the stop price on a gap.
-- Realistic costs on every simulated trade.
+## Status
+All phases are built and in active use: the validation harness (`harness/`), the
+agent/risk/execution engine (`system/`), and the desktop application + live
+workflow (`app/`). It runs offline + deterministic by default; real data, real
+LLM agents, and a real broker are opt-in and gated.
+
+> The original design called for a phased build (harness first). That phasing is
+> complete — this is no longer "Phase 1 only". Treat the invariants below as
+> binding; the phase restriction is historical.
+
+## Non-negotiable invariants (enforced in code; never weaken)
+- **Point-in-time integrity** — nothing timestamped after decision time T is ever
+  visible at T. Guarded by `tests/test_leakage.py`.
+- **Deterministic-first** — every agent/signal has a deterministic path; the
+  whole system runs free and offline without an LLM.
+- **Two keys** — a trade opens only if the PM chooses ENTER *and* the Risk
+  Governor approves+sizes it. No agent ever sizes or places an order.
+- **Asymmetric autonomy** — automation may only *reduce* risk; raising a limit,
+  scaling capital, or enabling live trading requires a human.
+- **Fail to PASS** — any agent error defaults the candidate to PASS.
+- **Gap-aware fills & realistic costs** on every simulated trade.
 
 ## Stack
-Python 3.11+, pandas, numpy. Local parquet/SQLite store. No network except the data loader.
+Python 3.11+, pandas, numpy, Tkinter (stdlib GUI). Optional: yfinance + requests
+(real data), anthropic (real LLM), pyinstaller (packaging). Local parquet store;
+no network except the data loaders and the broker.
 
-## Build order (from the harness spec section 10)
-1. pit_store.py + corp_actions.py + leakage CI test
-2. data/loader.py (EDGAR + free prices)
-3. study/ (event_study, stats, costs)
-4. signals/edge01_filing.py, validate end to end
-5. remaining free edges (2, 6, 7, 8)
-6. report/
+## Working conventions
+- New behaviour ships with a test; keep `pytest` green on every commit.
+- After changing app/engine code, rebuild the exe (`build\build_windows.ps1`) and
+  verify with `--selftest`; the running app locks the exe, so close it first.
+- Agent reasoning is rendered in full (wrapped, never truncated) in the console
+  and the saved logs.
