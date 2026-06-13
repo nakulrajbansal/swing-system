@@ -314,12 +314,51 @@ def _news(view, symbol: str) -> list[str]:
     n = view.news(symbol)
     if n.empty:
         return []
-    return [str(h) for h in n.sort_values("available_at")["headline"].tail(5)]
+    return [str(h) for h in n.sort_values("available_at")["headline"].tail(8)]
+
+
+# Headline tone lexicon — deterministic, free, no extra LLM call. Catches the
+# obvious directional words; the LLM agents read the raw headlines too.
+_BULL_WORDS = ("beat", "beats", "raises", "raised", "surge", "surges", "soar",
+               "record", "upgrade", "upgraded", "outperform", "wins", "win",
+               "awarded", "expands", "expansion", "breakthrough", "approval",
+               "approved", "jumps", "rally", "tops", "strong", "boost", "buyback",
+               "all-time high", "guidance raise")
+_BEAR_WORDS = ("miss", "misses", "cuts", "cut", "slashes", "plunge", "plunges",
+               "downgrade", "downgraded", "underperform", "probe", "lawsuit",
+               "sued", "recall", "warns", "warning", "investigation", "fraud",
+               "halts", "delay", "delayed", "falls", "drops", "weak", "layoffs",
+               "guidance cut", "bankruptcy", "default", "slump")
+
+
+def _news_sentiment(headlines: list[str]) -> dict:
+    """Net directional tone of the recent headlines (deterministic lexicon) plus
+    any explicitly bearish item flagged — a real signal from text we already
+    fetch. The agents weigh it; thesis-contradicting news matters most to the
+    Guardian on an open position."""
+    if not headlines:
+        return {"available": False}
+    bull = bear = 0
+    flags = []
+    for h in headlines:
+        low = str(h).lower()
+        b = sum(1 for w in _BULL_WORDS if w in low)
+        r = sum(1 for w in _BEAR_WORDS if w in low)
+        bull += b
+        bear += r
+        if r > b:
+            flags.append(str(h)[:140])
+    net = bull - bear
+    tone = "bullish" if net >= 2 else "bearish" if net <= -2 else "mixed"
+    return {"available": True, "tone": tone, "bull_hits": bull, "bear_hits": bear,
+            "headline_count": len(headlines),
+            "bearish_items": flags[:3]}
 
 
 def assemble_evidence(view, symbol: str) -> dict:
     """Compact, readable, domain-specific evidence packet for one symbol."""
     fund = _fundamentals(view, symbol)
+    news = _news(view, symbol)
     return {
         "symbol": symbol,
         "as_of": str(view.asof_date.date()),
@@ -328,5 +367,6 @@ def assemble_evidence(view, symbol: str) -> dict:
         "events": _events(view, symbol, fund),
         "filings": _filings(view, symbol),
         "insider": _insider(view, symbol),
-        "recent_news": _news(view, symbol),
+        "recent_news": news,
+        "news_sentiment": _news_sentiment(news),
     }

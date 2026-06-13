@@ -72,6 +72,18 @@ def _metrics(close: pd.Series, bench_mom6: float,
     mom12 = last / float(c.iloc[-252]) - 1 if len(c) > 252 else None
     sma200 = float(c.iloc[-200:].mean())
     sma20 = float(c.iloc[-20:].mean())
+    # Multi-timeframe trend QUALITY: the 50-DMA above the 200-DMA and rising is
+    # a confirmed intermediate uptrend; a daily pop while the 50-DMA is below a
+    # falling 200-DMA is a counter-trend bounce (whipsaw risk). +1 confirmed,
+    # -1 unconfirmed-but-up, 0 otherwise.
+    sma50 = float(c.iloc[-50:].mean())
+    sma50_prior = float(c.iloc[-60:-10].mean()) if len(c) > 60 else sma50
+    trend_quality = 0
+    if last > sma200:
+        if sma50 > sma200 and sma50 >= sma50_prior:
+            trend_quality = 1                 # structure confirms the trend
+        elif sma50 < sma200:
+            trend_quality = -1                # above 200 but 50<200: fragile bounce
     win = c.iloc[-252:]
     high52 = float(win.max())
     low52 = float(win.min())
@@ -86,7 +98,7 @@ def _metrics(close: pd.Series, bench_mom6: float,
     return {"price": round(last, 2), "mom6": mom6, "mom3": mom3, "mom12": mom12,
             "accel": mom3 - mom6 / 2.0,
             "above_200dma": last > sma200, "dist_high": dist_high,
-            "pct_above_low": pct_above_low,
+            "pct_above_low": pct_above_low, "trend_quality": trend_quality,
             "ext20": last / sma20 - 1 if sma20 else 0.0,
             "rsi": _rsi(c), "rs": mom6 - bench_mom6,
             "earnings_gap": strategy.earnings_gap_drift(c), "bad_data": bad_data,

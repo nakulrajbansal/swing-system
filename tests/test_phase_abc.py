@@ -183,6 +183,60 @@ def test_wrap_never_truncates():
     assert _wrap("") == [] and _wrap(None) == []
 
 
+def test_weekly_trend_quality_rewards_confirmed_uptrends():
+    from app.strategy import composite_score
+
+    base = {"rs": 0.2, "mom6": 0.2, "mom3": 0.1, "above_200dma": True,
+            "dist_high": -0.1, "earnings_gap": 0.0, "accel": 0.0, "ext20": 0.01}
+    confirmed = composite_score({**base, "trend_quality": 1})
+    bounce = composite_score({**base, "trend_quality": -1})
+    assert confirmed > bounce          # confirmed structure beats a fragile bounce
+
+
+def test_news_sentiment_scores_tone_and_flags_bearish():
+    from system.data_plane.evidence import _news_sentiment
+
+    bull = _news_sentiment(["Company beats earnings, raises guidance",
+                            "Analyst upgrade as orders surge to record"])
+    assert bull["tone"] == "bullish" and bull["bear_hits"] == 0
+    bear = _news_sentiment(["SEC probe over accounting; shares plunge",
+                            "Analyst downgrade after guidance cut"])
+    assert bear["tone"] == "bearish" and bear["bearish_items"]
+    assert _news_sentiment([])["available"] is False
+
+
+def test_guardian_exits_on_thesis_contradicting_news():
+    from system.agents.llm_client import MockLLMClient
+    from system.agents.meta import GuardianAgent
+    from system.config import SystemConfig
+
+    g = GuardianAgent(MockLLMClient(), SystemConfig().models.framing)
+    d = g.run({"symbol": "AAA", "evidence": {"news_sentiment": {
+        "available": True, "tone": "bearish",
+        "bearish_items": ["recall and federal probe announced"]}}})
+    assert d.action == "exit" and "probe" in d.reason
+    # Bullish/mixed news never forces an exit.
+    assert g.run({"symbol": "AAA", "evidence": {"news_sentiment": {
+        "available": True, "tone": "bullish", "bearish_items": []}}}).action == "hold"
+
+
+def test_self_throttle_dormant_until_enough_data_then_derisks():
+    from system.reflection.calibration import desk_throttle
+
+    def calls(n, ret, conv=0.6):
+        return [{"status": "evaluated", "return_pct": ret, "conviction": conv,
+                 "evaluated_on": f"2026-06-{10 + i % 19:02d}"} for i in range(n)]
+
+    # Thin record: dormant no matter how bad.
+    assert desk_throttle(calls(5, -8.0))["active"] is False
+    # Cold streak with enough evidence: de-risk (raise bar, cut gross).
+    cold = desk_throttle(calls(12, -6.0))
+    assert cold["active"] and cold["conviction_bump"] > 0 and cold["gross_scale"] < 1.0
+    # Healthy record: never throttles (and never ADDS risk).
+    warm = desk_throttle(calls(12, 7.0))
+    assert warm["active"] is False and warm["gross_scale"] == 1.0
+
+
 def test_correlation_diversify_drops_near_duplicates_only():
     import numpy as np
     from app.strategy import correlation_diversify

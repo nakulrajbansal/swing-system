@@ -104,10 +104,33 @@ class FundamentalAnalyst(Agent):
         ev = inputs.get("evidence", {})
         f = ev.get("filings", {})
         ins = ev.get("insider", {})
+        ns = ev.get("news_sentiment", {})
+
+        def _apply_news(pos, con, score):
+            # Recent-headline tone (deterministic lexicon). Bearish news on a
+            # long is a real concern; bullish flow corroborates a catalyst.
+            if not ns.get("available"):
+                return score
+            if ns.get("tone") == "bullish":
+                pos.append(f"recent news skews bullish ({ns.get('bull_hits')} positive "
+                           f"vs {ns.get('bear_hits')} negative headline cues)")
+                score += 0.06
+            elif ns.get("tone") == "bearish":
+                detail = ns.get("bearish_items") or []
+                con.append("recent news skews NEGATIVE"
+                           + (f": {detail[0]}" if detail else "")); score -= 0.10
+            return score
+
         if not f.get("available"):
-            return AnalystRead("fundamental", "neutral", 0.5,
-                               "No recent filings available to analyze.", [],
-                               ["no recent filings"])
+            pos, con, score = [], [], 0.5
+            score = _apply_news(pos, con, score)
+            if not ns.get("available"):
+                return AnalystRead("fundamental", "neutral", 0.5,
+                                   "No recent filings available to analyze.", [],
+                                   ["no recent filings"])
+            score = max(0.0, min(1.0, score))
+            return AnalystRead("fundamental", _stance(score), score,
+                               "No filings; read is from recent news tone.", pos, con)
         pos, con, score = [], [], 0.5
         buys = (ins or {}).get("recent_purchases", [])
         if buys:
@@ -124,6 +147,7 @@ class FundamentalAnalyst(Agent):
         n8k = f.get("recent_8k_count", 0)
         if n8k >= 8:
             con.append(f"heavy 8-K cadence ({n8k} recently) — elevated event risk"); score -= 0.05
+        score = _apply_news(pos, con, score)
         lp = f.get("latest_periodic", {})
         score = max(0.0, min(1.0, score))
         assess = (f"Latest report {lp.get('form', 'filing')} ({lp.get('date', '?')}); "

@@ -51,6 +51,12 @@ class GuardianAgent(Agent):
         # Exit only on a thesis-breaking contemporaneous catalyst.
         if bool(inputs.get("thesis_broken", False)):
             return GuardianDecision(symbol, "exit", inputs.get("reason", "thesis broken"))
+        # Decisively negative recent news on a long is a thesis-break candidate.
+        ns = inputs.get("evidence", {}).get("news_sentiment", {})
+        if ns.get("available") and ns.get("tone") == "bearish" and ns.get("bearish_items"):
+            return GuardianDecision(
+                symbol, "exit",
+                f"negative news flow contradicts the long thesis: {ns['bearish_items'][0]}")
         return GuardianDecision(symbol, "hold")
 
     def parse(self, raw: dict, inputs: dict) -> GuardianDecision:

@@ -26,7 +26,7 @@ import pandas as pd
 BASE_WEIGHTS = {
     "rs": 2.0, "mom6": 1.0, "mom3": 0.5, "trend": 0.30,
     "near_high": 0.20, "earnings_gap": 0.80, "sector": 0.60, "accel": 0.60,
-    "volume": 0.30, "timing": 0.45,
+    "volume": 0.30, "timing": 0.45, "trend_quality": 0.35,
 }
 
 
@@ -160,6 +160,12 @@ def composite_score(m: dict, weights: dict | None = None,
     elif dh < -0.30:
         s -= w["near_high"]
     s += w["earnings_gap"] * m.get("earnings_gap", 0.0)
+    # Multi-timeframe TREND QUALITY: reward a confirmed intermediate uptrend
+    # (50-DMA above a rising 200-DMA), penalize a counter-trend bounce — a
+    # whipsaw-reducing weekly-structure check on top of the daily trend.
+    tq = m.get("trend_quality")
+    if isinstance(tq, (int, float)):
+        s += w.get("trend_quality", 0.0) * tq
     # Momentum ACCELERATION: is the recent 3-month pace running ahead of the
     # 6-month average pace? An igniting trend scores before it is consensus.
     s += w.get("accel", 0.0) * _clamp(m.get("accel", 0.0), -0.3, 0.4)
@@ -355,16 +361,20 @@ def correlation_diversify(ranked_syms: list[str], closes, k: int,
 
 
 def construct_portfolio(recs: list[dict], equity: float, regime: dict | None = None,
-                        max_name: float = 0.25, max_sector: float = 0.65) -> list[dict]:
+                        max_name: float = 0.25, max_sector: float = 0.65,
+                        gross_scale: float = 1.0) -> list[dict]:
     """Conviction-scaled portfolio with per-name / per-sector caps and a
     regime-scaled gross-exposure budget. ``recs`` each need symbol, entry,
-    conviction (and optionally sector). Returns sized allocations."""
+    conviction (and optionally sector). ``gross_scale`` (<=1) further caps gross
+    exposure — the self-throttle uses it to stand the desk down on a cold
+    streak. Returns sized allocations."""
     buys = [r for r in recs if r.get("entry")]
     if not buys:
         return []
     gross = 1.0
     if regime and regime.get("available") and not regime.get("above_200dma"):
         gross = 0.50                                  # risk-off: half invested
+    gross *= max(0.0, min(1.0, gross_scale))          # self-throttle de-risking
     raw = {r["symbol"]: max(0.05, float(r.get("conviction", 0.0))) for r in buys}
     total = sum(raw.values()) or 1.0
     weights = {s: min(max_name, v / total) for s, v in raw.items()}

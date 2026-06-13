@@ -1733,6 +1733,15 @@ def _analysis_summary(log: Emit, symbol: str, evidence: dict, transcript: dict,
                 if evts.get("earnings_within_swing_window") else "")
         log(f"  next earnings: {evts.get('next_earnings_date')} "
             f"({evts.get('days_to_earnings')} days away){warn}")
+    nsent = evidence.get("news_sentiment", {})
+    if nsent.get("available"):
+        _h("NEWS TONE")
+        ttag = {"bullish": "[GOOD]", "bearish": "[BAD]"}.get(nsent["tone"], "[mixed]")
+        log(f"  recent headlines skew {nsent['tone'].upper()} {ttag}  "
+            f"({nsent.get('bull_hits')} positive / {nsent.get('bear_hits')} negative "
+            f"cues across {nsent.get('headline_count')} headlines)")
+        for it in (nsent.get("bearish_items") or [])[:2]:
+            log(f"    - flagged: {it}")
     mac = evidence.get("macro", {})
     if mac.get("available"):
         _h("MACRO BACKDROP")
@@ -2159,6 +2168,17 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
         if macro and macro.get("backdrop") == "hostile":
             risk_off = True
             log("[macro] hostile backdrop -> risk-off: fewer, more selective picks.")
+        # SELF-THROTTLE ('shut down if no edge'): when the desk's OWN recent
+        # recommendations have been poor or its convictions ran hot, raise the
+        # entry bar and cut exposure. Dormant until enough trades are scored;
+        # only ever reduces risk.
+        from system.reflection.calibration import desk_throttle
+        throttle = desk_throttle(reco_ledger.load())
+        if throttle["active"]:
+            log(f"[throttle] DE-RISKING: {throttle['reason']}. Raising the BUY bar "
+                f"(+{throttle['conviction_bump']:.2f} conviction) and capping gross "
+                f"exposure to {throttle['gross_scale'] * 100:.0f}% until the record "
+                "improves. (The desk stands down when it isn't paying.)")
         dropped = regime.get("dropped_bad_data", 0)
         if dropped:
             log(f"[prefilter] dropped {dropped} name(s) with implausible/corrupt "
@@ -2253,6 +2273,16 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
                         "would add to it, not diversify.")
                 recs.append(rec)
 
+        # Apply the self-throttle's raised entry bar: when de-risking, only the
+        # higher-conviction calls survive (lower ones drop to WATCH).
+        if throttle["active"] and throttle["conviction_bump"] > 0:
+            bar = 0.55 + throttle["conviction_bump"]
+            held_back = [r for r in recs if r["conviction"] < bar]
+            recs = [r for r in recs if r["conviction"] >= bar]
+            for r in held_back:
+                log(f"[throttle] holding back {r['symbol']} (conviction "
+                    f"{r['conviction']:.2f} < raised bar {bar:.2f}) - watch, don't buy.")
+
         log("\n" + "=" * 60)
         log(f"{label} SCREEN RESULTS  ({today})  -- advisory only, no orders")
         log("=" * 60)
@@ -2271,8 +2301,10 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
                 log(ln)
 
         # Portfolio construction: conviction-scaled, capped, regime-budgeted —
-        # sized off the REAL account equity when broker keys are present.
-        portfolio = strategy.construct_portfolio(recs, equity, regime)
+        # sized off the REAL account equity when broker keys are present, and
+        # further capped by the self-throttle on a cold streak.
+        portfolio = strategy.construct_portfolio(
+            recs, equity, regime, gross_scale=throttle["gross_scale"])
         if portfolio:
             log(f"\n  SUGGESTED PORTFOLIO (@ ${equity:,.0f} equity, conviction-weighted, "
                 f"capped, {'~50% invested - risk-off' if risk_off else 'fully invested'}):")

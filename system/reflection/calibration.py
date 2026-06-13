@@ -52,6 +52,47 @@ def calibrated_probability(conviction, table: dict, k: int = PSEUDO_N):
     return round((band["wins"] + c * k) / (band["n"] + k), 2)
 
 
+THROTTLE_MIN_N = 8        # need this many scored calls before judging a streak
+
+
+def desk_throttle(rows: list[dict], recent: int = 12) -> dict:
+    """The 'shut down if no edge' control, keyed off the desk's own realized
+    recommendations. When the recent record is poor OR convictions are running
+    hot vs. realized odds, raise the entry bar and cut gross exposure. STRICTLY
+    risk-reducing and DORMANT until enough trades are scored, so it can never
+    misfire on thin data or make the desk more aggressive."""
+    scored = [r for r in rows
+              if r.get("status") == "evaluated"
+              and isinstance(r.get("return_pct"), (int, float))]
+    scored.sort(key=lambda r: str(r.get("evaluated_on") or ""))
+    n = len(scored)
+    off = {"active": False, "conviction_bump": 0.0, "gross_scale": 1.0,
+           "n": n, "reason": ""}
+    if n < THROTTLE_MIN_N:
+        return off
+    window = scored[-recent:]
+    wins = sum(1 for r in window if r["return_pct"] > 0)
+    hit = 100.0 * wins / len(window)
+    convs = [r["conviction"] for r in window
+             if isinstance(r.get("conviction"), (int, float))]
+    avg_conv = (sum(convs) / len(convs) * 100) if convs else None
+    cal_gap = (avg_conv - hit) if avg_conv is not None else 0.0
+    reasons = []
+    if hit < 40:
+        reasons.append(f"recent hit rate {hit:.0f}% over {len(window)} calls")
+    if cal_gap >= 25:
+        reasons.append(f"convictions running ~{cal_gap:.0f}pp hot vs realized")
+    if not reasons:
+        return off
+    # Graduated, capped de-risking — bigger when the evidence is worse.
+    bump = 0.05 if hit < 40 else 0.0
+    bump += 0.03 if cal_gap >= 25 else 0.0
+    scale = 0.6 if hit < 30 else 0.75
+    return {"active": True, "conviction_bump": round(min(bump, 0.10), 2),
+            "gross_scale": scale, "n": n,
+            "reason": "; ".join(reasons)}
+
+
 def describe(p, table: dict) -> str:
     """Human label for a calibrated probability — always says the evidence."""
     n = table.get("n_total", 0)
