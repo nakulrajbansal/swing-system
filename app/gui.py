@@ -74,24 +74,25 @@ _GROUPS = [
 ]
 
 # -- palette (dark, layered: sidebar < content < card < raised; one accent) ----
-SIDEBAR = "#0c0f14"     # deepest (left rail; also the titlebar caption color)
-BG = "#12161d"          # content background
-CARD = "#1a202a"        # card / surface (raised above content)
-SURF2 = "#252c39"       # raised controls (buttons, fields)
-SURF3 = "#2f3744"       # hover
-INK = "#eaedf3"         # primary text (off-white)
-MUTED = "#8590a3"       # secondary text
-FAINT = "#5a6577"       # tertiary / disabled
-ACCENT = "#46c08a"      # emerald accent (used sparingly)
-ACCENT_DK = "#37a074"
-ACCENT_SOFT = "#1f3a30"  # accent-tinted surface (active nav)
-ACCENT_INK = "#08120d"  # text on the accent
+# Deeper base so cards visibly float; a single confident emerald accent.
+SIDEBAR = "#0a0d12"     # deepest (left rail; also the titlebar caption color)
+BG = "#0e1217"          # content background
+CARD = "#171d27"        # card / surface (raised above content)
+SURF2 = "#222a37"       # raised controls (buttons, fields)
+SURF3 = "#2c3543"       # hover
+INK = "#edf0f5"         # primary text (off-white)
+MUTED = "#8893a4"       # secondary text
+FAINT = "#586374"       # tertiary / disabled
+ACCENT = "#4ccb96"      # emerald accent (used sparingly)
+ACCENT_DK = "#3aa97c"
+ACCENT_SOFT = "#15332a"  # accent-tinted surface (active nav)
+ACCENT_INK = "#06110b"  # text on the accent
 OK = "#5fd39a"
-DANGER = "#e06c6c"
-DANGER_SOFT = "#3a2026"
-GEM = "#62c8d8"          # hidden-gem cyan
-BORDER = "#272d38"
-HOVER = "#161b22"        # sidebar hover
+DANGER = "#e8736f"
+DANGER_SOFT = "#3a2024"
+GEM = "#64cdde"          # hidden-gem cyan
+BORDER = "#222936"
+HOVER = "#141a23"        # sidebar hover
 CONSOLE_BG = "#0b0e12"  # near-black console
 CONSOLE_FG = "#c8cfdb"
 
@@ -243,13 +244,14 @@ class SwingApp:
                 else "Menlo" if sys.platform == "darwin" else "DejaVu Sans Mono")
         self.f_base = tkfont.Font(family=fam, size=10)
         self.f_bold = tkfont.Font(family=fam, size=10, weight="bold")
-        self.f_section = tkfont.Font(family=fam, size=9, weight="bold")
-        self.f_title = tkfont.Font(family=fam, size=15, weight="bold")
-        self.f_h1 = tkfont.Font(family=fam, size=19, weight="bold")
-        self.f_sub = tkfont.Font(family=fam, size=9)
-        self.f_nav = tkfont.Font(family=fam, size=10)
+        self.f_section = tkfont.Font(family=fam, size=10, weight="bold")
+        self.f_title = tkfont.Font(family=fam, size=16, weight="bold")
+        self.f_h1 = tkfont.Font(family=fam, size=25, weight="bold")
+        self.f_sub = tkfont.Font(family=fam, size=10)
+        self.f_nav = tkfont.Font(family=fam, size=11)
         self.f_mono = tkfont.Font(family=mono, size=10)
         self.f_mono_bold = tkfont.Font(family=mono, size=10, weight="bold")
+        self._MAXW = 1580     # content column cap (centered on wide displays)
 
         # Dark-themed dropdown lists (tk Listbox inside ttk Combobox).
         self.root.option_add("*TCombobox*Listbox.background", CARD)
@@ -282,7 +284,9 @@ class SwingApp:
         s.configure("Status.TLabel", background=SIDEBAR, foreground=MUTED, font=self.f_sub)
         s.configure("OK.TLabel", background=BG, foreground=OK, font=self.f_sub)
         # Section headers that sit ABOVE cards (not inside a boxy LabelFrame).
-        s.configure("Section.TLabel", background=BG, foreground=MUTED,
+        s.configure("Section.TLabel", background=BG, foreground=INK,
+                    font=self.f_section)
+        s.configure("SectionTick.TLabel", background=BG, foreground=ACCENT,
                     font=self.f_section)
         s.configure("SectionSub.TLabel", background=BG, foreground=FAINT,
                     font=self.f_sub)
@@ -348,7 +352,7 @@ class SwingApp:
         outer.pack(fill="both", expand=True)
 
         # ---- left sidebar (brand + nav + status) ----
-        side = ttk.Frame(outer, style="Side.TFrame", width=220)
+        side = ttk.Frame(outer, style="Side.TFrame", width=238)
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
         brand = ttk.Frame(side, style="Side.TFrame")
@@ -395,16 +399,17 @@ class SwingApp:
             ("lessons", "Learning", "What the desk has learned from closed trades"),
             ("settings", "Settings", "Credentials, data, strategy parameters")):
             page = ttk.Frame(self._content)
-            head = ttk.Frame(page)
-            head.pack(fill="x", padx=26, pady=(22, 0))
+            col = self._centered_column(page)      # capped, centered on wide screens
+            head = ttk.Frame(col)
+            head.pack(fill="x", padx=30, pady=(26, 0))
             left = ttk.Frame(head)
             left.pack(side="left")
             ttk.Label(left, text=title, style="PageTitle.TLabel").pack(anchor="w")
-            ttk.Label(left, text=sub, style="PageSub.TLabel").pack(anchor="w", pady=(3, 0))
+            ttk.Label(left, text=sub, style="PageSub.TLabel").pack(anchor="w", pady=(4, 0))
             if key == "run":                       # context chips, right-aligned
                 self._chipbar = ttk.Frame(head)
-                self._chipbar.pack(side="right", anchor="n", pady=(4, 0))
-            body = ttk.Frame(page)
+                self._chipbar.pack(side="right", anchor="n", pady=(6, 0))
+            body = ttk.Frame(col)
             body.pack(fill="both", expand=True)
             self._pages[key] = page
             page._body = body
@@ -428,25 +433,41 @@ class SwingApp:
             self._refresh_performance()
 
     # -- shared building blocks ---------------------------------------------
+    def _centered_column(self, page):
+        """Keep page content in a centered column capped at MAXW — kills the
+        edge-to-edge stretch on wide monitors that reads as 'unstyled'. On
+        narrow screens it simply fills the width, so no regression."""
+        holder = ttk.Frame(page)
+        holder.pack(fill="both", expand=True)
+        col = ttk.Frame(holder)
+        col.place(relx=0.5, y=0, anchor="n", relheight=1.0, width=self._MAXW)
+
+        def _resize(e):
+            col.place_configure(width=min(e.width - 2, self._MAXW))
+        holder.bind("<Configure>", _resize)
+        return col
+
     def _card(self, parent, title: str | None = None, subtitle: str | None = None,
               expand: bool = False):
         """A flat, layered content card with its section header ABOVE it —
-        the borderless-card look that replaces boxy labeled frames."""
+        an accent tick, brighter label, generous breathing room."""
         wrap = ttk.Frame(parent)
         wrap.pack(fill="both" if expand else "x", expand=expand,
-                  padx=26, pady=(16, 0))
+                  padx=30, pady=(22, 0))
         if title:
             head = ttk.Frame(wrap)
-            head.pack(fill="x", pady=(0, 7))
-            ttk.Label(head, text=title.upper(), style="Section.TLabel").pack(side="left")
+            head.pack(fill="x", pady=(0, 9))
+            ttk.Label(head, text="▍", style="SectionTick.TLabel").pack(side="left")
+            ttk.Label(head, text=title.upper(), style="Section.TLabel").pack(
+                side="left", padx=(4, 0))
             if subtitle:
                 ttk.Label(head, text=subtitle, style="SectionSub.TLabel").pack(
-                    side="left", padx=(10, 0))
+                    side="left", padx=(12, 0))
         card = tk.Frame(wrap, bg=CARD, highlightbackground=BORDER,
                         highlightthickness=1, bd=0)
         card.pack(fill="both" if expand else "x", expand=expand)
         inner = ttk.Frame(card, style="Card.TFrame")
-        inner.pack(fill="both", expand=True, padx=16, pady=13)
+        inner.pack(fill="both", expand=True, padx=22, pady=18)
         return inner
 
     def _console(self, parent, height: int = 20):
