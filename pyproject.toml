@@ -19,6 +19,8 @@ live-data = ["yfinance>=0.2.40", "requests>=2.31"]
 llm = ["anthropic>=0.40"]
 # Desktop app packaging (Tkinter GUI is stdlib; only the bundler is extra).
 gui = ["pyinstaller>=6.0"]
+# Web UI: the browser app for cloud/anywhere access (reuses the runner flows).
+web = ["fastapi>=0.110", "uvicorn[standard]>=0.27"]
 
 [build-system]
 requires = ["setuptools>=68"]

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Swing System</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><span class="mark">◆</span><h1>Swing System</h1></div>
+    <div class="sub">AI swing desk</div>
+    <nav class="nav">
+      <a data-page="desk" class="active">Desk</a>
+      <a data-page="performance">Performance</a>
+      <a data-page="learning">Learning</a>
+      <a data-page="settings">Settings</a>
+    </nav>
+    <div class="foot">
+      <span id="envBadge" class="badge paper">PAPER</span>
+      <div class="status"><span class="dot">●</span> <span id="statusText">ready</span></div>
+    </div>
+  </aside>
+
+  <main class="content">
+    <!-- DESK -->
+    <section class="page active" id="page-desk">
+      <div class="head">
+        <div><h2>Desk</h2><div class="pagesub">Screen the market, analyze a name, run the agents</div></div>
+        <div class="chips" id="chips"></div>
+      </div>
+
+      <div class="section">Find opportunities<span class="desc">free pre-filter, then the AI agent panel on the best few</span></div>
+      <div class="card row">
+        <label class="lbl">Screen</label>
+        <select id="universe">
+          <option value="sp500">S&P 500 — large caps</option>
+          <option value="qqq">Nasdaq-100 (QQQ)</option>
+          <option value="sp400">S&P 400 — mid caps</option>
+          <option value="sp600">S&P 600 — small caps</option>
+          <option value="midsmall">Mid + small caps — hidden gems</option>
+          <option value="broad">S&P 1500 — broad sweep</option>
+        </select>
+        <button class="accent" onclick="run('screen',{universe:val('universe')})">Run screen ▸</button>
+        <span style="flex:1"></span>
+        <label class="lbl">Analyze</label>
+        <input type="text" id="ticker" placeholder="NVDA" style="width:110px"
+               onkeydown="if(event.key==='Enter')run('deepdive',{ticker:val('ticker')})">
+        <button class="accent" onclick="run('deepdive',{ticker:val('ticker')})">Deep-dive ▸</button>
+      </div>
+
+      <div class="section">Trade &amp; monitor</div>
+      <div class="card grid-btns">
+        <button onclick="run('review')">Review exits</button>
+        <button onclick="run('portfolio')">Portfolio P&amp;L</button>
+        <button onclick="run('momentum')">Momentum auto-trade</button>
+        <button onclick="run('backtest')">Strategy backtest</button>
+        <button onclick="run('reddit')">Reddit sentiment</button>
+      </div>
+
+      <div class="section">Order tickets<span class="desc">BUY recommendations from the last run</span></div>
+      <div class="card" id="ordersCard"><span class="faint small">Run a screen or a deep-dive — recommendations appear here.</span></div>
+
+      <div class="section">Watchlist<span class="desc">names waiting for their entry trigger</span></div>
+      <div class="card" id="watchCard"><span class="faint small">empty</span></div>
+
+      <div class="section">Output</div>
+      <div class="card">
+        <div class="toolbar">
+          <span class="spinner" id="spin"></span>
+          <span class="sp"></span>
+          <button class="tool" onclick="stopRun()" id="stopBtn" disabled>■ Stop</button>
+          <button class="tool" onclick="copyConsole()">Copy</button>
+          <button class="tool" onclick="document.getElementById('console').textContent=''">Clear</button>
+        </div>
+        <div id="console"></div>
+      </div>
+    </section>
+
+    <!-- PERFORMANCE -->
+    <section class="page" id="page-performance">
+      <h2>Performance</h2><div class="pagesub">How the desk's calls have actually done</div>
+      <div class="section">Equity curve</div>
+      <div class="card"><canvas id="equity" height="170"></canvas></div>
+      <div class="section">Scorecard</div>
+      <div class="card"><pre class="block" id="perfText">Loading…</pre></div>
+    </section>
+
+    <!-- LEARNING -->
+    <section class="page" id="page-learning">
+      <h2>Learning</h2><div class="pagesub">What the desk has learned from closed trades</div>
+      <div class="section">Lessons &amp; base rates<span class="desc">AI-curated; evidence-gated</span></div>
+      <div class="card"><button class="tool" onclick="run('curate')">Run AI curator</button>
+        <pre class="block" id="learnText" style="margin-top:10px">Loading…</pre></div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="page" id="page-settings">
+      <h2>Settings</h2><div class="pagesub">Credentials, data, options (saved on the server)</div>
+      <div class="section">Configuration</div>
+      <div class="card"><div class="formgrid" id="settingsForm"></div>
+        <button class="accent" onclick="saveSettings()">Save configuration</button>
+        <span id="saveMsg" class="ok small" style="margin-left:12px"></span></div>
+      <div class="section">Scheduled automation</div>
+      <div class="card"><span class="muted small">The always-on cloud schedule runs on the host this app
+        is deployed to. See docs/AUTOMATION.md and docs/WEB.md.</span></div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
