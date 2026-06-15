@@ -522,82 +522,31 @@ class SwingApp:
             self._add_fields(card, names)
 
         opts = self._card(body, "Options")
-        self.vars["use_llm_agents"] = tk.BooleanVar(value=self.cfg.use_llm_agents)
-        ttk.Checkbutton(opts, text="Use LLM agents (experimental — may spend tokens)",
-                        variable=self.vars["use_llm_agents"]).pack(anchor="w", padx=8, pady=2)
-        self.vars["only_validated_edges"] = tk.BooleanVar(value=self.cfg.only_validated_edges)
-        ttk.Checkbutton(opts, text="Only trade validated edges (run validation first)",
-                        variable=self.vars["only_validated_edges"]).pack(anchor="w", padx=8, pady=2)
-        self.vars["verbose_agents"] = tk.BooleanVar(value=self.cfg.verbose_agents)
-        ttk.Checkbutton(opts, text="Show full agent reasoning (prompts, inputs, outputs)",
-                        variable=self.vars["verbose_agents"]).pack(anchor="w", padx=8, pady=2)
-        self.vars["place_orders"] = tk.BooleanVar(value=self.cfg.place_orders)
-        ttk.Checkbutton(opts, text="Place approved orders on Alpaca (live deliberation)",
-                        variable=self.vars["place_orders"]).pack(anchor="w", padx=8, pady=2)
-        self.vars["self_tune_weights"] = tk.BooleanVar(value=self.cfg.self_tune_weights)
-        ttk.Checkbutton(opts, text="Self-tune screen weights nightly (trailing "
-                                   "walk-forward picks the preset)",
-                        variable=self.vars["self_tune_weights"]).pack(anchor="w", padx=8, pady=2)
-        self.vars["auto_manage_exits"] = tk.BooleanVar(value=self.cfg.auto_manage_exits)
-        ttk.Checkbutton(opts, text="Manage exits unattended (let scheduled runs execute "
-                                   "reduce-only Guardian exits without enabling auto-buys)",
-                        variable=self.vars["auto_manage_exits"]).pack(anchor="w", padx=8, pady=2)
-        self.vars["learn_from_runs"] = tk.BooleanVar(value=self.cfg.learn_from_runs)
-        ttk.Checkbutton(opts, text="Learn from runs (reflect on closed trades + recall lessons)",
-                        variable=self.vars["learn_from_runs"]).pack(anchor="w", padx=8, pady=2)
-        self.vars["auto_approve_lessons"] = tk.BooleanVar(value=self.cfg.auto_approve_lessons)
-        ttk.Checkbutton(opts, text="Auto-activate new lessons instantly (skip the AI "
-                                   "curator's evidence gate)",
-                        variable=self.vars["auto_approve_lessons"]).pack(anchor="w", padx=8, pady=2)
-        self.vars["enable_live_trading"] = tk.BooleanVar(value=self.cfg.enable_live_trading)
-        ttk.Checkbutton(opts, text="Enable LIVE (real-money) Alpaca env — extra gate",
-                        variable=self.vars["enable_live_trading"],
-                        command=self._warn_live).pack(anchor="w", padx=8, pady=2)
-        ttk.Label(opts, style="Muted.TLabel", wraplength=820, justify="left",
-                  text="Data source 'live' pulls REAL free data (Yahoo), cached locally; "
-                       "'synthetic' is a planted-signal demo. Alpaca 'paper' = fake money, "
-                       "'live' = REAL money (also needs the Enable-live gate). 'Place "
-                       "approved orders' submits the live-deliberation's approved trades; "
-                       "OFF = show proposals only. Keys are saved to "
-                       "~/.swing_system/config.json (never committed or bundled).").pack(
-            anchor="w", padx=8, pady=(6, 4))
+        self._option(opts, "use_llm_agents", "Use real AI agents",
+                     "Real LLM reasoning (needs an Anthropic key; costs tokens). "
+                     "Off = a free deterministic stand-in that still runs the full pipeline.")
+        self._option(opts, "verbose_agents", "Show full agent reasoning in the output",
+                     "Print each agent's thesis, objections, and decision. "
+                     "Off = just the summary scorecard.")
+        self._option(opts, "self_tune_weights", "Self-tune the screen nightly",
+                     "Each day, use the factor-weight preset that has been winning a "
+                     "trailing walk-forward.")
+        self._option(opts, "learn_from_runs", "Learn from closed trades",
+                     "Score outcomes and recall lessons across runs — powers the win-"
+                     "probability calibration, the curator, and self-tuning.")
+        self._option(opts, "auto_approve_lessons", "Trust new lessons instantly (advanced)",
+                     "Skip the AI curator's evidence gate. Not recommended until the "
+                     "ledger has many scored trades.")
+        self._option(opts, "place_orders", "Auto-place approved orders",
+                     "Let agent / scheduled runs submit approved tickets to Alpaca "
+                     "automatically. Off (recommended) = you place tickets yourself "
+                     "from the order table.")
+        self._option(opts, "enable_live_trading", "Allow LIVE (real-money) trading",
+                     "Required — together with Alpaca environment = live — before any "
+                     "real-money order. Default off = paper only.",
+                     command=self._warn_live)
 
-        auto = self._card(body, "Automation",
-                          "schedule the desk to run itself (times reasoned in ET)")
-        from app import schedule as _sch
-        ttk.Label(auto, style="CardMuted.TLabel", wraplength=820, justify="left",
-                  text="Pick a schedule preset and the universe(s) to screen. Times "
-                       "are set in market (ET) time and converted to this PC's clock. "
-                       "Review/watch run reduce-only; the screen produces "
-                       "recommendations (no auto-buy). For an always-on schedule that "
-                       "runs even when this PC is off, see docs/AUTOMATION.md "
-                       "(GitHub Actions).").pack(anchor="w", pady=(0, 8))
-        grid = ttk.Frame(auto, style="Card.TFrame")
-        grid.pack(fill="x", pady=(0, 8))
-        ttk.Label(grid, text="Preset", style="Card.TLabel").grid(
-            row=0, column=0, sticky="w", padx=(0, 10))
-        self.vars["schedule_preset"] = tk.StringVar(value=self.cfg.schedule_preset)
-        ttk.Combobox(grid, textvariable=self.vars["schedule_preset"],
-                     values=list(_sch.PRESET_LABELS), state="readonly", width=12).grid(
-            row=0, column=1, sticky="w")
-        ttk.Label(grid, text="Screen universes", style="Card.TLabel").grid(
-            row=0, column=2, sticky="e", padx=(24, 10))
-        self.vars["scheduled_screen_universes"] = tk.StringVar(
-            value=self.cfg.scheduled_screen_universes)
-        ttk.Entry(grid, textvariable=self.vars["scheduled_screen_universes"],
-                  width=24).grid(row=0, column=3, sticky="w")
-        ttk.Label(grid, text="comma list, e.g. sp500,midsmall",
-                  style="CardFaint.TLabel").grid(row=1, column=3, sticky="w", pady=(2, 0))
-        abar = ttk.Frame(auto, style="Card.TFrame")
-        abar.pack(fill="x")
-        ttk.Button(abar, text="Apply schedule", style="TButton", cursor="hand2",
-                   takefocus=False, command=self._schedule_daily).pack(side="left")
-        ttk.Button(abar, text="Remove schedule", style="Tool.TButton", cursor="hand2",
-                   takefocus=False, command=self._unschedule_daily).pack(
-            side="left", padx=(8, 0))
-        self.sched_status = ttk.Label(abar, text="", style="CardMuted.TLabel")
-        self.sched_status.pack(side="left", padx=(12, 0))
-        self._refresh_sched_status()
+        self._build_automation(body)
 
         bar = ttk.Frame(parent)
         bar.pack(fill="x", padx=26, pady=14)
@@ -942,19 +891,17 @@ class SwingApp:
             elif kind == "float":
                 val = float(val)
             d[field] = val
-        d["use_llm_agents"] = bool(self.vars["use_llm_agents"].get())
-        d["only_validated_edges"] = bool(self.vars["only_validated_edges"].get())
-        d["verbose_agents"] = bool(self.vars["verbose_agents"].get())
-        d["place_orders"] = bool(self.vars["place_orders"].get())
-        d["enable_live_trading"] = bool(self.vars["enable_live_trading"].get())
-        d["learn_from_runs"] = bool(self.vars["learn_from_runs"].get())
-        d["self_tune_weights"] = bool(self.vars["self_tune_weights"].get())
-        d["auto_approve_lessons"] = bool(self.vars["auto_approve_lessons"].get())
-        for k in ("schedule_preset", "scheduled_screen_universes"):
+        # boolean option toggles (each only collected if its checkbox was built).
+        for k in ("use_llm_agents", "verbose_agents", "place_orders",
+                  "enable_live_trading", "learn_from_runs", "self_tune_weights",
+                  "auto_approve_lessons", "auto_manage_exits"):
+            if k in self.vars:
+                d[k] = bool(self.vars[k].get())
+        # scheduling fields (string vars from the Automation card).
+        for k in ("schedule_preset", "scheduled_screen_universes",
+                  "custom_review_et", "custom_screen_et", "custom_watch_et"):
             if k in self.vars:
                 d[k] = self.vars[k].get()
-        if "auto_manage_exits" in self.vars:
-            d["auto_manage_exits"] = bool(self.vars["auto_manage_exits"].get())
         return AppConfig(**d)
 
     # -- selective execution ----------------------------------------------
@@ -1135,6 +1082,186 @@ class SwingApp:
                 "switch / your Alpaca dashboard to halt.")
 
     # -- daily automation (Windows Task Scheduler) ---------------------------
+    # -- settings building blocks ------------------------------------------
+    def _option(self, parent, key, label, help_text, command=None):
+        """A checkbox with a one-line explanation underneath — so every toggle
+        says exactly what it does."""
+        self.vars[key] = tk.BooleanVar(value=getattr(self.cfg, key))
+        cb = ttk.Checkbutton(parent, text=label, variable=self.vars[key])
+        if command:
+            cb.configure(command=command)
+        cb.pack(anchor="w", padx=8, pady=(7, 0))
+        ttk.Label(parent, text=help_text, style="CardFaint.TLabel",
+                  wraplength=820, justify="left").pack(anchor="w", padx=30, pady=(0, 2))
+
+    # human labels for the schedule jobs.
+    _JOB_META = {
+        "review": ("Review exits", "protect & exit the open book — arm stops, "
+                   "time-exits, Guardian exits (all reduce-only)"),
+        "watch": ("Watchlist", "alert when a watched name reaches its entry trigger"),
+        "screen": ("Screen", "find new ideas on final daily bars — produces "
+                   "recommendations (never auto-buys)"),
+        "daily": ("Daily run", "review the open book, then screen — one combined run"),
+    }
+
+    def _build_automation(self, body):
+        from app import schedule as _sch
+        auto = self._card(body, "Automation", "schedule the desk to run itself")
+        ttk.Label(auto, style="CardMuted.TLabel", wraplength=840, justify="left",
+                  text="Times are set in market (ET) time and converted to this PC's "
+                       "clock. This schedule only runs while this PC is ON — for an "
+                       "always-on schedule that runs even when it is off, see "
+                       "docs/AUTOMATION.md (free GitHub Actions).").pack(
+            anchor="w", pady=(0, 8))
+
+        # preset + universes row
+        top = ttk.Frame(auto, style="Card.TFrame")
+        top.pack(fill="x")
+        ttk.Label(top, text="Preset", style="Card.TLabel").grid(
+            row=0, column=0, sticky="w", padx=(0, 10))
+        self.vars["schedule_preset"] = tk.StringVar(value=self.cfg.schedule_preset)
+        cb = ttk.Combobox(top, textvariable=self.vars["schedule_preset"],
+                          values=list(_sch.PRESET_LABELS), state="readonly", width=11)
+        cb.grid(row=0, column=1, sticky="w")
+        cb.bind("<<ComboboxSelected>>", lambda e: self._refresh_schedule_view())
+        ttk.Label(top, text="Screen universe(s)", style="Card.TLabel").grid(
+            row=0, column=2, sticky="e", padx=(24, 10))
+        self.vars["scheduled_screen_universes"] = tk.StringVar(
+            value=self.cfg.scheduled_screen_universes)
+        ttk.Entry(top, textvariable=self.vars["scheduled_screen_universes"],
+                  width=22).grid(row=0, column=3, sticky="w")
+        ttk.Label(top, text="comma list, e.g. sp500,midsmall",
+                  style="CardFaint.TLabel").grid(row=1, column=3, sticky="w")
+        # custom-time vars (used when the preset is 'custom').
+        for k in ("custom_review_et", "custom_screen_et", "custom_watch_et"):
+            self.vars[k] = tk.StringVar(value=getattr(self.cfg, k))
+
+        ttk.Label(auto, text="WHAT RUNS, AND WHEN", style="Section.TLabel").pack(
+            anchor="w", pady=(12, 2))
+        self._sched_view = ttk.Frame(auto, style="Card.TFrame")
+        self._sched_view.pack(fill="x")
+        self._refresh_schedule_view()
+
+        self._option(auto, "auto_manage_exits",
+                     "Let a scheduled Review exit positions for me",
+                     "When the scheduled Review runs while you're away, execute its "
+                     "Guardian exits automatically (reduce-only). Off = those exits "
+                     "are only logged as suggestions. New BUYS are still never placed "
+                     "automatically unless 'Auto-place approved orders' is on.")
+
+        ttk.Label(auto, text="CURRENTLY SCHEDULED ON THIS PC", style="Section.TLabel").pack(
+            anchor="w", pady=(8, 2))
+        self._active_view = ttk.Frame(auto, style="Card.TFrame")
+        self._active_view.pack(fill="x")
+
+        abar = ttk.Frame(auto, style="Card.TFrame")
+        abar.pack(fill="x", pady=(10, 0))
+        ttk.Button(abar, text="Apply schedule", style="Accent.TButton", cursor="hand2",
+                   takefocus=False, command=self._apply_schedule_ui).pack(side="left")
+        ttk.Button(abar, text="Remove all", style="Tool.TButton", cursor="hand2",
+                   takefocus=False, command=lambda: (self._unschedule_daily(),
+                                                     self._refresh_active_tasks())
+                   ).pack(side="left", padx=(8, 0))
+        ttk.Button(abar, text="Edit times as custom", style="Tool.TButton",
+                   cursor="hand2", takefocus=False, command=self._edit_as_custom).pack(
+            side="left", padx=(8, 0))
+        self.sched_status = ttk.Label(abar, text="", style="CardMuted.TLabel")
+        self.sched_status.pack(side="left", padx=(12, 0))
+        self._refresh_active_tasks()
+
+    def _refresh_schedule_view(self):
+        from app import schedule as _sch
+        for w in self._sched_view.winfo_children():
+            w.destroy()
+        preset = self.vars["schedule_preset"].get()
+        custom = preset == "custom"
+        cfg = self._collect_safe()
+        sched = _sch.resolve_schedule(cfg)
+        hdr = ("job", "what it does", "ET time(s)", "your local time")
+        for c, h in enumerate(hdr):
+            ttk.Label(self._sched_view, text=h, style="CardFaint.TLabel").grid(
+                row=0, column=c, sticky="w", padx=(0, 14), pady=(0, 3))
+        # show review/screen/watch for custom (editable), else the preset's jobs.
+        jobs = ["review", "screen", "watch"] if custom else list(sched)
+        for i, job in enumerate(jobs, 1):
+            name, desc = self._JOB_META.get(job, (job, ""))
+            ttk.Label(self._sched_view, text=name, style="Card.TLabel").grid(
+                row=i, column=0, sticky="w", padx=(0, 14), pady=2)
+            ttk.Label(self._sched_view, text=desc, style="CardMuted.TLabel",
+                      wraplength=380, justify="left").grid(
+                row=i, column=1, sticky="w", padx=(0, 14), pady=2)
+            times = ",".join(sched.get(job, [])) if not custom else None
+            if custom:
+                var = self.vars[f"custom_{job}_et"] if job in ("review", "screen", "watch") else None
+                ent = ttk.Entry(self._sched_view, textvariable=var, width=18)
+                ent.grid(row=i, column=2, sticky="w", padx=(0, 14), pady=2)
+                local_lbl = ttk.Label(self._sched_view, style="CardMuted.TLabel")
+                local_lbl.grid(row=i, column=3, sticky="w", pady=2)
+                ent.bind("<KeyRelease>", lambda e, v=var, l=local_lbl: l.config(
+                    text=self._local_times(v.get())))
+                local_lbl.config(text=self._local_times(var.get()))
+            else:
+                ttk.Label(self._sched_view, text=times + " ET",
+                          style="CardMuted.TLabel").grid(
+                    row=i, column=2, sticky="w", padx=(0, 14), pady=2)
+                ttk.Label(self._sched_view, text=self._local_times(times),
+                          style="CardMuted.TLabel").grid(row=i, column=3, sticky="w", pady=2)
+
+    @staticmethod
+    def _local_times(et_csv: str) -> str:
+        from app import schedule as _sch
+        out = [_sch.et_to_local(t.strip()) for t in str(et_csv or "").split(",") if t.strip()]
+        return ", ".join(out)
+
+    def _collect_safe(self):
+        try:
+            return self._collect()
+        except Exception:
+            return self.cfg
+
+    def _edit_as_custom(self):
+        from app import schedule as _sch
+        sched = _sch.resolve_schedule(self._collect_safe())
+        # seed the custom fields from the currently-shown preset (review/screen/watch).
+        self.vars["custom_review_et"].set(",".join(sched.get("review", []))
+                                          or self.vars["custom_review_et"].get())
+        self.vars["custom_screen_et"].set(",".join(sched.get("screen", []))
+                                          or self.vars["custom_screen_et"].get())
+        self.vars["custom_watch_et"].set(",".join(sched.get("watch", []))
+                                         or self.vars["custom_watch_et"].get())
+        self.vars["schedule_preset"].set("custom")
+        self._refresh_schedule_view()
+
+    def _refresh_active_tasks(self):
+        import subprocess
+        for w in self._active_view.winfo_children():
+            w.destroy()
+        rows = []
+        try:
+            r = subprocess.run(["schtasks", "/Query", "/FO", "LIST", "/V"],
+                               capture_output=True, text=True)
+            name = None
+            for ln in r.stdout.splitlines():
+                if "TaskName:" in ln and self._TASK_PREFIX in ln:
+                    name = ln.split("TaskName:")[1].strip().lstrip("\\")
+                elif name and ("Start Time:" in ln or "Next Run Time:" in ln) and ":" in ln:
+                    when = ln.split(":", 1)[1].strip()
+                    rows.append((name, when))
+                    name = None
+        except Exception:
+            pass
+        if rows:
+            for nm, when in rows:
+                ttk.Label(self._active_view, text=f"•  {nm}    {when}",
+                          style="CardMuted.TLabel").pack(anchor="w")
+        else:
+            ttk.Label(self._active_view, text="(none scheduled on this PC)",
+                      style="CardFaint.TLabel").pack(anchor="w")
+
+    def _apply_schedule_ui(self):
+        self._schedule_daily()
+        self._refresh_active_tasks()
+
     _TASK_PREFIX = "SwingSystem"          # all tasks created under this prefix
 
     def _exe_path(self) -> str | None:
