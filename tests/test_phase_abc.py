@@ -116,6 +116,25 @@ def test_pm_weighs_rejoinder_outcome():
     assert conceded.final_conviction > stands.final_conviction
 
 
+def test_missing_protection_requires_a_real_stop():
+    from app.runner import _missing_protection
+
+    plan = {"stop": 90.0, "target": 120.0}
+    # A take-profit target alone is NOT downside protection: the stop is missing.
+    target_only = [{"type": "limit", "limit_price": 120.0}]
+    arm_stop, arm_target = _missing_protection(target_only, plan)
+    assert arm_stop == 90.0 and arm_target is None
+    # A full OCO already resting: nothing to arm.
+    full = [{"type": "limit", "limit_price": 120.0},
+            {"type": "stop", "stop_price": 90.0}]
+    assert _missing_protection(full, plan) == (None, None)
+    # Nothing resting: arm both.
+    assert _missing_protection([], plan) == (90.0, 120.0)
+    # A stop_price on any order counts as a resting stop (type variants).
+    assert _missing_protection([{"type": "stop_limit", "stop_price": 90.0}],
+                               {"stop": 90.0})[0] is None
+
+
 def test_infer_exit_reason_names_the_trigger():
     from app.runner import _infer_exit_reason
 

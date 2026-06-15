@@ -685,20 +685,31 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
                     f"{o.get('type', '?')} @ {o.get('stop_price') or o.get('limit_price') or '?'}"
                     for o in resting[:3])
                 log(f"  protection resting at the broker: {levels}")
-            elif plan.get("stop") or plan.get("target"):
-                kind = ("OCO stop+target" if plan.get("stop") and plan.get("target")
-                        else "stop" if plan.get("stop") else "target")
-                log(f"  [protect] NO exit orders resting at the broker - arming "
-                    f"{kind} for {qty:.0f} sh (stop {plan.get('stop')}, "
-                    f"target {plan.get('target')}).")
+            # The STOP is the protection that matters: a take-profit target alone
+            # leaves the downside wide open. Arm only the MISSING leg(s) — never
+            # cancel what is already resting, so there is no unprotected window.
+            arm_stop, arm_target = _missing_protection(resting, plan)
+            want_stop, want_target = plan.get("stop"), plan.get("target")
+            if arm_stop or arm_target:
+                if resting and arm_stop and not arm_target:
+                    log(f"  [protect] DOWNSIDE UNPROTECTED — a target is resting but "
+                        f"NO STOP. Arming a protective stop @ {arm_stop} for "
+                        f"{qty:.0f} sh.")
+                elif not resting:
+                    kind = ("OCO stop+target" if arm_stop and arm_target
+                            else "stop" if arm_stop else "target")
+                    log(f"  [protect] NO exit orders resting - arming {kind} for "
+                        f"{qty:.0f} sh (stop {want_stop}, target {want_target}).")
+                else:
+                    log(f"  [protect] arming the missing "
+                        f"{'stop' if arm_stop else 'target'} for {qty:.0f} sh.")
                 try:
-                    o = broker.submit_exit_orders(sym, int(qty), plan.get("stop"),
-                                                  plan.get("target"))
+                    o = broker.submit_exit_orders(sym, int(qty), arm_stop, arm_target)
                     if isinstance(o, dict) and o.get("error"):
                         log(f"  [protect] failed: {o['error']}")
                     else:
                         out["protected"].append(sym)
-                        log(f"  [protect] exit orders ARMED - id {(o or {}).get('id', '?')} "
+                        log(f"  [protect] exit order(s) ARMED - id {(o or {}).get('id', '?')} "
                             f"status {(o or {}).get('status', '?')}.")
                 except Exception as exc:
                     log(f"  [protect] failed: {exc}")
@@ -1196,6 +1207,20 @@ def _sent(text, n: int = 900) -> str:
 
 def _step_out(transcript: dict, agent: str) -> dict:
     return next((s["output"] for s in transcript.get("steps", []) if s["agent"] == agent), {})
+
+
+def _missing_protection(resting: list[dict], plan: dict) -> tuple:
+    """Which protective leg the plan wants but is NOT resting at the broker.
+    Returns (arm_stop, arm_target) — the prices to arm, or None each. A
+    take-profit target ALONE is not protection: the stop is what guards the
+    downside, so a resting target never satisfies a wanted stop."""
+    has_stop = any((str(o.get("type", "")).startswith("stop") or o.get("stop_price"))
+                   for o in resting)
+    has_target = any(str(o.get("type", "")) == "limit" and o.get("limit_price")
+                     for o in resting)
+    want_stop, want_target = plan.get("stop"), plan.get("target")
+    return (want_stop if (want_stop and not has_stop) else None,
+            want_target if (want_target and not has_target) else None)
 
 
 def _infer_exit_reason(exit_price, stop, target) -> str:
