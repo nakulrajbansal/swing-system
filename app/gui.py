@@ -538,6 +538,10 @@ class SwingApp:
         ttk.Checkbutton(opts, text="Self-tune screen weights nightly (trailing "
                                    "walk-forward picks the preset)",
                         variable=self.vars["self_tune_weights"]).pack(anchor="w", padx=8, pady=2)
+        self.vars["auto_manage_exits"] = tk.BooleanVar(value=self.cfg.auto_manage_exits)
+        ttk.Checkbutton(opts, text="Manage exits unattended (let scheduled runs execute "
+                                   "reduce-only Guardian exits without enabling auto-buys)",
+                        variable=self.vars["auto_manage_exits"]).pack(anchor="w", padx=8, pady=2)
         self.vars["learn_from_runs"] = tk.BooleanVar(value=self.cfg.learn_from_runs)
         ttk.Checkbutton(opts, text="Learn from runs (reflect on closed trades + recall lessons)",
                         variable=self.vars["learn_from_runs"]).pack(anchor="w", padx=8, pady=2)
@@ -559,16 +563,34 @@ class SwingApp:
             anchor="w", padx=8, pady=(6, 4))
 
         auto = self._card(body, "Automation",
-                          "let the desk run itself on weekday afternoons")
-        ttk.Label(auto, style="CardMuted.TLabel", wraplength=760, justify="left",
-                  text="Two scheduled tasks (weekdays, Windows Task Scheduler): the "
-                       "daily run at 4:45 pm reviews open positions then screens your "
-                       "saved universe; the watchlist check at 12:30 + 3:30 pm fires "
-                       "a notification when a watched name reaches its entry "
-                       "trigger.").pack(anchor="w", pady=(0, 8))
+                          "schedule the desk to run itself (times reasoned in ET)")
+        from app import schedule as _sch
+        ttk.Label(auto, style="CardMuted.TLabel", wraplength=820, justify="left",
+                  text="Pick a schedule preset and the universe(s) to screen. Times "
+                       "are set in market (ET) time and converted to this PC's clock. "
+                       "Review/watch run reduce-only; the screen produces "
+                       "recommendations (no auto-buy). For an always-on schedule that "
+                       "runs even when this PC is off, see docs/AUTOMATION.md "
+                       "(GitHub Actions).").pack(anchor="w", pady=(0, 8))
+        grid = ttk.Frame(auto, style="Card.TFrame")
+        grid.pack(fill="x", pady=(0, 8))
+        ttk.Label(grid, text="Preset", style="Card.TLabel").grid(
+            row=0, column=0, sticky="w", padx=(0, 10))
+        self.vars["schedule_preset"] = tk.StringVar(value=self.cfg.schedule_preset)
+        ttk.Combobox(grid, textvariable=self.vars["schedule_preset"],
+                     values=list(_sch.PRESET_LABELS), state="readonly", width=12).grid(
+            row=0, column=1, sticky="w")
+        ttk.Label(grid, text="Screen universes", style="Card.TLabel").grid(
+            row=0, column=2, sticky="e", padx=(24, 10))
+        self.vars["scheduled_screen_universes"] = tk.StringVar(
+            value=self.cfg.scheduled_screen_universes)
+        ttk.Entry(grid, textvariable=self.vars["scheduled_screen_universes"],
+                  width=24).grid(row=0, column=3, sticky="w")
+        ttk.Label(grid, text="comma list, e.g. sp500,midsmall",
+                  style="CardFaint.TLabel").grid(row=1, column=3, sticky="w", pady=(2, 0))
         abar = ttk.Frame(auto, style="Card.TFrame")
         abar.pack(fill="x")
-        ttk.Button(abar, text="Schedule daily run", style="TButton", cursor="hand2",
+        ttk.Button(abar, text="Apply schedule", style="TButton", cursor="hand2",
                    takefocus=False, command=self._schedule_daily).pack(side="left")
         ttk.Button(abar, text="Remove schedule", style="Tool.TButton", cursor="hand2",
                    takefocus=False, command=self._unschedule_daily).pack(
@@ -928,6 +950,11 @@ class SwingApp:
         d["learn_from_runs"] = bool(self.vars["learn_from_runs"].get())
         d["self_tune_weights"] = bool(self.vars["self_tune_weights"].get())
         d["auto_approve_lessons"] = bool(self.vars["auto_approve_lessons"].get())
+        for k in ("schedule_preset", "scheduled_screen_universes"):
+            if k in self.vars:
+                d[k] = self.vars[k].get()
+        if "auto_manage_exits" in self.vars:
+            d["auto_manage_exits"] = bool(self.vars["auto_manage_exits"].get())
         return AppConfig(**d)
 
     # -- selective execution ----------------------------------------------
@@ -1108,70 +1135,90 @@ class SwingApp:
                 "switch / your Alpaca dashboard to halt.")
 
     # -- daily automation (Windows Task Scheduler) ---------------------------
-    _TASK_NAME = "SwingSystem Daily Run"
+    _TASK_PREFIX = "SwingSystem"          # all tasks created under this prefix
 
-    def _daily_command(self) -> str | None:
-        """The command the scheduled task runs: the packaged exe with --daily."""
+    def _exe_path(self) -> str | None:
+        """The packaged exe to schedule (frozen self, or dist\\SwingSystem.exe)."""
         if getattr(sys, "frozen", False):
-            return f'"{sys.executable}" --daily'
+            return sys.executable
         from pathlib import Path
         exe = Path(__file__).resolve().parents[1] / "dist" / "SwingSystem.exe"
-        return f'"{exe}" --daily' if exe.exists() else None
+        return str(exe) if exe.exists() else None
 
-    _WATCH_TASK = "SwingSystem Watchlist"
+    def _scheduled_tasks(self, cfg) -> list[tuple[str, str, str]]:
+        """(task name, command, local HH:MM) for every job/time in the preset —
+        ET times converted to this machine's local time."""
+        from app import schedule as sch
+        exe = self._exe_path()
+        if not exe:
+            return []
+        unis = ",".join(sch.screen_universes(cfg))
+        flag = {"review": "--review", "watch": "--watch",
+                "screen": f"--screen {unis}", "daily": f"--daily {unis}"}
+        out = []
+        for job, et_times in sch.resolve_schedule(cfg).items():
+            for et in et_times:
+                local = sch.et_to_local(et)
+                out.append((f"{self._TASK_PREFIX} {job} {et}ET",
+                            f'"{exe}" {flag[job]}', local))
+        return out
 
     def _schedule_daily(self):
         import subprocess
         if sys.platform != "win32":
-            messagebox.showinfo("Windows only", "Task scheduling uses Windows "
-                                "Task Scheduler; on macOS use launchd/cron.")
+            messagebox.showinfo("Windows only", "Task scheduling uses Windows Task "
+                                "Scheduler; for an always-on cloud schedule see "
+                                "docs/AUTOMATION.md (GitHub Actions).")
             return
-        cmd = self._daily_command()
-        if not cmd:
+        cfg = self._collect()
+        tasks = self._scheduled_tasks(cfg)
+        if not tasks:
             messagebox.showinfo("Build the app first",
                                 "No SwingSystem.exe found to schedule - build it "
-                                "with build\\build_windows.ps1, or run the "
-                                "packaged app and schedule from there.")
+                                "with build\\build_windows.ps1, or run the packaged "
+                                "app and schedule from there.")
             return
+        self._unschedule_daily(refresh=False)        # clean slate, then recreate
         try:
-            subprocess.run(["schtasks", "/Create", "/F", "/SC", "WEEKLY",
-                            "/D", "MON,TUE,WED,THU,FRI", "/TN", self._TASK_NAME,
-                            "/TR", cmd, "/ST", "16:45"],
-                           check=True, capture_output=True, text=True)
-            # Watchlist triggers fire DURING market hours: 12:30 + every 3h for
-            # 4h (=> 12:30 and 15:30) on weekdays.
-            subprocess.run(["schtasks", "/Create", "/F", "/SC", "WEEKLY",
-                            "/D", "MON,TUE,WED,THU,FRI", "/TN", self._WATCH_TASK,
-                            "/TR", cmd.replace("--daily", "--watch"),
-                            "/ST", "12:30", "/RI", "180", "/DU", "04:00"],
-                           check=True, capture_output=True, text=True)
+            for name, cmd, local in tasks:
+                subprocess.run(["schtasks", "/Create", "/F", "/SC", "WEEKLY",
+                                "/D", "MON,TUE,WED,THU,FRI", "/TN", name,
+                                "/TR", cmd, "/ST", local],
+                               check=True, capture_output=True, text=True)
         except Exception as exc:
             err = getattr(exc, "stderr", "") or str(exc)
             messagebox.showerror("Scheduling failed", err.strip()[:400])
             return
         self._refresh_sched_status()
 
-    def _unschedule_daily(self):
+    def _unschedule_daily(self, refresh: bool = True):
         import subprocess
-        for name in (self._TASK_NAME, self._WATCH_TASK):
-            try:
-                subprocess.run(["schtasks", "/Delete", "/F", "/TN", name],
-                               check=True, capture_output=True, text=True)
-            except Exception:
-                pass
-        self._refresh_sched_status()
+        try:                                          # delete every SwingSystem* task
+            r = subprocess.run(["schtasks", "/Query", "/FO", "LIST"],
+                               capture_output=True, text=True)
+            for line in r.stdout.splitlines():
+                if "TaskName:" in line and self._TASK_PREFIX in line:
+                    name = line.split("TaskName:")[1].strip().lstrip("\\")
+                    subprocess.run(["schtasks", "/Delete", "/F", "/TN", name],
+                                   capture_output=True, text=True)
+        except Exception:
+            pass
+        if refresh:
+            self._refresh_sched_status()
 
     def _refresh_sched_status(self):
         import subprocess
+        n = 0
         try:
-            r = subprocess.run(["schtasks", "/Query", "/TN", self._TASK_NAME],
+            r = subprocess.run(["schtasks", "/Query", "/FO", "LIST"],
                                capture_output=True, text=True)
-            on = r.returncode == 0
+            n = sum(1 for ln in r.stdout.splitlines()
+                    if "TaskName:" in ln and self._TASK_PREFIX in ln)
         except Exception:
-            on = False
+            n = 0
         self.sched_status.config(
-            text="● scheduled - weekdays 4:45 pm" if on else "not scheduled",
-            foreground=OK if on else MUTED)
+            text=f"● {n} task(s) scheduled" if n else "not scheduled",
+            foreground=OK if n else MUTED)
 
     def _analyze_ticker(self):
         sym = self.ent_ticker.get().strip().upper()

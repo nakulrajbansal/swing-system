@@ -756,7 +756,10 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
                 log("  [guardian] EXIT recommended:")
                 for ln in _wrap(d.reason, "      "):
                     log(ln)
-                if cfg.place_orders:
+                # Guardian exits are reduce-only, so an unattended run may execute
+                # them via auto_manage_exits even when place_orders (new buys) is
+                # off — the "manage exits only" cloud mode.
+                if cfg.place_orders or getattr(cfg, "auto_manage_exits", False):
                     try:
                         broker.close_position(sym)
                         reco_ledger.mark_closed(sym, cur, today, "guardian",

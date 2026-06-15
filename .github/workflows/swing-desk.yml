@@ -1,0 +1,134 @@
+# Always-on Swing System desk — runs on GitHub's cloud, no PC required.
+#
+# Three jobs on weekday ET schedules (crons are UTC; times below assume EDT
+# = UTC-4; in winter (EST) they shift one hour later in ET — fine for a swing
+# strategy, or adjust the crons):
+#   * review  10:00 ET (14:00 UTC) — arm stops, time-exits, Guardian exits (reduce-only)
+#   * watch   11/13/15 ET          — alert on watchlist entry triggers
+#   * screen  17:00 ET (21:00 UTC) — produce recommendations on FINAL daily bars (NO auto-buy)
+#
+# Mode: "manage exits only" — exits/protection execute unattended; new buys are
+# only logged as recommendations (SWING_PLACE_ORDERS=false). State (ledger /
+# learning / watchlist) persists across runs on the `swing-state` branch.
+#
+# SETUP (one time):
+#   1. Make the repo PRIVATE (the ledger reveals your positions).
+#   2. Settings > Secrets and variables > Actions > Secrets — add:
+#        ANTHROPIC_API_KEY, ALPACA_KEY_ID, ALPACA_SECRET, EDGAR_USER_AGENT
+#   3. (optional) Variables — add SWING_SCREEN_UNIVERSES, e.g. "sp500,midsmall",
+#        to choose which universe(s) the scheduled screen runs (comma list).
+#   4. Actions tab > enable workflows. Use "Run workflow" to test manually.
+# See docs/AUTOMATION.md for the full guide and the timing rationale.
+
+name: Swing desk
+
+on:
+  workflow_dispatch:            # manual run (pick the job + universe below)
+    inputs:
+      job:
+        description: "Which job to run"
+        type: choice
+        default: review
+        options: [review, watch, screen, daily]
+      universes:
+        description: "Screen universe(s), comma list (blank = repo default)"
+        default: ""
+  schedule:
+    - cron: "0 14 * * 1-5"      # review  — 10:00 ET
+    - cron: "0 15 * * 1-5"      # watch   — 11:00 ET
+    - cron: "0 17 * * 1-5"      # watch   — 13:00 ET
+    - cron: "0 19 * * 1-5"      # watch   — 15:00 ET
+    - cron: "0 21 * * 1-5"      # screen  — 17:00 ET
+
+# Never let two runs touch the state branch at once.
+concurrency:
+  group: swing-desk
+  cancel-in-progress: false
+
+permissions:
+  contents: write               # to push the swing-state branch
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    env:
+      # --- credentials (from repo Secrets) ---
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ALPACA_KEY_ID: ${{ secrets.ALPACA_KEY_ID }}
+      ALPACA_SECRET: ${{ secrets.ALPACA_SECRET }}
+      EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
+      # --- mode: live data, real agents, manage-exits-only (no auto-buy) ---
+      ALPACA_ENV: paper
+      SWING_DATA_SOURCE: live
+      SWING_USE_LLM: "true"
+      SWING_PLACE_ORDERS: "false"
+      SWING_AUTO_MANAGE_EXITS: "true"
+      SWING_SCREEN_UNIVERSES: ${{ vars.SWING_SCREEN_UNIVERSES || 'sp500' }}
+      SWING_HOME: ${{ github.workspace }}/_state
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Restore persisted state (swing-state branch)
+        run: |
+          mkdir -p _state && cd _state && git init -q
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          if git fetch -q --depth 1 origin swing-state; then
+            git checkout -q -B swing-state FETCH_HEAD   # restore prior ledger/learning
+          else
+            git checkout -q -b swing-state              # first run: empty state
+            printf 'data_store/\nlogs/\nconfig.json\n' > .gitignore
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      - name: Cache price data for the day
+        uses: actions/cache@v4
+        with:
+          path: _state/data_store
+          key: swing-data-${{ github.run_id }}
+          restore-keys: swing-data-
+
+      - name: Install
+        run: pip install -e ".[live-data,llm]"
+
+      - name: Decide which job
+        id: pick
+        run: |
+          case "${{ github.event.schedule }}" in
+            "0 14 * * 1-5") echo "job=review" >> "$GITHUB_OUTPUT" ;;
+            "0 21 * * 1-5") echo "job=screen" >> "$GITHUB_OUTPUT" ;;
+            "0 15 * * 1-5"|"0 17 * * 1-5"|"0 19 * * 1-5") echo "job=watch" >> "$GITHUB_OUTPUT" ;;
+            *) echo "job=${{ github.event.inputs.job || 'review' }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Run the desk
+        run: |
+          UNI="${{ github.event.inputs.universes }}"
+          case "${{ steps.pick.outputs.job }}" in
+            review) python -m app.main --review ;;
+            watch)  python -m app.main --watch ;;
+            screen) python -m app.main --screen ${UNI:+$UNI} ;;
+            daily)  python -m app.main --daily ${UNI:+$UNI} ;;
+          esac
+
+      - name: Persist state
+        if: always()
+        run: |
+          cd _state
+          git config user.name "swing-bot"
+          git config user.email "swing-bot@users.noreply.github.com"
+          git add -A -- '*.json' || true
+          git commit -q -m "state $(date -u +%FT%TZ) [skip ci]" || echo "no state change"
+          git push -q origin swing-state || echo "nothing to push"
+
+      - name: Upload run logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ github.run_id }}
+          path: _state/logs/
+          if-no-files-found: ignore
+          retention-days: 14

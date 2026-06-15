@@ -93,6 +93,31 @@ def _headless(fn, log_name: str, **overrides) -> int:
 _SCREEN_KEYS = {"sp500", "qqq", "sp400", "sp600", "midsmall", "broad"}
 
 
+def _arg_after(argv, flag):
+    i = argv.index(flag)
+    return argv[i + 1] if i + 1 < len(argv) and not argv[i + 1].startswith("-") else None
+
+
+def _screen_universes(argv) -> list[str]:
+    """The universe(s) a headless screen runs: an explicit `--screen a,b` arg,
+    else the configured `scheduled_screen_universes`. Flexible & comma-list."""
+    from app.schedule import screen_universes
+    arg = _arg_after(argv, "--screen") if "--screen" in argv else None
+    if arg:
+        picks = [u.strip() for u in arg.split(",")]
+        return [u for u in picks if u in _SCREEN_KEYS] or screen_universes(AppConfig.load())
+    return screen_universes(AppConfig.load())
+
+
+def _headless_screens(argv) -> int:
+    """Screen one or more universes headlessly (cloud/scheduled)."""
+    from app.runner import run_screen
+    rc = 0
+    for uni in _screen_universes(argv):
+        rc = _headless(run_screen, f"screen-{uni}", screen_index=uni) or rc
+    return rc
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if "--selftest" in argv:
@@ -100,21 +125,17 @@ def main(argv: list[str] | None = None) -> int:
         which = argv[i + 1] if i + 1 < len(argv) and not argv[i + 1].startswith("-") else "validation"
         return _selftest(which)
     if "--screen" in argv:
-        from app.runner import run_screen
-        i = argv.index("--screen")
-        idx = (argv[i + 1] if i + 1 < len(argv) and argv[i + 1] in _SCREEN_KEYS
-               else None)
-        over = {"screen_index": idx} if idx else {}
-        return _headless(run_screen, "screen", **over)
+        return _headless_screens(argv)
     if "--review" in argv:
         from app.runner import run_position_review
         return _headless(run_position_review, "review")
     if "--daily" in argv:
-        # The scheduled-task entry point: manage exits first, then screen.
-        from app.runner import run_position_review, run_screen
-        rc1 = _headless(run_position_review, "review")
-        rc2 = _headless(run_screen, "screen")
-        return rc1 or rc2
+        # The scheduled combined run: manage exits first, then screen each
+        # configured universe. (Manage-exits-only: the screen never auto-buys
+        # unless place_orders is explicitly enabled.)
+        from app.runner import run_position_review
+        rc = _headless(run_position_review, "review")
+        return _headless_screens(argv) or rc
     if "--watch" in argv:
         from app.runner import run_watch
         return _headless(run_watch, "watch")
