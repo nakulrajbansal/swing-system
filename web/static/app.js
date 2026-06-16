@@ -164,6 +164,51 @@ async function loadLearning() {
   $("learnText").textContent = (l.lessons || "") + "\n\n" + "─".repeat(50) + "\n" + (l.ledger || "");
 }
 
+// ---- auth ----
+async function checkAuth() {
+  let m;
+  try { m = await (await fetch("/api/me")).json(); } catch { return true; }
+  if (m.auth_required && !m.authed) { $("login").classList.add("show"); return false; }
+  $("login").classList.remove("show");
+  $("logoutLink").style.display = m.auth_required ? "block" : "none";
+  return true;
+}
+async function doLogin() {
+  const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: $("loginpw").value }) });
+  if (r.ok) { $("login").classList.remove("show"); init(); }
+  else $("loginErr").textContent = "Wrong password.";
+}
+async function doLogout() { await fetch("/api/logout", { method: "POST" }); location.reload(); }
+
+// ---- scheduling ----
+async function loadSchedule() {
+  const s = await (await fetch("/api/schedule")).json();
+  const sel = $("sched_preset");
+  if (!sel.options.length) {
+    s.presets.forEach(p => { const o = document.createElement("option"); o.value = o.textContent = p; sel.appendChild(o); });
+  }
+  sel.value = s.preset; $("sched_universes").value = s.universes;
+  const meta = { review: "Review exits — protect & exit the open book (reduce-only)",
+    watch: "Watchlist — alert on entry triggers", screen: "Screen — new ideas, no auto-buy",
+    daily: "Daily — review then screen" };
+  $("schedView").textContent = s.jobs.map(j =>
+    `${(meta[j.job] || j.job).padEnd(56)} ${j.et.join(",")} ET`).join("\n") || "(none)";
+  $("cronView").textContent = s.cron.join("\n");
+  $("cronView")._cron = s.cron.join("\n");
+}
+function copyCron() { navigator.clipboard.writeText($("cronView")._cron || ""); toast("Crontab copied"); }
+async function saveSchedule() {
+  const patch = {
+    schedule_preset: val("sched_preset"), scheduled_screen_universes: val("sched_universes"),
+    custom_review_et: val("set_custom_review_et"), custom_screen_et: val("set_custom_screen_et"),
+    custom_watch_et: val("set_custom_watch_et"), auto_manage_exits: $("set_auto_manage_exits").checked,
+  };
+  await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+  $("schedMsg").textContent = "✓ saved"; setTimeout(() => $("schedMsg").textContent = "", 3000);
+  loadSchedule();
+}
+
 // ---- settings ----
 const SETTING_FIELDS = [
   ["anthropic_api_key", "Anthropic API key", "password"],
@@ -193,6 +238,11 @@ async function loadSettings() {
     } else { inp = document.createElement("input"); inp.type = (type === "password") ? "password" : "text"; inp.value = c[k] || ""; }
     inp.id = "set_" + k; f.appendChild(inp);
   });
+  $("set_custom_review_et").value = c.custom_review_et || "";
+  $("set_custom_screen_et").value = c.custom_screen_et || "";
+  $("set_custom_watch_et").value = c.custom_watch_et || "";
+  $("set_auto_manage_exits").checked = !!c.auto_manage_exits;
+  loadSchedule();
 }
 async function saveSettings() {
   const patch = {};
@@ -206,4 +256,8 @@ async function saveSettings() {
 }
 
 // ---- init ----
-loadConfig(); loadOrders(); loadWatchlist();
+async function init() {
+  if (!(await checkAuth())) return;
+  loadConfig(); loadOrders(); loadWatchlist();
+}
+init();

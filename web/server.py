@@ -13,14 +13,18 @@ Deploy (free always-on): see docs/WEB.md (Oracle Cloud Always-Free).
 from __future__ import annotations
 
 import dataclasses
+import hashlib
+import hmac
 import json
+import os
 import queue
+import secrets
 import threading
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -32,6 +36,54 @@ from app.runner import (RunStopped, clear_stop, place_manual_order, request_stop
 
 app = FastAPI(title="Swing System")
 _STATIC = Path(__file__).parent / "static"
+
+# -- auth (optional; on only when SWING_WEB_PASSWORD is set) ------------------
+# A single shared password protects a cloud-exposed instance. With no password
+# configured (local use) the app is open. The session token is an HMAC over a
+# per-process secret, so restarting the server logs everyone out.
+_SECRET = secrets.token_hex(16)
+COOKIE = "swing_session"
+
+
+def _password() -> str:
+    return os.environ.get("SWING_WEB_PASSWORD", "")
+
+
+def _token() -> str:
+    return hmac.new(_SECRET.encode(), b"authenticated", hashlib.sha256).hexdigest()
+
+
+def _authed(request: Request) -> bool:
+    return (not _password()) or request.cookies.get(COOKIE) == _token()
+
+
+@app.middleware("http")
+async def _auth_gate(request: Request, call_next):
+    path = request.url.path
+    if (_password() and path.startswith("/api/")
+            and path not in ("/api/login", "/api/me") and not _authed(request)):
+        return JSONResponse({"detail": "authentication required"}, status_code=401)
+    return await call_next(request)
+
+
+@app.get("/api/me")
+def api_me(request: Request):
+    return {"auth_required": bool(_password()), "authed": _authed(request)}
+
+
+@app.post("/api/login")
+def api_login(body: dict, response: Response):
+    pw = _password()
+    if pw and not secrets.compare_digest(str(body.get("password", "")), pw):
+        raise HTTPException(401, "wrong password")
+    response.set_cookie(COOKIE, _token(), httponly=True, samesite="lax", max_age=86400 * 14)
+    return {"ok": True}
+
+
+@app.post("/api/logout")
+def api_logout(response: Response):
+    response.delete_cookie(COOKIE)
+    return {"ok": True}
 
 # The flows a button can trigger: name -> (function, default overrides).
 ACTIONS = {
@@ -244,6 +296,30 @@ def api_learning():
     from app.learning import load_memory, summarize
     return {"lessons": summarize(load_memory()),
             "ledger": reco_ledger.summarize()}
+
+
+@app.get("/api/schedule")
+def api_schedule():
+    """The schedule the current config defines: jobs + ET times, plus ready-to-
+    paste crontab lines (UTC) for the host running this server."""
+    from app import schedule as sch
+    cfg = AppConfig.load()
+    sched = sch.resolve_schedule(cfg)
+    unis = ",".join(sch.screen_universes(cfg))
+    flag = {"review": "--review", "watch": "--watch",
+            "screen": f"--screen {unis}", "daily": f"--daily {unis}"}
+    jobs, cron = [], []
+    for job, et_times in sched.items():
+        jobs.append({"job": job, "et": et_times,
+                     "utc": [sch.et_to_utc(t) for t in et_times]})
+        for t in et_times:
+            h, m = sch.et_to_utc(t).split(":")
+            cron.append(f"{int(m)} {int(h)} * * 1-5  "
+                        f"cd ~/swing-system && .venv/bin/python -m app.main {flag[job]}")
+    return {"preset": cfg.schedule_preset, "universes": unis,
+            "jobs": jobs, "cron": cron,
+            "presets": list(sch.PRESET_LABELS),
+            "labels": sch.PRESET_LABELS}
 
 
 @app.get("/api/watchlist")

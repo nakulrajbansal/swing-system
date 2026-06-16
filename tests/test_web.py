@@ -68,6 +68,32 @@ def test_run_registry_streams_and_guards(monkeypatch):
     assert server._last_recs and server._last_recs[0]["symbol"] == "AAA"
 
 
+def test_schedule_endpoint_emits_cron_lines():
+    s = client.get("/api/schedule").json()
+    assert s["jobs"] and s["cron"]
+    assert all("* * 1-5" in line for line in s["cron"])      # weekday crons
+    assert "app.main --" in s["cron"][0]                     # invokes the CLI
+
+
+def test_auth_gate_blocks_then_lets_in(monkeypatch):
+    monkeypatch.setenv("SWING_WEB_PASSWORD", "hunter2")
+    fresh = TestClient(server.app)                           # no cookie yet
+    assert fresh.get("/api/config").status_code == 401       # gated
+    assert fresh.get("/").status_code == 200                 # the page still loads
+    assert fresh.get("/api/me").json()["auth_required"] is True
+    assert fresh.post("/api/login", json={"password": "wrong"}).status_code == 401
+    ok = fresh.post("/api/login", json={"password": "hunter2"})
+    assert ok.status_code == 200
+    assert fresh.get("/api/config").status_code == 200       # cookie now admits
+    fresh.post("/api/logout")
+    assert fresh.get("/api/config").status_code == 401       # logged out again
+
+
+def test_open_when_no_password(monkeypatch):
+    monkeypatch.delenv("SWING_WEB_PASSWORD", raising=False)
+    assert TestClient(server.app).get("/api/config").status_code == 200
+
+
 def test_only_one_run_at_a_time(monkeypatch):
     started = {"go": True}
 

@@ -66,8 +66,18 @@ which would stop the scheduler). Outline:
 
 Because the VM is always on, this is the single coherent brain: the schedule and
 your interactive sessions read/write the same `~/.swing_system/`, and you reach
-the UI from any browser or phone. (Lock it down: a private repo, a firewall rule
-limiting the port to your IP, or an auth proxy — there is no built-in login yet.)
+the UI from any browser or phone.
+
+**Lock it down.** Set `SWING_WEB_PASSWORD=<your password>` in the environment and
+the app requires a login (a sign-in page, an HMAC session cookie, all `/api/`
+routes gated; restarting the server logs everyone out). With no password set the
+app is open — fine for `localhost`, not for a public IP. For real exposure also
+put it behind HTTPS (a Cloudflare Tunnel is free) and/or a firewall rule limiting
+the port to your IP.
+
+The **Settings → Scheduled automation** section lets you choose the preset and
+universes, edit custom ET times, toggle unattended exit management, and copy a
+ready-made **crontab** (already converted to UTC) to paste on the host.
 
 ---
 

@@ -19,6 +19,7 @@
     <div class="foot">
       <span id="envBadge" class="badge paper">PAPER</span>
       <div class="status"><span class="dot">●</span> <span id="statusText">ready</span></div>
+      <a id="logoutLink" class="status" style="display:none;cursor:pointer" onclick="doLogout()">sign out</a>
     </div>
   </aside>
 
@@ -101,11 +102,43 @@
       <div class="card"><div class="formgrid" id="settingsForm"></div>
         <button class="accent" onclick="saveSettings()">Save configuration</button>
         <span id="saveMsg" class="ok small" style="margin-left:12px"></span></div>
-      <div class="section">Scheduled automation</div>
-      <div class="card"><span class="muted small">The always-on cloud schedule runs on the host this app
-        is deployed to. See docs/AUTOMATION.md and docs/WEB.md.</span></div>
+      <div class="section">Scheduled automation<span class="desc">times in market (ET); the host's cron does the triggering</span></div>
+      <div class="card">
+        <div class="row">
+          <label class="lbl">Preset</label><select id="sched_preset"></select>
+          <label class="lbl" style="margin-left:16px">Screen universe(s)</label>
+          <input type="text" id="sched_universes" style="width:200px">
+        </div>
+        <div class="formgrid" style="margin-top:12px;grid-template-columns:160px 1fr">
+          <label>Custom review (ET)</label><input type="text" id="set_custom_review_et" placeholder="10:00">
+          <label>Custom screen (ET)</label><input type="text" id="set_custom_screen_et" placeholder="17:00">
+          <label>Custom watch (ET)</label><input type="text" id="set_custom_watch_et" placeholder="11:00,13:00,15:00">
+        </div>
+        <label style="display:block;margin:8px 0"><input type="checkbox" id="set_auto_manage_exits">
+          Let a scheduled Review exit positions for me (reduce-only; new buys still never auto-placed)</label>
+        <button class="accent" onclick="saveSchedule()">Save schedule</button>
+        <span id="schedMsg" class="ok small" style="margin-left:12px"></span>
+
+        <div class="section" style="margin-top:16px">What runs, and when</div>
+        <pre class="block small" id="schedView">…</pre>
+        <div class="section">Crontab for the always-on host (UTC)</div>
+        <pre class="block small" id="cronView" style="color:var(--muted)">…</pre>
+        <button class="tool" onclick="copyCron()">Copy crontab</button>
+        <span class="muted small">Paste into the cron of your always-on host (e.g. Oracle free VM) — see docs/AUTOMATION.md &amp; WEB.md.</span>
+      </div>
     </section>
   </main>
+
+  <div class="overlay" id="login">
+    <div class="loginbox">
+      <div class="brand" style="padding:0"><span class="mark">◆</span><h1>Swing System</h1></div>
+      <p class="muted small" style="margin:8px 0 14px">This desk is password-protected.</p>
+      <input type="password" id="loginpw" placeholder="Password" style="width:100%"
+             onkeydown="if(event.key==='Enter')doLogin()">
+      <button class="accent" style="width:100%;margin-top:12px" onclick="doLogin()">Sign in</button>
+      <div id="loginErr" class="err small" style="margin-top:8px"></div>
+    </div>
+  </div>
 
   <div class="toast" id="toast"></div>
   <script src="/static/app.js"></script>
