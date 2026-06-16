@@ -2261,7 +2261,19 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
         if not risk_off and gems_n != 2 and gco.get("n"):
             log(f"[lens] hidden-gem slots tuned to {gems_n} from realized results "
                 f"({gco['n']} scored, {gco.get('win_rate_pct', 0):.0f}% hit rate).")
-        top = strategy.select_shortlist(ranked, k, gem_slots=gems_n, closes=closes)
+        # The screen finds NEW ideas — names you ALREADY hold are managed by the
+        # Review (exits/Guardian), not re-pitched here. Exclude them from the
+        # shortlist so a held name never wastes a deep-dive slot or comes back as
+        # a "buy" (adding to a position breaches the diversification the screen
+        # exists to provide). They stay visible on the leaderboard above.
+        ranked_new = [m for m in ranked if m["symbol"] not in held]
+        n_held_skipped = len(ranked) - len(ranked_new)
+        if n_held_skipped:
+            held_in_rank = [m["symbol"] for m in ranked if m["symbol"] in held][:8]
+            log(f"[book] excluded {n_held_skipped} already-held name(s) from the "
+                f"new-idea shortlist ({', '.join(held_in_rank)}"
+                f"{' …' if n_held_skipped > 8 else ''}) - manage those in Review exits.")
+        top = strategy.select_shortlist(ranked_new, k, gem_slots=gems_n, closes=closes)
         if not top:
             log("\n[deep-dive] no name cleared the pre-filter bar (score > 0) in this "
                 "regime; standing down. Default is to do nothing.")
