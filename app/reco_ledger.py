@@ -40,12 +40,14 @@ def save(records: list[dict], path=None) -> None:
 
 def record(recs: list[dict], source: str, as_of: str, path=None) -> int:
     """Append BUY/ADJUST recommendations as open ledger entries (idempotent per
-    day+symbol+source). Returns how many new entries were added."""
+    day+symbol). The same name surfaced by two screens (e.g. S&P 500 and QQQ) on
+    one day is one opportunity, so it is recorded once — not double-counted in the
+    learning stats. Returns how many new entries were added."""
     led = load(path)
-    have = {(r["date"], r["symbol"], r.get("source")) for r in led}
+    have = {(r["date"], r["symbol"]) for r in led}
     added = 0
     for r in recs:
-        key = (as_of, r["symbol"], source)
+        key = (as_of, r["symbol"])
         if key in have:
             continue
         led.append({
@@ -154,14 +156,23 @@ def evaluate(closes: pd.DataFrame, today: str, memory=None, path=None) -> dict:
             exit_px = float(s.iloc[-1])
         if entry is None or exit_px is None or entry <= 0:
             continue
-        pnl_pct = (exit_px / entry - 1) * 100.0
+        pnl_pct = (exit_px / entry - 1) * 100.0      # time exit: same series, split-safe
         # Close-path reason (no intraday): stop checked first (conservative).
         path_s = s[(s.index >= pd.Timestamp(r["date"])) & (s.index <= pd.Timestamp(r["exit_by"]))]
         reason = "time"
-        if r.get("stop") and len(path_s) and float(path_s.min()) <= float(r["stop"]):
-            reason, pnl_pct = "stop", (float(r["stop"]) / entry - 1) * 100.0
-        elif r.get("target") and len(path_s) and float(path_s.max()) >= float(r["target"]):
-            reason, pnl_pct = "target", (float(r["target"]) / entry - 1) * 100.0
+        # The recorded stop/target are ABSOLUTE levels in the rec-time price basis;
+        # the re-fetched `closes` may use a different split/adjustment basis (a name
+        # that split after the rec). Comparing the recorded level to the re-fetched
+        # series mixes bases and can FALSELY fire a stop and compute a nonsensical
+        # return. Use entry-relative RATIOS, which are invariant to later splits.
+        rec_entry = r.get("entry")
+        if rec_entry and float(rec_entry) > 0 and len(path_s):
+            re_ = float(rec_entry)
+            stop, target = r.get("stop"), r.get("target")
+            if stop and float(path_s.min()) <= entry * (float(stop) / re_):
+                reason, pnl_pct = "stop", (float(stop) / re_ - 1) * 100.0
+            elif target and float(path_s.max()) >= entry * (float(target) / re_):
+                reason, pnl_pct = "target", (float(target) / re_ - 1) * 100.0
         r["status"] = "evaluated"
         r["return_pct"] = round(pnl_pct, 2)
         r["outcome"] = reason

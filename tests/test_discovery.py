@@ -267,6 +267,41 @@ def test_ledger_mark_closed_realizes_actual_fills(tmp_path):
     assert reco_ledger.open_for("SITM", path=p) is None  # no longer open
 
 
+def test_evaluate_is_split_adjustment_invariant(tmp_path):
+    """A name that splits after the recommendation must not fake a stop/target.
+    Regression for the KLAC +789% bug: the recorded stop/target are rec-time
+    absolute levels, but the re-fetched closes are split-adjusted — scoring must
+    compare entry-relative ratios so a stop reads as the planned loss, not a gain."""
+    from app import reco_ledger
+
+    p = tmp_path / "ledger.json"
+    # Recommended at 2000 (rec-time basis): stop 1800 (-10%), target 2400 (+20%).
+    reco_ledger.record([{"symbol": "KLAC", "entry": 2000.0, "stop": 1800.0,
+                         "target": 2400.0, "hold_days": 5, "exit_by": "2026-01-09"}],
+                       "screen-qqq", "2026-01-02", path=p)
+    # The re-fetched series is 10:1 split-adjusted: ~200, and it dips to 178
+    # (below the split-adjusted stop 180), so it stopped out — a real LOSS.
+    idx = pd.date_range("2026-01-02", periods=6, freq="B")
+    closes = pd.DataFrame({"KLAC": [200.0, 196.0, 190.0, 178.0, 185.0, 188.0]}, index=idx)
+    summ = reco_ledger.evaluate(closes, "2026-01-09", path=p)
+    r = reco_ledger.load(p)[0]
+    assert r["outcome"] == "stop"
+    assert abs(r["return_pct"] - (-10.0)) < 0.01     # the planned stop loss, NOT +789%
+    assert summ["evaluated"] == 1 and summ["win_rate_pct"] == 0
+
+
+def test_record_dedups_same_name_across_screens(tmp_path):
+    """One name surfaced by two screens on the same day is one opportunity —
+    recorded once, so the learning stats aren't double-counted."""
+    from app import reco_ledger
+
+    p = tmp_path / "ledger.json"
+    rec = [{"symbol": "KLAC", "entry": 2000.0, "hold_days": 5, "exit_by": "2026-01-09"}]
+    assert reco_ledger.record(rec, "screen-sp500", "2026-01-02", path=p) == 1
+    assert reco_ledger.record(rec, "screen-qqq", "2026-01-02", path=p) == 0   # deduped
+    assert len([r for r in reco_ledger.load(p) if r["symbol"] == "KLAC"]) == 1
+
+
 def test_guardian_exit_only_on_broken_thesis():
     from system.agents.llm_client import MockLLMClient
     from system.agents.meta import GuardianAgent
