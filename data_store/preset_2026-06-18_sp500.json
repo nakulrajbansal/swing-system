@@ -1,0 +1,1 @@
+{"name": "timing", "board": {"base": {"total": 0.6, "sharpe": 0.19}, "timing": {"total": 7.3, "sharpe": 1.14}, "discovery": {"total": -6.3, "sharpe": -0.77}, "defensive": {"total": 5.3, "sharpe": 0.84}}}
