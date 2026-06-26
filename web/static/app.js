@@ -116,12 +116,62 @@ async function placeOrder(i) {
   toast(res.ok ? "✓ order sent" : "✗ order failed");
 }
 
+// ---- open orders (cancel from the app) ----
+async function loadOpenOrders() {
+  const el = $("openOrdersCard");
+  el.innerHTML = '<span class="faint small">Loading…</span>';
+  const { orders, log } = await (await fetch("/api/orders/open")).json();
+  (log || []).forEach(logLine);
+  if (!orders || !orders.length) {
+    el.innerHTML = '<span class="faint small">No working orders at the broker.</span>'; return;
+  }
+  let h = "<table><tr><th></th><th>role</th><th>side</th><th>qty</th><th>symbol</th><th>type</th><th>price</th><th></th></tr>";
+  orders.forEach((o, i) => {
+    const danger = o.role === "stop" ? ' style="color:var(--warn)"' : "";
+    h += `<tr><td><input id="o${i}" type="checkbox"></td><td${danger}>${o.role}</td>`
+      + `<td>${o.side}</td><td>${o.qty}</td><td>${o.symbol}</td><td>${o.type}</td><td>${o.price}</td>`
+      + `<td><button class="tool" onclick='cancelOrders(null,["${o.id}"])'>Cancel</button></td></tr>`;
+  });
+  el.innerHTML = h + "</table>"
+    + '<button class="tool" style="margin-top:8px" onclick="cancelSelected()">Cancel selected</button>'
+    + '<span class="faint small" style="margin-left:8px">cancelling a <b>stop</b> leaves that position naked.</span>';
+  el._orders = orders;
+}
+function cancelSelected() {
+  const orders = $("openOrdersCard")._orders || [];
+  const ids = orders.filter((_, i) => $("o" + i)?.checked).map(o => o.id);
+  if (!ids.length) { toast("select at least one order"); return; }
+  cancelOrders(null, ids);
+}
+async function cancelOrders(scope, ids) {
+  const what = scope === "entries" ? "all unfilled BUY entries"
+    : scope === "all" ? "ALL working orders" : `${(ids || []).length} order(s)`;
+  if (!confirm(`Cancel ${what}? Cancelling a protective stop leaves that position naked.`)) return;
+  const res = await (await fetch("/api/orders/cancel", { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scope: scope || null, ids: ids || null }) })).json();
+  (res.log || []).forEach(logLine);
+  const n = res.result?.cancelled || 0;
+  toast(n ? `✓ cancelled ${n}` : "nothing cancelled");
+  loadOpenOrders();
+}
+
 // ---- watchlist ----
 async function loadWatchlist() {
   const { items } = await (await fetch("/api/watchlist")).json();
   $("watchCard").innerHTML = (items && items.length)
-    ? items.map(it => `<span class="small">${it.symbol} (${it.pullback_target ? "dip to " + it.pullback_target : "break " + it.breakout_level})</span>`).join("&nbsp;&nbsp;&nbsp;")
+    ? items.map(it => {
+        const lvl = it.pullback_target ? "dip to " + it.pullback_target : "break " + it.breakout_level;
+        const left = (it.days_left != null) ? ` · ${it.days_left}d left` : "";
+        return `<span class="small">${it.symbol} (${lvl}${left})</span>`;
+      }).join("&nbsp;&nbsp;&nbsp;")
     : '<span class="faint small">empty — screens add WATCH-tier ideas and pullback calls automatically.</span>';
+}
+async function clearWatchlist() {
+  if (!confirm("Clear the entire watchlist? Screens and pullback calls will repopulate it.")) return;
+  const { cleared } = await (await fetch("/api/watchlist/clear", { method: "POST" })).json();
+  toast(cleared ? `✓ cleared ${cleared}` : "watchlist already empty");
+  loadWatchlist();
 }
 
 // ---- performance ----

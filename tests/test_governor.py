@@ -63,6 +63,24 @@ def test_max_open_positions_blocks_new_name():
     assert not t.approved and t.binding_cap == "max_open_positions"
 
 
+def test_gross_exposure_cap_trims_a_levered_book():
+    # Book already holds 0.95x equity of notional (5 names x 190 sh x $100 =
+    # $95k, under the 8-position count cap); the 1.0x gross ceiling leaves only
+    # $5,000 headroom -> 50 sh at $100. atr=5 (psr 10) keeps risk-per-trade
+    # (100 sh), single-name (150 sh) and heat looser, so gross provably binds.
+    held = [Position(f"S{i}", 190, 100, 96, "XLF", 100) for i in range(5)]
+    t = GOV.evaluate("AAA", "enter", ctx(reference_price=100.0, atr_value=5.0,
+                                         positions=held))
+    assert t.shares == 50
+    assert t.binding_cap == "max_gross_exposure"
+
+
+def test_gross_cap_never_blocks_a_flat_book():
+    # No positions -> full 1.0x headroom; a normal entry is unaffected by gross.
+    t = GOV.evaluate("AAA", "enter", ctx(reference_price=100.0, atr_value=5.0))
+    assert t.approved and t.binding_cap != "max_gross_exposure"
+
+
 def test_portfolio_heat_cap_trims():
     # Existing open risk 5,800 of a 6,000 (6%) budget -> only 200 headroom.
     heavy = Position("X", 145, 100, 60, "XLF", 100)   # open_risk = 145*40 = 5800

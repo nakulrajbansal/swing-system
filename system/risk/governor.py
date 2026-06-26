@@ -118,6 +118,13 @@ class RiskGovernor:
         # Single-name notional.
         caps["max_single_name"] = int(self.limits.max_single_name * eq // entry)
 
+        # Gross notional headroom (book-wide leverage ceiling). Without this the
+        # per-trade and per-sector caps still let many names stack the book past
+        # 1.0x equity — the leverage the live review kept flagging. Only trims.
+        gross_now = sum(p.notional for p in ctx.positions if p.symbol != symbol)
+        gross_head = max(0.0, self.limits.max_gross_exposure * eq - gross_now)
+        caps["max_gross_exposure"] = int(gross_head // entry)
+
         # Sector notional headroom.
         sector_now = sum(p.notional for p in ctx.positions
                          if p.sector == ctx.sector and p.symbol != symbol)

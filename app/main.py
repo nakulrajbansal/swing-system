@@ -136,6 +136,9 @@ def main(argv: list[str] | None = None) -> int:
         from app.runner import run_position_review
         rc = _headless(run_position_review, "review")
         return _headless_screens(argv) or rc
+    if "--clear-watchlist" in argv:
+        from app.runner import run_watch_clear
+        return _headless(run_watch_clear, "watch-clear")
     if "--watch" in argv:
         from app.runner import run_watch
         return _headless(run_watch, "watch")

@@ -66,12 +66,24 @@ deterministic and never imports the others.
    `rejoin`; the Portfolio Manager decides (`PortfolioManagerAgent`).
 4. Any exception → the candidate defaults to PASS (fail-to-PASS).
 5. The Risk Governor sizes any ENTER/ADJUST (`risk.governor.RiskGovernor`),
-   off the real account equity; calibration attaches a P(win).
+   off the real account equity, trimming to the most binding hard cap —
+   per-trade risk, single-name, **gross-exposure ceiling (`max_gross_exposure`,
+   default 1.0x = no leverage)**, sector, portfolio/cluster heat, open-position
+   count. The autonomous momentum entry passes the live book
+   (`_governor_book`/`_gross_exposure`) so these portfolio caps actually bind;
+   calibration attaches a P(win).
 
 ### C. Review exits (the open book)
 `app.runner.run_position_review`: read broker positions → arm missing protective
 orders → time-exit past-due plans → Guardian hold/exit on the rest → breakeven
 coaching → score broker-side closes and matured recs → run the curator.
+
+Arming protection (`_arm_protection`) is OCO-aware: a resting exit order *holds*
+the shares, so adding a missing leg as a second order is rejected
+("insufficient qty available"). When protection is incomplete it cancels what is
+resting and re-places the FULL stop+target as one OCO — a real stop instead of
+none. Positions with no plan are never auto-armed (no levels to honour) but are
+flagged UNPROTECTED (`_has_resting_stop`) when no stop is resting.
 
 ### D. Learning
 Every scored outcome (from C, or from a screen's `reco_ledger.evaluate`) updates
@@ -171,8 +183,9 @@ transcript per candidate, and enforces fail-to-PASS.
   - `run_screen` — the screen funnel (flow A).
   - `run_recommendations` — single-ticker deep-dive (live) or the synthetic
     scan demo; `_analyze_symbol` is the per-name deep-dive core (flow B).
-  - `run_position_review` — manage the open book (flow C); `_infer_exit_reason`,
-    `_r_multiple`, `_run_curator` are its helpers.
+  - `run_position_review` — manage the open book (flow C); `_arm_protection`,
+    `_has_resting_stop`, `_infer_exit_reason`, `_r_multiple`, `_run_curator` are
+    its helpers.
   - `run_watch` — check the watchlist, toast on a trigger (`_toast`).
   - `run_curation` — on-demand curator pass.
   - `run_strategy_backtest` — the walk-forward vs the benchmark.

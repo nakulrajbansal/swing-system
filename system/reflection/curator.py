@@ -40,6 +40,40 @@ def _bucket(rows: list[dict]) -> dict:
             "stop_rate_pct": round(100.0 * stops / len(rets), 0)}
 
 
+def _win_rate(rows: list[dict]):
+    rets = [r["return_pct"] for r in rows
+            if isinstance(r.get("return_pct"), (int, float))]
+    if not rets:
+        return None, 0
+    return round(100.0 * sum(1 for x in rets if x > 0) / len(rets), 0), len(rets)
+
+
+def _conviction_inversion(scored: list[dict]) -> tuple | None:
+    """Bucket-level calibration: split the scored calls at their MEDIAN
+    conviction and compare win rates. If the higher-conviction half wins
+    materially LESS than the lower half (with enough samples on each side),
+    conviction is inversely related to outcome — the desk is most wrong exactly
+    when it bets biggest. The aggregate conviction-vs-winrate gate misses this
+    because the averages can net out; the split surfaces it. Returns
+    (high_wr, low_wr, n_high, n_low) when inverted, else None."""
+    convs = sorted(r["conviction"] for r in scored
+                   if isinstance(r.get("conviction"), (int, float)))
+    if len(convs) < 2 * MIN_BUCKET:
+        return None
+    med = convs[len(convs) // 2]
+    low = [r for r in scored if isinstance(r.get("conviction"), (int, float))
+           and r["conviction"] < med]
+    high = [r for r in scored if isinstance(r.get("conviction"), (int, float))
+            and r["conviction"] >= med]
+    low_wr, n_low = _win_rate(low)
+    high_wr, n_high = _win_rate(high)
+    if n_low < MIN_BUCKET or n_high < MIN_BUCKET:
+        return None
+    if low_wr is None or high_wr is None or (low_wr - high_wr) < 15:
+        return None
+    return high_wr, low_wr, n_high, n_low
+
+
 def assess(ledger_rows: list[dict]) -> dict:
     """Expectation vs realization, by lens and overall — plus the pattern
     lessons the evidence currently supports. Pure and deterministic."""
@@ -55,8 +89,9 @@ def assess(ledger_rows: list[dict]) -> dict:
     patterns: list[Lesson] = []
     calibration = None
 
-    def lesson(text: str, worked: bool) -> Lesson:
-        return Lesson("confluence_swing", text, worked, "curated", as_of=as_of)
+    def lesson(text: str, worked: bool, kind: str) -> Lesson:
+        return Lesson("confluence_swing", text, worked, "curated",
+                      as_of=as_of, kind=kind)
 
     ov = stats["overall"]
     if ov.get("n", 0) >= MIN_BUCKET:
@@ -69,19 +104,31 @@ def assess(ledger_rows: list[dict]) -> dict:
                                f"realized win rate ({wr:.0f}% over {n} scored calls)"
                                " - treat conviction as optimistic and demand more "
                                "confirmation before sizing up")
-                patterns.append(lesson(calibration, False))
+                patterns.append(lesson(calibration, False, "calibration"))
             elif gap <= -15:
                 calibration = (f"stated convictions run ~{-gap:.0f}pp BELOW the "
                                f"realized win rate ({wr:.0f}% over {n} scored calls)"
                                " - the desk is under-betting its own edge")
-                patterns.append(lesson(calibration, True))
+                patterns.append(lesson(calibration, True, "calibration"))
+        # 1b) BUCKET CALIBRATION: aggregate can net out, so also check whether
+        # high-conviction calls actually beat low-conviction ones.
+        inv = _conviction_inversion(scored)
+        if inv:
+            high_wr, low_wr, n_high, n_low = inv
+            patterns.append(lesson(
+                f"INVERTED conviction: the desk's higher-conviction half wins "
+                f"only {high_wr:.0f}% ({n_high} calls) vs {low_wr:.0f}% "
+                f"({n_low} calls) for the lower-conviction half - conviction is "
+                "inversely related to outcome here, so treat HIGH conviction with "
+                "extra skepticism and demand confirmation before sizing up",
+                False, "calibration_buckets"))
         # 2) EXIT MIX: too many stops means entries are chasing.
         if ov.get("stop_rate_pct", 0) >= 50:
             patterns.append(lesson(
                 f"{ov['stop_rate_pct']:.0f}% of the last {n} exits were STOPS - "
                 "entries are chasing extended prices; prefer pullback entries "
                 "near the 20-DMA and honor the PM's wait-for-pullback calls",
-                False))
+                False, "exit_mix"))
     # 3) LENS PERFORMANCE: does each discovery lens actually pay?
     for key, label in (("hidden_gem", "hidden-gem"), ("moat_bullish", "moat-bullish")):
         b = stats[key]
@@ -90,12 +137,12 @@ def assess(ledger_rows: list[dict]) -> dict:
                 patterns.append(lesson(
                     f"{label} picks are PAYING ({b['win_rate_pct']:.0f}% of "
                     f"{b['n']} scored, avg {b['avg_return_pct']:+.1f}%) - this "
-                    "lens has earned weight in the thesis", True))
+                    "lens has earned weight in the thesis", True, f"lens:{label}"))
             elif b["win_rate_pct"] <= 40:
                 patterns.append(lesson(
                     f"{label} picks are NOT paying ({b['win_rate_pct']:.0f}% of "
                     f"{b['n']} scored) - demand stronger confirmation before "
-                    "trusting this lens", False))
+                    "trusting this lens", False, f"lens:{label}"))
     return {"stats": stats, "pattern_lessons": patterns, "calibration": calibration}
 
 
@@ -126,14 +173,19 @@ def curate(mem, ledger_rows: list[dict], client=None, model: str = "",
             keep.append(e)                     # pending until evidence arrives
     mem.entries[:] = keep
 
-    # Evidence-gated pattern lessons (deduped on text).
-    existing = {e.lesson.lesson for e in mem.entries}
+    # Evidence-gated pattern lessons. Each carries a stable `kind`, so we REPLACE
+    # the prior version of that kind rather than appending a reworded near-
+    # duplicate every run (which previously bloated the memory). Only a genuinely
+    # changed wording counts as "new" for the report.
     new = 0
     for les in report["pattern_lessons"]:
-        if les.lesson not in existing:
-            mem.add(les, human_reviewed=True)
-            existing.add(les.lesson)
+        prior = [e for e in mem.entries if e.lesson.kind == les.kind]
+        changed = not prior or prior[0].lesson.lesson != les.lesson
+        mem.entries[:] = [e for e in mem.entries if e.lesson.kind != les.kind]
+        mem.add(les, human_reviewed=True)
+        if changed:
             new += 1
+    existing = {e.lesson.lesson for e in mem.entries}
 
     # Optional LLM synthesis: patterns the rule set has no name for, grounded
     # strictly in the provided numbers (never invented trades).

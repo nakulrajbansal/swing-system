@@ -42,6 +42,29 @@ def test_performance_and_learning_endpoints():
         assert client.get(path).status_code == 200
 
 
+def test_open_orders_and_cancel_endpoints(monkeypatch):
+    # The endpoints call the names bound in the server module, so patch there.
+    monkeypatch.setattr(server, "run_open_orders",
+                        lambda cfg, emit: (emit("listed"),
+                                           {"orders": [{"id": "x", "role": "entry"}]})[1])
+    r = client.get("/api/orders/open")
+    assert r.status_code == 200
+    assert r.json()["orders"][0]["id"] == "x" and "listed" in r.json()["log"]
+
+    captured = {}
+
+    def fake_cancel(cfg, emit, order_ids=None, scope=None):
+        captured["ids"], captured["scope"] = order_ids, scope
+        emit("cancelled")
+        return {"cancelled": len(order_ids or []), "ids": order_ids or [], "failed": []}
+
+    monkeypatch.setattr(server, "cancel_orders", fake_cancel)
+    r = client.post("/api/orders/cancel", json={"ids": ["a", "b"]})
+    assert r.status_code == 200
+    assert r.json()["result"]["cancelled"] == 2
+    assert captured == {"ids": ["a", "b"], "scope": None}
+
+
 def test_run_registry_streams_and_guards(monkeypatch):
     # A trivial flow: emit two lines, return a recommendations result.
     def fake(cfg, emit):

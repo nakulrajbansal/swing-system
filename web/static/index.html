@@ -62,7 +62,13 @@
       <div class="section">Order tickets<span class="desc">BUY recommendations from the last run</span></div>
       <div class="card" id="ordersCard"><span class="faint small">Run a screen or a deep-dive — recommendations appear here.</span></div>
 
-      <div class="section">Watchlist<span class="desc">names waiting for their entry trigger</span></div>
+      <div class="section">Open orders<span class="desc">working orders at the broker — cancel to free buying power</span>
+        <button class="tool" style="float:right" onclick="loadOpenOrders()">Refresh</button>
+        <button class="tool" style="float:right;margin-right:6px" onclick="cancelOrders('entries')">Cancel all entries</button></div>
+      <div class="card" id="openOrdersCard"><span class="faint small">Click Refresh to list working orders you can cancel.</span></div>
+
+      <div class="section">Watchlist<span class="desc">names waiting for their entry trigger</span>
+        <button class="tool" style="float:right" onclick="clearWatchlist()">Clear</button></div>
       <div class="card" id="watchCard"><span class="faint small">empty</span></div>
 
       <div class="section">Output</div>

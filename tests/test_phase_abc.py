@@ -4,6 +4,7 @@ watchlist triggers."""
 import numpy as np
 import pandas as pd
 
+from app.config import AppConfig
 from system.reflection.calibration import (calibrated_probability,
                                            calibration_table, describe)
 
@@ -133,6 +134,332 @@ def test_missing_protection_requires_a_real_stop():
     # A stop_price on any order counts as a resting stop (type variants).
     assert _missing_protection([{"type": "stop_limit", "stop_price": 90.0}],
                                {"stop": 90.0})[0] is None
+
+
+class _RecordingBroker:
+    """Records the broker calls _arm_protection makes. submit_exit_orders fails
+    with the real Alpaca 'insufficient qty' error while the requested qty is
+    still held by a resting order — so the test proves the fix frees it first."""
+
+    def __init__(self):
+        self.deleted: list[str] = []
+        self.held = True            # shares held by the resting exit until cancelled
+        self.submitted = None
+
+    def _req(self, method, path):
+        if method == "DELETE":
+            self.deleted.append(path.rsplit("/", 1)[-1])
+            self.held = False       # cancelling the resting order frees the shares
+        return {}
+
+    def submit_exit_orders(self, sym, qty, stop=None, target=None):
+        if self.held:
+            return {"error": "Alpaca 403: insufficient qty available for order"}
+        self.submitted = {"sym": sym, "qty": qty, "stop": stop, "target": target}
+        return {"id": "oco-1", "status": "accepted"}
+
+
+def test_arm_protection_replaces_a_lone_target_with_full_oco():
+    # Regression: a take-profit target rests holding all the shares, but there is
+    # NO protective stop. The old code armed a bare stop for the same qty and
+    # Alpaca rejected it ("insufficient qty available"), leaving the downside
+    # unprotected. The fix cancels the resting target, then re-places the FULL
+    # stop+target so a real stop ends up at the broker.
+    from app.runner import _arm_protection
+
+    plan = {"stop": 90.0, "target": 120.0}
+    resting = [{"id": "target-123", "type": "limit", "limit_price": 120.0}]
+    broker = _RecordingBroker()
+    lines: list[str] = []
+
+    armed = _arm_protection(broker, "ABC", 100, resting, plan, lines.append)
+
+    assert armed is True
+    assert broker.deleted == ["target-123"]           # the lone target was cancelled
+    assert broker.submitted == {"sym": "ABC", "qty": 100,
+                                "stop": 90.0, "target": 120.0}  # full OCO re-placed
+    assert any("DOWNSIDE UNPROTECTED" in ln for ln in lines)
+
+
+def test_arm_protection_escalates_when_replace_fails_after_cancel():
+    # Hardening: once the resting order is cancelled the shares are naked. If the
+    # replacement OCO then fails, the position is UNPROTECTED — that must be
+    # flagged CRITICAL, not logged as a routine failure.
+    from app.runner import _arm_protection
+
+    class _BrokenBroker(_RecordingBroker):
+        def submit_exit_orders(self, sym, qty, stop=None, target=None):
+            return {"error": "network down"}            # replace always fails
+
+    plan = {"stop": 90.0, "target": 120.0}
+    resting = [{"id": "target-123", "type": "limit", "limit_price": 120.0}]
+    broker = _BrokenBroker()
+    lines: list[str] = []
+
+    armed = _arm_protection(broker, "ABC", 100, resting, plan, lines.append)
+
+    assert armed is False
+    assert broker.deleted == ["target-123"]             # the target WAS cancelled
+    assert any("CRITICAL" in ln and "UNPROTECTED" in ln for ln in lines)
+
+
+def test_arm_protection_noop_when_full_protection_already_rests():
+    from app.runner import _arm_protection
+
+    plan = {"stop": 90.0, "target": 120.0}
+    resting = [{"id": "t", "type": "limit", "limit_price": 120.0},
+               {"id": "s", "type": "stop", "stop_price": 90.0}]
+    broker = _RecordingBroker()
+
+    assert _arm_protection(broker, "ABC", 100, resting, plan, lambda _l: None) is False
+    assert broker.deleted == [] and broker.submitted is None
+
+
+def test_arm_protection_arms_directly_when_nothing_rests():
+    from app.runner import _arm_protection
+
+    broker = _RecordingBroker()
+    broker.held = False             # no resting order, so nothing holds the shares
+    armed = _arm_protection(broker, "ABC", 50, [],
+                            {"stop": 90.0, "target": 120.0}, lambda _l: None)
+
+    assert armed is True
+    assert broker.deleted == []                       # no cancel needed
+    assert broker.submitted["qty"] == 50
+
+
+def test_arm_protection_waits_out_async_cancel_then_arms():
+    # Real-world race from the review logs: a DELETE only moves the resting order
+    # into pending_cancel, so the shares stay held_for_orders and the FIRST
+    # replacement attempts are rejected with 'insufficient qty available'. The fix
+    # retries while that transient error persists instead of leaving the position
+    # naked (the old code submitted once and gave up -> every name UNPROTECTED).
+    from app.runner import _arm_protection
+
+    class _SlowSettleBroker(_RecordingBroker):
+        def __init__(self, frees_after):
+            super().__init__()
+            self.frees_after = frees_after
+            self.attempts = 0
+
+        def submit_exit_orders(self, sym, qty, stop=None, target=None):
+            self.attempts += 1
+            if self.attempts <= self.frees_after:    # cancel not settled yet
+                return {"error": "Alpaca 403 code 40310000: insufficient qty "
+                                 "available for order"}
+            self.submitted = {"sym": sym, "qty": qty, "stop": stop, "target": target}
+            return {"id": "oco-1", "status": "accepted"}
+
+    plan = {"stop": 90.0, "target": 120.0}
+    resting = [{"id": "target-123", "type": "limit", "limit_price": 120.0}]
+    broker = _SlowSettleBroker(frees_after=2)
+    slept: list[float] = []
+
+    armed = _arm_protection(broker, "ABC", 100, resting, plan, lambda _l: None,
+                            sleep=lambda d: slept.append(d))
+
+    assert armed is True
+    assert broker.attempts == 3                       # two rejections, then armed
+    assert broker.submitted["stop"] == 90.0           # full OCO finally rests
+    assert len(slept) == 2                            # waited between retries
+
+
+def test_arm_protection_gives_up_and_escalates_if_cancel_never_settles():
+    # Bounded: if the held-qty error never clears, don't spin forever — give up
+    # and flag CRITICAL so the naked position is surfaced.
+    from app.runner import _arm_protection
+
+    class _NeverSettles(_RecordingBroker):
+        def submit_exit_orders(self, sym, qty, stop=None, target=None):
+            return {"error": "403 code 40310000 insufficient qty available"}
+
+    plan = {"stop": 90.0, "target": 120.0}
+    resting = [{"id": "t", "type": "limit", "limit_price": 120.0}]
+    broker = _NeverSettles()
+    lines: list[str] = []
+
+    armed = _arm_protection(broker, "ABC", 100, resting, plan, lines.append,
+                            sleep=lambda _d: None)
+
+    assert armed is False
+    assert any("CRITICAL" in ln and "UNPROTECTED" in ln for ln in lines)
+
+
+def test_watchlist_clear_empties_and_counts(tmp_path):
+    from app import watchlist as wl
+
+    p = tmp_path / "wl.json"
+    wl.add([{"symbol": "ABC", "pullback_target": 10.0},
+            {"symbol": "XYZ", "breakout_level": 50.0}], "2026-06-23", path=p)
+    assert len(wl.load(p)) == 2
+    assert wl.clear(path=p) == 2
+    assert wl.load(p) == []
+    assert wl.clear(path=p) == 0                      # already empty -> 0
+
+
+def test_watchlist_annotate_reports_validity():
+    import pandas as pd
+
+    from app import watchlist as wl
+
+    items = [{"symbol": "ABC", "pullback_target": 100.0, "expires": "2026-06-30"},
+             {"symbol": "OLD", "breakout_level": 50.0, "expires": "2026-06-01"}]
+    closes = pd.DataFrame({"ABC": [110.0, 101.0]})
+    ann = {a["symbol"]: a for a in wl.annotate(items, "2026-06-23", closes)}
+
+    assert ann["ABC"]["days_left"] == 7 and ann["ABC"]["expired"] is False
+    assert ann["ABC"]["price"] == 101.0
+    assert ann["ABC"]["distance_pct"] == 1.0         # 101 is +1% vs the 100 target
+    assert ann["OLD"]["expired"] is True             # expiry already in the past
+    assert "price" not in ann["OLD"]                 # no price column -> no price
+
+
+def test_governor_book_maps_the_live_position_into_caps():
+    # Regression: the momentum entry path used to size every trade as if flat,
+    # bypassing the Governor's portfolio caps. _governor_book turns the broker's
+    # open positions into Governor Positions (notional from the latest close) so
+    # the gross/sector/open-count caps actually see the book.
+    import pandas as pd
+
+    from app.runner import _governor_book, _gross_exposure
+    from system.execution.broker import BrokerPosition
+
+    live = {"AAA": BrokerPosition("AAA", 100, 50.0, 0.0, 0.0),
+            "BBB": BrokerPosition("BBB", 0, 10.0, 0.0, 0.0)}   # 0-share -> dropped
+    closes = pd.DataFrame({"AAA": [55.0, 60.0]})               # mark = latest close
+    book = _governor_book(live, closes, {"AAA": "XLK"})
+
+    assert len(book) == 1                                       # the 0-share name is skipped
+    p = book[0]
+    assert p.symbol == "AAA" and p.shares == 100 and p.sector == "XLK"
+    assert p.price == 60.0 and p.notional == 6000.0            # mark x shares
+    assert p.open_risk == 0.0                                   # stop set to entry: no phantom heat
+    # gross exposure is book notional / equity.
+    assert _gross_exposure(book, 60_000.0) == 0.1
+    assert _gross_exposure([], 0.0) == 0.0                      # unknown equity -> 0
+
+
+def test_has_resting_stop_only_counts_real_stops():
+    # A take-profit limit is NOT downside protection; only a stop guards it.
+    from app.runner import _has_resting_stop
+
+    assert _has_resting_stop([]) is False
+    assert _has_resting_stop([{"type": "limit", "limit_price": 120.0}]) is False
+    assert _has_resting_stop([{"type": "stop", "stop_price": 90.0}]) is True
+    assert _has_resting_stop([{"type": "stop_limit", "stop_price": 90.0}]) is True
+    # A bare stop_price field counts even if the type label is missing.
+    assert _has_resting_stop([{"stop_price": 90.0}]) is True
+
+
+def test_open_orders_flattens_bracket_legs_so_the_stop_is_visible(monkeypatch):
+    # ROOT CAUSE of the 'stop never persisted' bug: a plain status=open query
+    # returns only the OCO PRIMARY (the take-profit limit); the protective stop
+    # is a nested child leg. open_orders() must pass nested=true and flatten the
+    # legs so the stop the broker is already holding becomes visible — otherwise
+    # the review re-arms it on every run, churning the OCO and going naked.
+    from system.execution.broker import AlpacaBroker
+
+    b = AlpacaBroker("key", "secret", env="paper")
+    nested = [{"id": "tp", "symbol": "ABC", "side": "sell", "type": "limit",
+               "limit_price": 120.0,
+               "legs": [{"id": "sl", "symbol": "ABC", "side": "sell",
+                         "type": "stop", "stop_price": 90.0}]}]
+
+    def fake(method, path, payload=None):
+        assert "nested=true" in path                       # the actual fix
+        return nested
+
+    monkeypatch.setattr(b, "_req", fake)
+    orders = b.open_orders()
+    assert {o["id"] for o in orders} == {"tp", "sl"}        # leg pulled up
+    # The desk can now SEE the stop, so it will NOT needlessly re-arm.
+    from app.runner import _has_resting_stop, _missing_protection
+    assert _has_resting_stop(orders) is True
+    assert _missing_protection(orders, {"stop": 90.0, "target": 120.0}) == (None, None)
+
+
+def test_open_orders_dedupes_and_filters_by_symbol(monkeypatch):
+    from system.execution.broker import AlpacaBroker
+
+    b = AlpacaBroker("key", "secret", env="paper")
+    # Same leg appearing both top-level and nested must not double-count.
+    raw = [{"id": "a", "symbol": "ABC", "legs": [{"id": "b", "symbol": "ABC"}]},
+           {"id": "b", "symbol": "ABC"},
+           {"id": "c", "symbol": "XYZ"}]
+    monkeypatch.setattr(b, "_req", lambda *a, **k: raw)
+    assert {o["id"] for o in b.open_orders()} == {"a", "b", "c"}
+    assert {o["id"] for o in b.open_orders("ABC")} == {"a", "b"}
+
+
+def test_order_role_classifies_entries_stops_and_targets():
+    from app.runner import _order_role
+
+    assert _order_role({"side": "buy", "type": "limit"}, set()) == "entry"
+    assert _order_role({"side": "sell", "type": "stop", "stop_price": 90}, set()) == "stop"
+    assert _order_role({"side": "sell", "type": "limit", "limit_price": 120}, set()) == "target"
+
+
+class _OrderBroker:
+    """Fake broker for the cancel flow: tracks which order ids get DELETEd."""
+
+    def __init__(self, orders, held=()):
+        self._orders = orders
+        self._held = list(held)
+        self.cancelled: list[str] = []
+
+    def open_orders(self, symbol=None):
+        return self._orders
+
+    def cancel_order(self, oid):
+        self.cancelled.append(oid)
+        return {"id": oid, "status": "canceled"}
+
+    def _req(self, method, path, payload=None):
+        if "positions" in path:
+            return [{"symbol": s} for s in self._held]
+        return {}
+
+
+def test_cancel_orders_entries_scope_frees_buying_power_without_touching_stops(monkeypatch):
+    # The buying-power fix: 'entries' scope cancels only unfilled BUY orders, so
+    # margin is freed without ever stripping a position's protective stop.
+    from app import runner
+
+    orders = [{"id": "buy1", "symbol": "MU", "side": "buy", "type": "limit"},
+              {"id": "stop1", "symbol": "AMD", "side": "sell", "type": "stop",
+               "stop_price": 400.0}]
+    broker = _OrderBroker(orders, held=["AMD"])
+    monkeypatch.setattr(runner, "_alpaca_broker", lambda cfg: broker)
+    cfg = AppConfig(alpaca_key_id="k", alpaca_secret="s", alpaca_env="paper")
+
+    out = runner.cancel_orders(cfg, lambda _l: None, scope="entries")
+    assert broker.cancelled == ["buy1"]                    # the stop was spared
+    assert out["cancelled"] == 1
+
+
+def test_cancel_orders_by_id_flags_a_naked_stop(monkeypatch):
+    from app import runner
+
+    orders = [{"id": "stop1", "symbol": "AMD", "side": "sell", "type": "stop",
+               "stop_price": 400.0}]
+    broker = _OrderBroker(orders, held=["AMD"])
+    monkeypatch.setattr(runner, "_alpaca_broker", lambda cfg: broker)
+    cfg = AppConfig(alpaca_key_id="k", alpaca_secret="s", alpaca_env="paper")
+    lines: list[str] = []
+
+    out = runner.cancel_orders(cfg, lines.append, order_ids=["stop1"])
+    assert broker.cancelled == ["stop1"] and out["cancelled"] == 1
+    assert any("UNPROTECTED" in ln for ln in lines)        # the naked warning
+
+
+def test_governor_book_falls_back_to_entry_when_no_close():
+    from app.runner import _governor_book
+    from system.execution.broker import BrokerPosition
+
+    import pandas as pd
+    live = {"ZZZ": BrokerPosition("ZZZ", 10, 42.0, 0.0, 0.0)}
+    book = _governor_book(live, pd.DataFrame(), {})             # no price column
+    assert book[0].price == 42.0 and book[0].sector == "?"     # mark falls back to entry
 
 
 def test_infer_exit_reason_names_the_trigger():

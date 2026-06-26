@@ -19,6 +19,7 @@ class RiskLimits:
     max_open_positions: int = 8
     max_portfolio_heat: float = 0.06    # <= 6% total open risk
     max_single_name: float = 0.15       # <= 15% equity in one name
+    max_gross_exposure: float = 1.0      # <= 1.0x equity gross notional (no leverage)
     max_sector_exposure: float = 0.30   # <= 30% in one sector
     max_cluster_heat: float = 0.03      # <= 3% heat per correlation cluster
     max_new_entries_per_cycle: int = 3

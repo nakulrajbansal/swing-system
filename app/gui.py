@@ -17,11 +17,12 @@ from tkinter import messagebox, ttk
 
 from app import APP_NAME, APP_VERSION
 from app.config import SECRET_FIELDS, AppConfig
-from app.runner import (RunStopped, check_alpaca, clear_stop, place_manual_order,
-                        request_stop, run_curation, run_momentum_trade,
-                        run_portfolio_status, run_position_review,
-                        run_recommendations, run_reddit_scan, run_screen,
-                        run_strategy_backtest, run_trade_history, run_watch)
+from app.runner import (RunStopped, cancel_orders, check_alpaca, clear_stop,
+                        place_manual_order, request_stop, run_curation,
+                        run_momentum_trade, run_open_orders, run_portfolio_status,
+                        run_position_review, run_recommendations, run_reddit_scan,
+                        run_screen, run_strategy_backtest, run_trade_history,
+                        run_watch, run_watch_clear)
 
 # (field, label, kind)  kind: "secret" | "text" | "int" | "float" | "choice"
 _FIELDS = [
@@ -599,6 +600,7 @@ class SwingApp:
         actions = [
             ("Review exits", lambda: self._start(run_position_review)),
             ("Portfolio P&L", lambda: self._start(run_portfolio_status)),
+            ("Manage orders", self._manage_orders),
             ("Momentum auto-trade", lambda: self._start(run_momentum_trade)),
             ("Strategy backtest", lambda: self._start(run_strategy_backtest)),
             ("Reddit sentiment", lambda: self._start(run_reddit_scan)),
@@ -626,6 +628,8 @@ class SwingApp:
         self.watch_label.pack(side="left", fill="x", expand=True)
         self._mkbtn(wrow, "Check triggers now",
                     lambda: self._start(run_watch)).pack(side="right")
+        self._mkbtn(wrow, "Clear", self._clear_watchlist).pack(side="right",
+                                                               padx=(0, 6))
         self._refresh_watchcard()
 
         # ---- output console with its own toolbar ----
@@ -675,6 +679,15 @@ class SwingApp:
     def _run_screen_choice(self):
         key = self._SCREENS.get(self._screen_choice.get(), "sp500")
         self._start(run_screen, screen_index=key)
+
+    def _clear_watchlist(self):
+        if not messagebox.askyesno(
+                "Clear watchlist",
+                "Empty the entire watchlist (the triggers list)?\n\n"
+                "This places no orders. Screens and the PM's pullback calls "
+                "will repopulate it on the next run."):
+            return
+        self._start(run_watch_clear)      # streams to console; refreshes on done
 
     def _refresh_watchcard(self):
         import datetime
@@ -1354,6 +1367,126 @@ class SwingApp:
                                 "Type a stock symbol (e.g. NVDA) to analyze.")
             return
         self._start(run_recommendations, ticker=sym)
+
+    def _manage_orders(self):
+        """Dialog listing the broker's WORKING orders, each cancellable — so the
+        operator can free buying power (cancel stale BUY entries) or clear
+        protection deliberately, without leaving the app. Reads/cancels run on a
+        worker thread; their log lines stream to the main console."""
+        if getattr(self, "_orders_win", None) and self._orders_win.winfo_exists():
+            self._orders_win.lift()
+            return
+        try:
+            cfg = self._collect()
+        except Exception as exc:
+            messagebox.showerror("Invalid configuration", str(exc))
+            return
+        import tkinter as tk
+        win = tk.Toplevel(self.root)
+        self._orders_win = win
+        win.title("Open orders")
+        win.configure(bg=CARD)
+        win.geometry("640x420")
+        ttk.Label(win, text="Working orders at the broker", style="Card.TLabel",
+                  font=self.f_mono_bold).pack(anchor="w", padx=14, pady=(12, 2))
+        status = ttk.Label(win, text="Loading…", style="CardMuted.TLabel")
+        status.pack(anchor="w", padx=14)
+        listf = ttk.Frame(win, style="Card.TFrame")
+        listf.pack(fill="both", expand=True, padx=14, pady=8)
+        bar = ttk.Frame(win, style="Card.TFrame")
+        bar.pack(fill="x", padx=14, pady=(0, 12))
+        state = {"orders": [], "vars": [], "busy": False}
+
+        def _busy(on):
+            state["busy"] = on
+            for b in (b_sel, b_ent, b_ref):
+                b.config(state="disabled" if on else "normal")
+
+        def _render():
+            for w in listf.winfo_children():
+                w.destroy()
+            state["vars"] = []
+            orders = state["orders"]
+            if not orders:
+                ttk.Label(listf, text="No working orders at the broker.",
+                          style="CardFaint.TLabel").pack(anchor="w")
+                return
+            hdr = ttk.Frame(listf, style="Card.TFrame")
+            hdr.pack(fill="x")
+            for txt, w in (("", 3), ("role", 8), ("side", 6), ("qty", 6),
+                           ("symbol", 9), ("type", 12), ("price", 10)):
+                ttk.Label(hdr, text=txt, style="CardFaint.TLabel", width=w).pack(side="left")
+            for o in orders:
+                bv = tk.BooleanVar(value=False)
+                state["vars"].append((bv, o))
+                row = ttk.Frame(listf, style="Card.TFrame")
+                row.pack(fill="x")
+                ttk.Checkbutton(row, variable=bv).pack(side="left")
+                warn = o.get("role") == "stop"
+                cells = ((o.get("role", "?"), 8), (str(o.get("side", "?")), 6),
+                         (str(o.get("qty", "?")), 6), (str(o.get("symbol", "?")), 9),
+                         (str(o.get("type", "?")), 12), (str(o.get("price", "?")), 10))
+                for i, (txt, w) in enumerate(cells):
+                    lbl = ttk.Label(row, text=txt, width=w,
+                                    style="CardMuted.TLabel")
+                    if warn and i == 0:
+                        lbl.config(foreground="#d8a657")
+                    lbl.pack(side="left")
+
+        def _load():
+            _busy(True)
+            status.config(text="Loading…")
+
+            def work():
+                res = run_open_orders(cfg, lambda ln: self.q.put(("log", ln)))
+                self.root.after(0, lambda: _loaded(res.get("orders", [])))
+            threading.Thread(target=work, daemon=True).start()
+
+        def _loaded(orders):
+            if not win.winfo_exists():
+                return
+            state["orders"] = orders
+            _busy(False)
+            status.config(text=f"{len(orders)} working order(s). A stop guards the "
+                               "downside — cancelling it leaves the position naked.")
+            _render()
+
+        def _cancel(scope=None, ids=None):
+            if scope == "entries":
+                msg = "Cancel ALL unfilled BUY entries (frees buying power)?"
+            else:
+                msg = f"Cancel {len(ids or [])} selected order(s)? Cancelling a stop leaves that position naked."
+            if not messagebox.askyesno("Confirm cancel", msg, parent=win):
+                return
+            _busy(True)
+            status.config(text="Cancelling…")
+
+            def work():
+                cancel_orders(cfg, lambda ln: self.q.put(("log", ln)),
+                              order_ids=ids, scope=scope)
+                self.root.after(0, _load)
+            threading.Thread(target=work, daemon=True).start()
+
+        def _cancel_selected():
+            ids = [o.get("id") for bv, o in state["vars"] if bv.get()]
+            if not ids:
+                messagebox.showinfo("Nothing selected",
+                                    "Tick the orders you want to cancel.", parent=win)
+                return
+            _cancel(ids=ids)
+
+        b_sel = ttk.Button(bar, text="Cancel selected", style="Tool.TButton",
+                           cursor="hand2", command=_cancel_selected)
+        b_sel.pack(side="left")
+        b_ent = ttk.Button(bar, text="Cancel all entries", style="Tool.TButton",
+                           cursor="hand2", command=lambda: _cancel(scope="entries"))
+        b_ent.pack(side="left", padx=(8, 0))
+        b_ref = ttk.Button(bar, text="Refresh", style="Tool.TButton",
+                           cursor="hand2", command=_load)
+        b_ref.pack(side="left", padx=(8, 0))
+        ttk.Button(bar, text="Close", style="Tool.TButton", cursor="hand2",
+                   command=win.destroy).pack(side="right")
+        _load()
 
     def _start(self, fn, **overrides):
         if self.running:

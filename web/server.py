@@ -29,10 +29,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.config import SECRET_FIELDS, AppConfig
-from app.runner import (RunStopped, clear_stop, place_manual_order, request_stop,
-                        run_curation, run_momentum_trade, run_portfolio_status,
-                        run_position_review, run_recommendations, run_reddit_scan,
-                        run_screen, run_strategy_backtest, run_trade_history, run_watch)
+from app.runner import (RunStopped, cancel_orders, clear_stop, place_manual_order,
+                        request_stop, run_curation, run_momentum_trade,
+                        run_open_orders, run_portfolio_status, run_position_review,
+                        run_recommendations, run_reddit_scan, run_screen,
+                        run_strategy_backtest, run_trade_history, run_watch)
 
 app = FastAPI(title="Swing System")
 _STATIC = Path(__file__).parent / "static"
@@ -168,6 +169,11 @@ class OrderReq(BaseModel):
     ref_price: float | None = None
 
 
+class CancelReq(BaseModel):
+    ids: list[str] | None = None
+    scope: str | None = None                         # 'entries' | 'all' | None
+
+
 # -- run / stream / stop -----------------------------------------------------
 @app.post("/api/run")
 def api_run(req: RunReq):
@@ -230,6 +236,24 @@ def api_order(req: OrderReq):
     out_lines: list[str] = []
     res = place_manual_order(cfg, req.model_dump(), out_lines.append)
     return {"ok": bool(res.get("ok")), "log": out_lines, "result": res}
+
+
+@app.get("/api/orders/open")
+def api_orders_open():
+    """Working (unfilled / resting) orders at the broker, each tagged with its
+    role (entry / stop / target) so the UI can offer a safe cancel."""
+    cfg = AppConfig.load()
+    out_lines: list[str] = []
+    res = run_open_orders(cfg, out_lines.append)
+    return {"orders": res.get("orders", []), "log": out_lines}
+
+
+@app.post("/api/orders/cancel")
+def api_orders_cancel(req: CancelReq):
+    cfg = AppConfig.load()
+    out_lines: list[str] = []
+    res = cancel_orders(cfg, out_lines.append, order_ids=req.ids, scope=req.scope)
+    return {"result": res, "log": out_lines}
 
 
 # -- config (chips + Settings) ----------------------------------------------
@@ -326,7 +350,15 @@ def api_schedule():
 def api_watchlist():
     import datetime
     from app import watchlist as wl
-    return {"items": wl.active(datetime.date.today().isoformat())}
+    today = datetime.date.today().isoformat()
+    return {"items": wl.annotate(wl.active(today), today)}
+
+
+@app.post("/api/watchlist/clear")
+def api_watchlist_clear():
+    """Empty the triggers list. Touches no orders; screens repopulate it."""
+    from app import watchlist as wl
+    return {"cleared": wl.clear()}
 
 
 # -- static SPA --------------------------------------------------------------

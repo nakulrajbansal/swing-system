@@ -19,6 +19,21 @@ from dataclasses import dataclass, field
 from harness.study.costs import CostModel, gap_aware_exit
 
 
+def _flatten_orders(orders) -> list[dict]:
+    """Yield each order plus its bracket/OCO/OTO child legs, recursively, as a
+    flat list. Alpaca nests a complex order's protective legs under ``legs``;
+    flattening surfaces the stop/target that would otherwise be hidden."""
+    out: list[dict] = []
+    for o in orders or []:
+        if not isinstance(o, dict):
+            continue
+        out.append(o)
+        legs = o.get("legs")
+        if legs:
+            out.extend(_flatten_orders(legs))
+    return out
+
+
 @dataclass
 class BrokerPosition:
     symbol: str
@@ -229,10 +244,46 @@ class AlpacaBroker(Broker):
                 stop=0.0, target=0.0)
         return out
 
+    def open_orders(self, symbol: str | None = None) -> list[dict]:
+        """Every WORKING (unfilled / resting) order, with bracket/OCO/OTO child
+        legs FLATTENED to the top level and de-duplicated by id.
+
+        This is the fix for the stop that 'never persisted': Alpaca's list
+        endpoint hides a complex order's child legs unless ``nested=true`` is
+        passed. A protective stop attached to a bracket entry is therefore
+        INVISIBLE to a plain ``status=open`` query — only the take-profit leg
+        shows. The review read it that way, concluded the stop was missing, and
+        cancelled+re-armed the whole OCO on every single run (churning it and
+        opening a naked window each time). Passing ``nested=true`` and pulling
+        the legs up is what lets the desk SEE the stop that is already resting,
+        so it stops churning and the stop genuinely persists."""
+        raw = self._req("GET", "/v2/orders?status=open&nested=true") or []
+        flat, seen = [], set()
+        for o in _flatten_orders(raw):
+            oid = o.get("id")
+            if oid in seen:
+                continue
+            seen.add(oid)
+            flat.append(o)
+        if symbol:
+            flat = [o for o in flat if o.get("symbol") == symbol]
+        return flat
+
+    def cancel_order(self, order_id: str):
+        """Cancel one working order by id (DELETE /v2/orders/{id})."""
+        return self._req("DELETE", f"/v2/orders/{order_id}")
+
     def cancel_pending(self, symbol):
-        for o in self._req("GET", "/v2/orders?status=open"):
-            if o.get("symbol") == symbol:
+        """Cancel every working order for `symbol`. Tolerant of the OCO/bracket
+        case: cancelling a parent (or one OCO sibling) auto-cancels its linked
+        leg, so a follow-up DELETE of that already-cancelled leg 404s — which is
+        fine and must not abort the loop (this runs ahead of a position
+        liquidation, so a stray error here must not block the close)."""
+        for o in self.open_orders(symbol):
+            try:
                 self._req("DELETE", f"/v2/orders/{o['id']}")
+            except Exception:
+                pass                       # already cancelled with its linked leg
 
     def submit_buy_with_stop(self, symbol, shares, limit, stop):
         """Marketable-limit BUY with an attached protective STOP (no profit

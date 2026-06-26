@@ -300,8 +300,9 @@ def run_portfolio_status(cfg: AppConfig, emit: Emit) -> dict:
                 "system's 25%-per-name cap; consider trimming.")
 
         # Open (working / unfilled) orders — e.g. a limit set at a stale price.
+        # open_orders() flattens bracket/OCO legs so attached stops/targets show.
         try:
-            openo = broker._req("GET", "/v2/orders?status=open")
+            openo = broker.open_orders()
         except Exception:
             openo = []
         if openo:
@@ -312,7 +313,7 @@ def run_portfolio_status(cfg: AppConfig, emit: Emit) -> dict:
                     f"{o.get('symbol', '?')}  {o.get('type', '?')} @ {lp}  "
                     f"status {o.get('status', '?')}")
             log("    (a limit set at a stale screen price may never fill - re-place at "
-                "a current/marketable price, or cancel from your Alpaca dashboard.)")
+                "a current/marketable price, or cancel it via 'Manage orders'.)")
 
         log("\n[note] unrealized P&L is gross of any open stop/target. The desk's edge "
             "shows up over many closed trades, not one snapshot - keep re-checking and "
@@ -371,9 +372,9 @@ def place_manual_order(cfg: AppConfig, order: dict, emit: Emit) -> dict:
             log(f"[error] order failed: {exc}")
             if "insufficient buying power" in str(exc).lower() or "40310000" in str(exc):
                 log("[hint] the account does not have enough free cash for this "
-                    "order. Open (unfilled) orders also reserve buying power - "
-                    "cancel stale ones from the Portfolio view or your Alpaca "
-                    "dashboard, or reduce the quantity.")
+                    "order. Open (unfilled) orders also reserve buying power - use "
+                    "'Manage orders' to cancel stale BUY entries and free margin, "
+                    "or reduce the quantity.")
             return {"ok": False, "error": str(exc)}
         if isinstance(o, dict) and o.get("error"):
             log(f"[error] {o['error']}")
@@ -391,6 +392,128 @@ def place_manual_order(cfg: AppConfig, order: dict, emit: Emit) -> dict:
                 "shows with a ● on the Learning tab.")
         log("[order] check the Paper portfolio (P&L) button to see it once filled.")
         return {"ok": True, "id": oid, "status": status}
+
+
+def _order_role(o: dict, held_symbols: set) -> str:
+    """Classify a working order for the operator: an unfilled BUY 'entry'
+    (these reserve buying power), a protective 'stop' (downside guard on a held
+    name), a take-profit 'target', or a generic 'exit'."""
+    side = str(o.get("side", "")).lower()
+    typ = str(o.get("type", "")).lower()
+    if side == "buy":
+        return "entry"
+    if typ.startswith("stop") or o.get("stop_price"):
+        return "stop"
+    if typ == "limit":
+        return "target"
+    return "exit"
+
+
+def run_open_orders(cfg: AppConfig, emit: Emit) -> dict:
+    """List every WORKING (unfilled / resting) order at the broker, each tagged
+    with its role so the operator can cancel safely from inside the app:
+    unfilled BUY entries (which reserve buying power and can be cancelled to
+    free margin) vs protective SELL stops/targets (cancelling one leaves that
+    position naked). Read-only — places and cancels nothing."""
+    cfg.apply_to_env()
+    out = {"orders": []}
+    with _run_logger(emit, "orders") as (log, _path):
+        if not (cfg.alpaca_key_id and cfg.alpaca_secret):
+            log("[error] Alpaca key id + secret required (Settings).")
+            return out
+        try:
+            broker = _alpaca_broker(cfg)
+            orders = broker.open_orders()
+            held = {p.get("symbol")
+                    for p in (broker._req("GET", "/v2/positions") or [])}
+        except Exception as exc:
+            log(f"[error] could not read open orders: {exc}")
+            return out
+        if not orders:
+            log("[orders] no working orders at the broker - nothing to cancel.")
+            return out
+        log(f"[orders] {len(orders)} working order(s) at the broker:")
+        rows = []
+        for o in orders:
+            role = _order_role(o, held)
+            px = o.get("limit_price") or o.get("stop_price") or "mkt"
+            rows.append({"id": o.get("id"), "symbol": o.get("symbol"),
+                         "side": o.get("side"), "type": o.get("type"),
+                         "qty": o.get("qty"), "price": px, "role": role,
+                         "status": o.get("status")})
+            log(f"  [{role}] {str(o.get('side', '?')).upper()} {o.get('qty', '?')} "
+                f"{o.get('symbol', '?')}  {o.get('type', '?')} @ {px}  "
+                f"id {o.get('id')}  status {o.get('status')}")
+        out["orders"] = rows
+        entries = [r for r in rows if r["role"] == "entry"]
+        if entries:
+            log(f"\n[hint] {len(entries)} unfilled BUY entr"
+                f"{'y' if len(entries) == 1 else 'ies'} reserve buying power; "
+                "cancel stale ones to free margin for new trades.")
+        log("[note] cancelling a protective SELL stop/target leaves that "
+            "position UNPROTECTED - only do so deliberately.")
+    return out
+
+
+def cancel_orders(cfg: AppConfig, emit: Emit, order_ids=None,
+                  scope: str | None = None) -> dict:
+    """Cancel working orders at the broker. Pass explicit `order_ids`, or a
+    `scope`: 'entries' cancels only unfilled BUY entries (frees buying power
+    without touching any position's protection); 'all' cancels everything.
+    Risk note: cancelling a protective SELL stop leaves the position naked, so
+    each such cancel is flagged."""
+    cfg.apply_to_env()
+    out = {"cancelled": 0, "ids": [], "failed": []}
+    with _run_logger(emit, "cancel") as (log, _path):
+        if not (cfg.alpaca_key_id and cfg.alpaca_secret):
+            log("[error] Alpaca key id + secret required (Settings).")
+            return out
+        if cfg.alpaca_env == "live" and not cfg.enable_live_trading:
+            log("[blocked] environment is LIVE but 'Enable live trading' is OFF.")
+            return out
+        try:
+            broker = _alpaca_broker(cfg)
+            orders = broker.open_orders()
+            held = {p.get("symbol")
+                    for p in (broker._req("GET", "/v2/positions") or [])}
+        except Exception as exc:
+            log(f"[error] could not read open orders: {exc}")
+            return out
+        by_id = {o.get("id"): o for o in orders}
+        if order_ids:
+            targets = [by_id[i] for i in order_ids if i in by_id]
+            missing = [i for i in order_ids if i not in by_id]
+            for i in missing:
+                log(f"[cancel] order {i} not found among working orders "
+                    "(already filled or cancelled).")
+        elif scope == "entries":
+            targets = [o for o in orders if str(o.get("side")).lower() == "buy"]
+        elif scope == "all":
+            targets = list(orders)
+        else:
+            log("[cancel] nothing specified to cancel (pass ids or a scope).")
+            return out
+        if not targets:
+            log("[cancel] no matching working orders to cancel.")
+            return out
+        for o in targets:
+            oid = o.get("id")
+            role = _order_role(o, held)
+            try:
+                broker.cancel_order(oid)
+            except Exception as exc:
+                out["failed"].append({"id": oid, "error": str(exc)})
+                log(f"  [cancel] FAILED for {o.get('symbol', '?')} id {oid}: {exc}")
+                continue
+            out["cancelled"] += 1
+            out["ids"].append(oid)
+            naked = (" — position now UNPROTECTED on the downside!"
+                     if role == "stop" and o.get("symbol") in held else "")
+            log(f"  [cancel] {str(o.get('side', '?')).upper()} {o.get('qty', '?')} "
+                f"{o.get('symbol', '?')} [{role}] cancelled.{naked}")
+        log(f"[done] cancelled {out['cancelled']} order(s); "
+            f"{len(out['failed'])} failed.")
+    return out
 
 
 def _run_curator(mem, client, log: Emit) -> dict:
@@ -560,15 +683,49 @@ def run_watch(cfg: AppConfig, emit: Emit) -> dict:
             for ln in _wrap(h.get("reason"), "          ", first="        on watch: "):
                 log(ln)
             _toast("Swing System - entry trigger", msg)
-        if not hits:
-            log("[watch] no triggers - all watched names are still waiting.")
-        else:
+        if hits:
             # A triggered name has served its purpose: hand it to a deep-dive.
             wl.remove({h["symbol"] for h in hits})
             log(f"\n[watch] {len(hits)} trigger(s). These names left the watchlist - "
                 "run a deep-dive to re-evaluate them at TODAY'S price before acting.")
+        # Validity of the names still waiting: current price vs their trigger and
+        # how long before they expire off the list. Lets you spot stale entries.
+        triggered = {h["symbol"] for h in hits}
+        waiting = [it for it in wl.annotate(items, today, closes)
+                   if it["symbol"] not in triggered]
+        if waiting:
+            log("\n[watch] still waiting (price vs trigger, days until it expires "
+                "off the list):")
+            for it in waiting:
+                lvl = (f"dip to {it['pullback_target']}" if it.get("pullback_target")
+                       else f"break {it.get('breakout_level')}")
+                px = f"${it['price']}" if it.get("price") is not None else "n/a"
+                dist = (f"{it['distance_pct']:+.1f}%" if it.get("distance_pct") is not None
+                        else "?")
+                dleft = (f"{it['days_left']}d left" if it.get("days_left") is not None
+                         else "")
+                log(f"    {it['symbol']:<6} {px:>9}  {dist:>7} to {lvl}   {dleft}")
+        elif not hits:
+            log("[watch] no triggers - all watched names are still waiting.")
         log(f"[done] watch check complete ({len(items)} watched).")
     return {"hits": hits, "watching": len(items)}
+
+
+def run_watch_clear(cfg: AppConfig, emit: Emit) -> dict:
+    """Empty the watchlist (the triggers list). Risk-reducing/cosmetic — places
+    no orders. Use when the list has accumulated stale ideas; screens and the
+    PM's pullback calls repopulate it on the next run."""
+    from app import watchlist as wl
+
+    with _run_logger(emit, "watch-clear") as (log, _path):
+        n = wl.clear()
+        if n:
+            log(f"[watch] cleared {n} watchlist entr{'y' if n == 1 else 'ies'}. "
+                "The triggers list is now empty; screens and pullback calls will "
+                "repopulate it.")
+        else:
+            log("[watch] watchlist was already empty - nothing to clear.")
+    return {"cleared": n}
 
 
 def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
@@ -591,7 +748,7 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
 
     cfg.apply_to_env()
     out = {"open": 0, "time_exits": [], "guardian_exits": [], "advised": [],
-           "protected": []}
+           "protected": [], "unprotected": []}
     with _run_logger(emit, "review") as (log, _path):
         if not (cfg.alpaca_key_id and cfg.alpaca_secret):
             log("[error] Alpaca key id + secret required (Settings).")
@@ -607,9 +764,13 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
             return out
         # Resting SELL orders per symbol: a plan's stop/target only protects
         # the position if real orders are working at the broker.
+        # open_orders() passes nested=true and flattens the legs, so a stop
+        # ATTACHED to a bracket (a child leg, hidden by a plain status=open
+        # query) is now visible — without this the desk thought every stop was
+        # missing and re-armed it every run, opening a naked window each time.
         sells_by_sym: dict[str, list] = {}
         try:
-            for o in broker._req("GET", "/v2/orders?status=open") or []:
+            for o in broker.open_orders():
                 if str(o.get("side")) == "sell":
                     sells_by_sym.setdefault(o.get("symbol"), []).append(o)
         except Exception:
@@ -631,16 +792,19 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
             acct = broker.account()
             equity = float(acct.get("equity") or 0.0)
             gross = sum(abs(float(p.get("market_value", 0) or 0)) for p in raw)
+            ceiling = DEFAULT_CONFIG.limits.max_gross_exposure
             if equity > 0:
                 ratio = gross / equity
                 out["gross_exposure"] = round(ratio, 2)
                 log(f"[account] equity ${equity:,.0f} | open positions ${gross:,.0f} "
-                    f"| gross exposure {ratio:.2f}x")
-                if ratio > 1.05:
+                    f"| gross exposure {ratio:.2f}x (ceiling {ceiling:.1f}x)")
+                if ratio > ceiling * 1.05:
                     log(f"[RISK] the book is {ratio:.1f}x LEVERED - a 10% adverse move "
                         f"is ~{ratio * 10:.0f}% of the account. The desk's plan is "
-                        "<=1.0x: do not add positions until exits free up capital, "
-                        "and consider trimming the lowest-conviction names.")
+                        f"<={ceiling:.1f}x: the Risk Governor now blocks autonomous "
+                        "entries past this, but it cannot trim what is already open - "
+                        "free up capital and consider trimming the lowest-conviction "
+                        "names.")
         except Exception:
             pass
 
@@ -662,8 +826,18 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
                     "cycle) - not touched here.")
                 continue
             if not plan:
-                log("  no plan on file (not from a screen/deep-dive ticket) - "
-                    f"review manually, or Deep-dive {sym} to create a plan.")
+                # No plan means the desk won't auto-arm a stop (it has no levels
+                # to honour), but it must still TELL you when such a name is
+                # naked at the broker — an unprotected winner can round-trip.
+                if _has_resting_stop(sells_by_sym.get(sym, [])):
+                    log("  no plan on file (not from a screen/deep-dive ticket), "
+                        "but a protective stop is resting - review manually, or "
+                        f"Deep-dive {sym} to create a plan.")
+                else:
+                    out["unprotected"].append(sym)
+                    log(f"  [protect] UNPROTECTED — no plan AND no stop resting "
+                        f"({plpc:+.1f}%). Deep-dive {sym} for a plan or set a "
+                        "manual stop; the desk won't auto-arm one without levels.")
                 continue
             log(f"  plan: entry ~{plan.get('entry')}  stop {plan.get('stop')}  "
                 f"target {plan.get('target')}  exit by {plan.get('exit_by')}  "
@@ -676,43 +850,17 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
                 log("  linked: recommendation marked EXECUTED (now visible with "
                     "a ● on the Learning tab).")
 
-            # ARM MISSING PROTECTION: if no sell orders are resting, the plan's
-            # stop/target are wishes, not protection. Placing them only reduces
-            # risk, so it happens automatically.
+            # ARM MISSING PROTECTION: a plan's stop/target are only protection
+            # when real orders rest at the broker. _arm_protection places the
+            # missing leg(s) — risk-reducing only, so it happens automatically.
             resting = sells_by_sym.get(sym, [])
             if resting:
                 levels = ", ".join(
                     f"{o.get('type', '?')} @ {o.get('stop_price') or o.get('limit_price') or '?'}"
                     for o in resting[:3])
                 log(f"  protection resting at the broker: {levels}")
-            # The STOP is the protection that matters: a take-profit target alone
-            # leaves the downside wide open. Arm only the MISSING leg(s) — never
-            # cancel what is already resting, so there is no unprotected window.
-            arm_stop, arm_target = _missing_protection(resting, plan)
-            want_stop, want_target = plan.get("stop"), plan.get("target")
-            if arm_stop or arm_target:
-                if resting and arm_stop and not arm_target:
-                    log(f"  [protect] DOWNSIDE UNPROTECTED — a target is resting but "
-                        f"NO STOP. Arming a protective stop @ {arm_stop} for "
-                        f"{qty:.0f} sh.")
-                elif not resting:
-                    kind = ("OCO stop+target" if arm_stop and arm_target
-                            else "stop" if arm_stop else "target")
-                    log(f"  [protect] NO exit orders resting - arming {kind} for "
-                        f"{qty:.0f} sh (stop {want_stop}, target {want_target}).")
-                else:
-                    log(f"  [protect] arming the missing "
-                        f"{'stop' if arm_stop else 'target'} for {qty:.0f} sh.")
-                try:
-                    o = broker.submit_exit_orders(sym, int(qty), arm_stop, arm_target)
-                    if isinstance(o, dict) and o.get("error"):
-                        log(f"  [protect] failed: {o['error']}")
-                    else:
-                        out["protected"].append(sym)
-                        log(f"  [protect] exit order(s) ARMED - id {(o or {}).get('id', '?')} "
-                            f"status {(o or {}).get('status', '?')}.")
-                except Exception as exc:
-                    log(f"  [protect] failed: {exc}")
+            if _arm_protection(broker, sym, int(qty), resting, plan, log):
+                out["protected"].append(sym)
 
             # 1) TIME EXIT: past the plan's exit date -> close (the plan's own rule).
             if plan.get("exit_by") and today >= str(plan["exit_by"]):
@@ -861,6 +1009,10 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
             f"{len(out['guardian_exits'])} guardian exit(s), "
             f"{len(out['advised'])} advisory exit(s), "
             f"{len(out['protected'])} position(s) newly protected.")
+        if out["unprotected"]:
+            log(f"[warn] {len(out['unprotected'])} UNPROTECTED position(s) with no "
+                f"plan and no resting stop: {', '.join(out['unprotected'])}. "
+                "Deep-dive them for a plan or set manual stops.")
     return out
 
 
@@ -1224,6 +1376,155 @@ def _missing_protection(resting: list[dict], plan: dict) -> tuple:
     want_stop, want_target = plan.get("stop"), plan.get("target")
     return (want_stop if (want_stop and not has_stop) else None,
             want_target if (want_target and not has_target) else None)
+
+
+def _governor_book(live_pos: dict, closes, sector_of: dict) -> list:
+    """Map the broker's open positions into Risk-Governor `Position`s so the
+    Governor sees the WHOLE book when sizing a new entry — without it, every
+    momentum entry is sized as if the account were empty and the portfolio caps
+    (gross exposure, sector, max open positions) never bind. The mark comes from
+    the latest close; the stop is set to entry so existing names contribute
+    notional (what the leverage/sector caps need) without phantom open-risk."""
+    from system.risk.governor import Position
+
+    book = []
+    for psym, bp in (live_pos or {}).items():
+        shares = int(getattr(bp, "shares", 0) or 0)
+        if shares <= 0:
+            continue
+        entry = float(getattr(bp, "entry", 0) or 0)
+        try:
+            mark = float(closes[psym].dropna().iloc[-1])
+        except Exception:
+            mark = entry or 0.0
+        entry = entry or mark
+        book.append(Position(psym, shares, entry, entry,
+                             sector_of.get(psym, "?"), mark or entry))
+    return book
+
+
+def _gross_exposure(book: list, equity: float) -> float:
+    """Book-wide gross notional as a multiple of equity (the leverage the live
+    review flags). 0.0 when equity is unknown."""
+    if equity <= 0:
+        return 0.0
+    return sum(p.notional for p in book) / equity
+
+
+def _has_resting_stop(resting: list[dict]) -> bool:
+    """True iff a protective STOP order (not just a take-profit limit) is resting.
+    A stop is the only order that guards the downside."""
+    return any((str(o.get("type", "")).startswith("stop") or o.get("stop_price"))
+               for o in (resting or []))
+
+
+_HELD_QTY_MARKERS = ("insufficient qty", "40310000", "available")
+
+
+def _is_held_qty_error(detail) -> bool:
+    """True for the transient Alpaca rejection that means the shares are still
+    `held_for_orders` by an order we just cancelled (it sits in `pending_cancel`
+    until the cancel settles): 403 / code 40310000 'insufficient qty available'.
+    Waiting clears it; other errors will not."""
+    d = str(detail).lower()
+    return any(m in d for m in _HELD_QTY_MARKERS)
+
+
+def _submit_exit_settled(broker, sym: str, qty: int, stop, target, log,
+                         *, retry: bool, sleep=time.sleep,
+                         tries: int = 6, delay: float = 0.6):
+    """Submit protective exit orders, waiting out the cancel/replace race.
+
+    A DELETE only moves a resting exit to `pending_cancel`; until that settles
+    the shares stay `held_for_orders` and a replacement is rejected with
+    'insufficient qty available'. The old code submitted once and gave up,
+    leaving the position NAKED. Here, when we have just cancelled (`retry`), we
+    re-submit while the rejection is that transient held-qty error — so the real
+    stop ends up resting instead of nothing. Returns the broker's order dict
+    (or an {'error': ...})."""
+    attempts = tries if retry else 1
+    last = None
+    for i in range(attempts):
+        try:
+            o = broker.submit_exit_orders(sym, int(qty), stop, target)
+        except Exception as exc:
+            o = {"error": str(exc)}
+        if not (isinstance(o, dict) and o.get("error")):
+            return o
+        last = o["error"]
+        if not _is_held_qty_error(last) or i >= attempts - 1:
+            return {"error": last}
+        log(f"  [protect] shares still held by the cancelled order (settling) - "
+            f"retrying in {delay:.1f}s ({i + 1}/{attempts - 1}).")
+        sleep(delay)
+    return {"error": last}
+
+
+def _arm_protection(broker, sym: str, qty: int, resting: list[dict],
+                    plan: dict, log, *, sleep=time.sleep) -> bool:
+    """Make the broker hold the plan's FULL protection (stop, and target if any)
+    for an open position. Returns True iff exit order(s) are now armed.
+
+    The subtlety this fixes: a resting exit order already HOLDS the shares, so a
+    second order for the same qty is rejected by the broker ("insufficient qty
+    available"). When protection is incomplete (e.g. a take-profit target rests
+    but the protective stop is missing — downside wide open), we therefore CANCEL
+    what's resting and re-place the full protection as one order (an OCO when both
+    levels exist). The cancel is asynchronous, though — the broker holds the
+    shares until it settles — so the re-place is retried via `_submit_exit_settled`
+    while the rejection is the transient held-qty error, rather than giving up and
+    leaving the position naked (the failure mode seen in the review logs, where the
+    prior single-shot re-place 403'd on every name that had a resting target)."""
+    arm_stop, arm_target = _missing_protection(resting, plan)
+    if not (arm_stop or arm_target):
+        return False
+    want_stop, want_target = plan.get("stop"), plan.get("target")
+    if resting:
+        if arm_stop and not arm_target:
+            log(f"  [protect] DOWNSIDE UNPROTECTED — a target is resting but NO "
+                f"STOP, and it holds the shares. Replacing with full protection "
+                f"(stop {want_stop}, target {want_target}) for {qty:.0f} sh.")
+        else:
+            log(f"  [protect] an exit is resting but the "
+                f"{'stop' if arm_stop else 'target'} is missing, and it holds the "
+                f"shares. Replacing with full protection for {qty:.0f} sh.")
+        cancelled = 0
+        for ro in resting:
+            try:
+                broker._req("DELETE", f"/v2/orders/{ro.get('id')}")
+                cancelled += 1
+            except Exception as exc:
+                log(f"  [protect] could not cancel resting order "
+                    f"{ro.get('id')}: {exc}")
+        if cancelled:
+            log(f"  [protect] cancelled {cancelled} resting exit order(s); "
+                f"shares freed.")
+        # We just removed the only resting protection: until the replace below
+        # succeeds the position is NAKED, so a failure here is critical, not
+        # cosmetic.
+        freed = cancelled > 0
+    else:
+        kind = ("OCO stop+target" if want_stop and want_target
+                else "stop" if want_stop else "target")
+        log(f"  [protect] NO exit orders resting - arming {kind} for {qty:.0f} sh "
+            f"(stop {want_stop}, target {want_target}).")
+        freed = False
+
+    def _fail(detail: str) -> bool:
+        log(f"  [protect] failed: {detail}")
+        if freed:
+            log(f"  [protect] CRITICAL — {sym} is now UNPROTECTED: its resting "
+                f"order was cancelled but the replacement did not arm. Re-run the "
+                f"review or place a stop manually NOW.")
+        return False
+
+    o = _submit_exit_settled(broker, sym, int(qty), want_stop, want_target,
+                             log, retry=freed, sleep=sleep)
+    if isinstance(o, dict) and o.get("error"):
+        return _fail(o["error"])
+    log(f"  [protect] exit order(s) ARMED - id {(o or {}).get('id', '?')} "
+        f"status {(o or {}).get('status', '?')}.")
+    return True
 
 
 def _infer_exit_reason(exit_price, stop, target) -> str:
@@ -2661,9 +2962,19 @@ def run_momentum_trade(cfg: AppConfig, emit: Emit) -> dict:
                     return {"entered": None, "open": sorted(tracked)}
                 ref = float(px["close"].iloc[-1])
                 atr = last_atr(px)
+                # Size against the WHOLE book so the Governor's portfolio caps
+                # (gross-exposure ceiling, sector, max open positions) actually
+                # bind — without this every entry is sized as if flat.
+                book = _governor_book(live_pos, closes, sec_of_map)
+                gross = _gross_exposure(book, equity)
+                log(f"[risk] book gross exposure {gross:.2f}x equity "
+                    f"(ceiling {DEFAULT_CONFIG.limits.max_gross_exposure:.1f}x); "
+                    f"{len(book)} open position(s).")
                 ctx = GovernorContext(equity=equity, reference_price=ref,
                                       atr_value=atr if atr == atr else 0.0,
-                                      sector=sec_of_map.get(sym, "?"))
+                                      sector=sec_of_map.get(sym, "?"),
+                                      positions=book,
+                                      sector_map=sec_of_map)
                 ticket = RiskGovernor(DEFAULT_CONFIG).evaluate(sym, "enter", ctx)
                 if not ticket.approved:
                     log(f"[enter] {sym} rejected by Risk Governor: {ticket.reason}")

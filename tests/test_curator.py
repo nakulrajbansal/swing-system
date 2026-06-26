@@ -72,3 +72,36 @@ def test_curator_never_duplicates_pattern_lessons():
     n_after_first = len(mem.entries)
     curate(mem, rows)                                     # second pass: no dupes
     assert len(mem.entries) == n_after_first
+
+
+def test_curator_replaces_reworded_pattern_lessons_instead_of_bloating():
+    # The lens lesson embeds the running count/avg, so its WORDING changes every
+    # run as more trades score. The curator must keep ONE current lesson per kind
+    # (replacing the stale numbers), not append a near-duplicate each pass.
+    mem = _mem_with(wins=0, losses=0)
+    curate(mem, [_row(7.0, gem=True)] * 5)               # "5 scored, +7.0%"
+    after_first = len(mem.entries)
+    lens = [e for e in mem.entries if e.lesson.kind == "lens:hidden-gem"]
+    assert len(lens) == 1
+
+    curate(mem, [_row(7.0, gem=True)] * 8)               # now "8 scored" -> reworded
+    lens = [e for e in mem.entries if e.lesson.kind == "lens:hidden-gem"]
+    assert len(lens) == 1                                 # still exactly one
+    assert "8 scored" in lens[0].lesson.lesson            # refreshed to new numbers
+    assert len(mem.entries) == after_first                # memory did NOT grow
+
+
+def test_assess_flags_inverted_conviction_buckets():
+    # Aggregate calibration nets out (avg conviction ~ win rate), but the HIGH-
+    # conviction half loses while the LOW-conviction half wins — the desk is most
+    # wrong when it bets biggest. The bucket check must catch this.
+    low = [_row(8.0, conviction=0.45)] * 8                # cautious calls: all win
+    high = [_row(-5.0, conviction=0.75)] * 8              # confident calls: all lose
+    rep = assess(low + high)
+    inv = [l for l in rep["pattern_lessons"] if l.kind == "calibration_buckets"]
+    assert inv and "INVERTED conviction" in inv[0].lesson
+
+    # Balanced/positive calibration: no inversion lesson.
+    ok = [_row(8.0, conviction=0.75)] * 8 + [_row(-5.0, conviction=0.45)] * 8
+    assert not any(l.kind == "calibration_buckets"
+                   for l in assess(ok)["pattern_lessons"])

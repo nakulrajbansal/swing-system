@@ -181,6 +181,11 @@ class Lesson:
     as_of: str = ""               # ISO date the originating trade closed
     pnl_pct: float = 0.0
     conviction: float = 0.0
+    # A stable identity for evidence-derived PATTERN lessons (e.g. "calibration",
+    # "exit_mix", "lens:hidden-gem"). The curator carries exactly one current
+    # lesson per kind, replacing the old wording when the numbers move — so the
+    # memory does not bloat with reworded near-duplicates. Empty for anecdotes.
+    kind: str = ""
 
     def validate(self) -> "Lesson":
         return self

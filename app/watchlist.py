@@ -71,6 +71,44 @@ def remove(symbols: set[str], path=None) -> None:
     save([it for it in load(path) if it["symbol"] not in symbols], path)
 
 
+def clear(path=None) -> int:
+    """Empty the watchlist entirely. Returns how many entries were removed.
+    Risk-reducing/cosmetic — touches no orders; screens repopulate the list."""
+    items = load(path)
+    save([], path)
+    return len(items)
+
+
+def annotate(items: list[dict], today: str,
+             closes: pd.DataFrame | None = None) -> list[dict]:
+    """Decorate entries with validity for display (pure; does not persist):
+    `days_left`/`expired` from the expiry date, and — when `closes` is given —
+    the current `price` and signed `distance_pct` to the entry's trigger level
+    (negative means price is below the level). Lets the watch check answer
+    "are these still valid?" instead of just listing symbols."""
+    td = datetime.date.fromisoformat(today)
+    out = []
+    for it in items:
+        a = dict(it)
+        try:
+            a["days_left"] = (datetime.date.fromisoformat(str(it.get("expires")))
+                              - td).days
+        except Exception:
+            a["days_left"] = None
+        a["expired"] = a["days_left"] is not None and a["days_left"] < 0
+        sym = it.get("symbol")
+        if closes is not None and sym in getattr(closes, "columns", []):
+            c = closes[sym].dropna()
+            if not c.empty:
+                last = float(c.iloc[-1])
+                a["price"] = round(last, 2)
+                lvl = it.get("pullback_target") or it.get("breakout_level")
+                if lvl:
+                    a["distance_pct"] = round((last / float(lvl) - 1) * 100, 1)
+        out.append(a)
+    return out
+
+
 def watch_hits(items: list[dict], closes: pd.DataFrame,
                volumes: pd.DataFrame | None = None) -> list[dict]:
     """Which watch entries have TRIGGERED: price entered the pullback window
