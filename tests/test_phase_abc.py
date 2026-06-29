@@ -452,6 +452,57 @@ def test_cancel_orders_by_id_flags_a_naked_stop(monkeypatch):
     assert any("UNPROTECTED" in ln for ln in lines)        # the naked warning
 
 
+def test_order_qty_is_resilient_to_missing_fields():
+    # Regression: a flattened OCO leg can lack a clean `qty`, which printed a bare
+    # '?' in the cancel log. Fall back through the alternatives, never '?'.
+    from app.runner import _order_qty
+
+    assert _order_qty({"qty": "100"}) == "100"
+    assert _order_qty({"qty": None, "filled_qty": "50"}) == "50"
+    assert _order_qty({}) == "—"                            # nothing usable
+    assert _order_qty({"qty": 80.0}) == "80"               # numeric coerced
+
+
+def test_equity_curve_is_risk_weighted_not_full_notional(tmp_path):
+    # The Performance-chart fix: the naive curve compounded each call's FULL
+    # per-trade return as if 100% of capital rode every one — turning a small
+    # average edge into a fictional huge curve. The curve must instead compound
+    # at the desk's ~1%-risk position weight (risk / stop-distance).
+    from app import reco_ledger
+
+    p = tmp_path / "ledger.json"
+    # Ten +10% calls, each with a 10% stop distance -> ~10% notional weight, so a
+    # weighted per-call contribution of ~+1% (not +10%).
+    rows = []
+    for i in range(10):
+        rows.append({"id": f"r{i}", "symbol": f"S{i}", "status": "evaluated",
+                     "return_pct": 10.0, "entry": 100.0, "stop": 90.0,
+                     "date": f"2026-03-{i + 1:02d}", "evaluated_on": "2026-04-01"})
+    reco_ledger.save(rows, p)
+    ec = reco_ledger.equity_curve(reco_ledger.load(p))
+
+    assert ec["n"] == 10
+    assert 9 <= ec["avg_weight_pct"] <= 11                  # ~10% notional/trade
+    # Full-notional would be 1.10^10-1 = +159%; risk-weighted is ~1.01^10 ≈ +10%.
+    assert 8 <= ec["total_return_pct"] <= 13
+    assert ec["curve"][0] == 1.0 and ec["curve"][-1] > 1.0
+
+
+def test_equity_curve_caps_weight_at_single_name_limit(tmp_path):
+    # A very tight stop would imply a huge position for 1% risk; the weight must
+    # be capped at the single-name limit (15%), never larger.
+    from app import reco_ledger
+    from system.config import DEFAULT_CONFIG
+
+    p = tmp_path / "ledger.json"
+    # 1% stop distance -> uncapped weight would be 100%; must cap at 15%.
+    reco_ledger.save([{"id": "r", "symbol": "S", "status": "evaluated",
+                       "return_pct": 5.0, "entry": 100.0, "stop": 99.0,
+                       "date": "2026-03-01"}], p)
+    ec = reco_ledger.equity_curve(reco_ledger.load(p))
+    assert ec["avg_weight_pct"] <= DEFAULT_CONFIG.limits.max_single_name * 100 + 0.01
+
+
 def test_governor_book_falls_back_to_entry_when_no_close():
     from app.runner import _governor_book
     from system.execution.broker import BrokerPosition

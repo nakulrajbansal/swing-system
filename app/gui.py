@@ -744,15 +744,17 @@ class SwingApp:
                          and isinstance(r.get("return_pct"), (int, float))),
                         key=lambda r: str(r.get("evaluated_on") or ""))
         # ---- equity curve ----
+        # Risk-weighted advisory track record: each scored call compounds at the
+        # ~1%-risk position size the desk would have used (weight = risk /
+        # stop-distance), NOT 100% of capital per trade — which fictitiously
+        # turned a roughly-flat record into a +40% curve.
         c = self.perf_canvas
         c.delete("all")
         self.root.update_idletasks()
         w = max(c.winfo_width(), 420)
         h = 170
-        eq, v = [1.0], 1.0
-        for r in scored:
-            v *= 1 + float(r["return_pct"]) / 100.0
-            eq.append(v)
+        ec = reco_ledger.equity_curve(rows)
+        eq = ec["curve"]
         if len(eq) < 3:
             c.create_text(w // 2, h // 2, fill=MUTED, font=self.f_sub,
                           text="The curve starts once recommendations mature and "
@@ -786,6 +788,9 @@ class SwingApp:
             if exc:
                 lines.append(f"vs SPY (same windows): avg excess "
                              f"{sum(exc) / len(exc):+.2f}% over {len(exc)} calls")
+            lines.append(f"curve: {ec['total_return_pct']:+.1f}% compounded at the "
+                         f"desk's ~{ec['avg_weight_pct']:.0f}% notional/trade sizing "
+                         "(signal quality, not your live balance)")
             lines.append("")
             lines.append("CALIBRATION (trailing window)")
             table = calibration_table(rows)

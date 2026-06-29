@@ -178,6 +178,10 @@ async function clearWatchlist() {
 async function loadPerformance() {
   const p = await (await fetch("/api/performance")).json();
   drawEquity(p.equity_curve || [1]);
+  const cap = $("equityCap");
+  if (cap) cap.textContent = p.n
+    ? `Risk-weighted advisory track record: ${p.n} scored calls at ~${p.curve_avg_weight_pct}% notional each (1% equity at risk) → ${p.curve_total_pct >= 0 ? "+" : ""}${p.curve_total_pct}% compounded. This measures signal quality at realistic sizing, not your live account balance (see Executed trades).`
+    : "";
   let t = `SCORED CALLS  ${p.n}   |   hit ${p.hit_rate}%   |   avg ${p.avg_return >= 0 ? "+" : ""}${p.avg_return}%\n\nCALIBRATION (conviction band → realized win rate)\n`;
   (p.calibration || []).forEach(b => {
     t += `  ${b.lo.toFixed(2)}-${Math.min(b.hi, 1).toFixed(2)}: n=${b.n}  ${b.win_rate_pct ?? "-"}${b.win_rate_pct != null ? "%" : ""}\n`;

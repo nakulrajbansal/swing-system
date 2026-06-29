@@ -293,17 +293,16 @@ def api_performance():
     scored = sorted((r for r in rows if r.get("status") == "evaluated"
                      and isinstance(r.get("return_pct"), (int, float))),
                     key=lambda r: str(r.get("evaluated_on") or ""))
-    eq, v = [1.0], 1.0
-    for r in scored:
-        v *= 1 + float(r["return_pct"]) / 100.0
-        eq.append(round(v, 4))
+    ec = reco_ledger.equity_curve(rows)
     wins = sum(1 for r in scored if r["return_pct"] > 0)
     return {
         "n": len(scored),
         "hit_rate": round(100 * wins / len(scored), 0) if scored else 0,
         "avg_return": round(sum(r["return_pct"] for r in scored) / len(scored), 2)
         if scored else 0,
-        "equity_curve": eq,
+        "equity_curve": ec["curve"],
+        "curve_total_pct": ec["total_return_pct"],
+        "curve_avg_weight_pct": ec["avg_weight_pct"],
         "calibration": calibration_table(rows)["bands"],
         "cohorts": reco_ledger.cohort_stats(rows),
         "recent": [{"date": r.get("evaluated_on"), "symbol": r["symbol"],

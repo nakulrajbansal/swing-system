@@ -409,6 +409,20 @@ def _order_role(o: dict, held_symbols: set) -> str:
     return "exit"
 
 
+def _order_qty(o: dict) -> str:
+    """Order quantity for display. Alpaca usually carries `qty`, but a notional
+    or odd child leg can leave it null — fall back through the alternatives and
+    show a clean integer (or '—'), never a bare '?'."""
+    for k in ("qty", "filled_qty", "notional"):
+        v = o.get(k)
+        if v not in (None, ""):
+            try:
+                return str(int(float(v)))
+            except (TypeError, ValueError):
+                return str(v)
+    return "—"
+
+
 def run_open_orders(cfg: AppConfig, emit: Emit) -> dict:
     """List every WORKING (unfilled / resting) order at the broker, each tagged
     with its role so the operator can cancel safely from inside the app:
@@ -439,9 +453,9 @@ def run_open_orders(cfg: AppConfig, emit: Emit) -> dict:
             px = o.get("limit_price") or o.get("stop_price") or "mkt"
             rows.append({"id": o.get("id"), "symbol": o.get("symbol"),
                          "side": o.get("side"), "type": o.get("type"),
-                         "qty": o.get("qty"), "price": px, "role": role,
+                         "qty": _order_qty(o), "price": px, "role": role,
                          "status": o.get("status")})
-            log(f"  [{role}] {str(o.get('side', '?')).upper()} {o.get('qty', '?')} "
+            log(f"  [{role}] {str(o.get('side', '?')).upper()} {_order_qty(o)} "
                 f"{o.get('symbol', '?')}  {o.get('type', '?')} @ {px}  "
                 f"id {o.get('id')}  status {o.get('status')}")
         out["orders"] = rows
@@ -509,7 +523,7 @@ def cancel_orders(cfg: AppConfig, emit: Emit, order_ids=None,
             out["ids"].append(oid)
             naked = (" — position now UNPROTECTED on the downside!"
                      if role == "stop" and o.get("symbol") in held else "")
-            log(f"  [cancel] {str(o.get('side', '?')).upper()} {o.get('qty', '?')} "
+            log(f"  [cancel] {str(o.get('side', '?')).upper()} {_order_qty(o)} "
                 f"{o.get('symbol', '?')} [{role}] cancelled.{naked}")
         log(f"[done] cancelled {out['cancelled']} order(s); "
             f"{len(out['failed'])} failed.")

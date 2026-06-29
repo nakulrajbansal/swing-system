@@ -208,6 +208,60 @@ def evaluate(closes: pd.DataFrame, today: str, memory=None, path=None) -> dict:
             "cohorts": cohort_stats(led)}
 
 
+def _trade_weight(r: dict, risk_per_trade: float, max_weight: float,
+                  typical_stop: float = 0.10) -> float:
+    """The fraction of capital the desk's own sizer would put in this trade.
+
+    Position size is `equity * risk_per_trade / (entry - stop)` shares, so the
+    NOTIONAL weight is `risk_per_trade / stop_distance` — i.e. a tight stop earns
+    a bigger position for the same 1% risk — capped at the single-name limit. A
+    row missing its stop falls back to a typical stop distance."""
+    entry, stop = r.get("entry"), r.get("stop")
+    dist = typical_stop
+    try:
+        e, s = float(entry), float(stop)
+        if e > 0 and e > s > 0:
+            dist = (e - s) / e
+    except (TypeError, ValueError):
+        pass
+    if dist <= 0:
+        dist = typical_stop
+    return min(risk_per_trade / dist, max_weight)
+
+
+def equity_curve(rows: list[dict] | None = None, path=None) -> dict:
+    """A faithful track record of the desk's scored calls, compounded at the
+    position size the desk WOULD have used (1% equity at risk, weight =
+    risk / stop-distance, capped at the single-name limit), in ENTRY-date order.
+
+    The naive version compounded each call's full per-trade return as if 100% of
+    capital rode every one sequentially — which turns a +1.2%-avg, ~0%-account
+    record into a fictional +40% curve. Risk-weighting each call by its real
+    ~10% notional makes the curve track what the advice would actually have done
+    to an account. This is an ADVISORY-signal curve (every scored call, executed
+    or not); the account's own equity comes from broker history."""
+    from system.config import DEFAULT_CONFIG
+    rows = load(path) if rows is None else rows
+    lim = DEFAULT_CONFIG.limits
+    scored = [r for r in rows if r.get("status") == "evaluated"
+              and isinstance(r.get("return_pct"), (int, float))]
+    # Entry-date order is when capital was actually deployed; evaluated_on
+    # bunches many calls onto the few days their windows happened to elapse.
+    scored.sort(key=lambda r: (str(r.get("date") or r.get("evaluated_on") or ""),
+                               str(r.get("symbol") or "")))
+    eq, v = [1.0], 1.0
+    weights = []
+    for r in scored:
+        w = _trade_weight(r, lim.risk_per_trade, lim.max_single_name)
+        weights.append(w)
+        v *= 1.0 + (float(r["return_pct"]) / 100.0) * w
+        eq.append(round(v, 4))
+    return {"curve": eq, "n": len(scored),
+            "total_return_pct": round((v - 1.0) * 100.0, 2),
+            "avg_weight_pct": round(100.0 * sum(weights) / len(weights), 1)
+            if weights else 0.0}
+
+
 def _cohort(rows: list[dict]) -> dict:
     rets = [r["return_pct"] for r in rows if isinstance(r.get("return_pct"), (int, float))]
     if not rets:

@@ -87,8 +87,8 @@
     <!-- PERFORMANCE -->
     <section class="page" id="page-performance">
       <h2>Performance</h2><div class="pagesub">How the desk's calls have actually done</div>
-      <div class="section">Equity curve</div>
-      <div class="card"><canvas id="equity" height="170"></canvas></div>
+      <div class="section">Equity curve<span class="desc">every scored call, compounded at the desk's 1%-risk position sizing — not 100% of capital per trade</span></div>
+      <div class="card"><canvas id="equity" height="170"></canvas><div id="equityCap" class="faint small" style="margin-top:8px"></div></div>
       <div class="section">Scorecard</div>
       <div class="card"><pre class="block" id="perfText">Loading…</pre></div>
     </section>

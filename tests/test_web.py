@@ -42,6 +42,14 @@ def test_performance_and_learning_endpoints():
         assert client.get(path).status_code == 200
 
 
+def test_performance_exposes_risk_weighted_curve_metadata():
+    p = client.get("/api/performance").json()
+    assert "equity_curve" in p and "curve_total_pct" in p
+    assert "curve_avg_weight_pct" in p
+    # The weighting must be modest (≈ sizing), never the old full-notional curve.
+    assert p["curve_avg_weight_pct"] <= 15.01
+
+
 def test_learning_endpoint_returns_the_structured_report(monkeypatch):
     from app import learning_report
     fake = {"headline": {"n_scored": 3, "stage": "shadow", "verdict": "NOT READY"},

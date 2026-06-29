@@ -44,13 +44,11 @@ _AFFECTS = {
 
 
 def _equity_curve(scored: list[dict]) -> list[float]:
-    """Compounded curve of the scored forward returns, oldest→newest."""
-    rows = sorted(scored, key=lambda r: str(r.get("evaluated_on") or ""))
-    eq, v = [1.0], 1.0
-    for r in rows:
-        v *= 1.0 + float(r["return_pct"]) / 100.0
-        eq.append(round(v, 4))
-    return eq
+    """Risk-weighted compounded curve of the scored calls (the same curve the
+    Performance tab shows) — each call sized at the desk's ~1% risk, not 100% of
+    capital, so the drawdown gate sees a realistic curve rather than a fictional
+    full-notional one."""
+    return reco_ledger.equity_curve(scored)["curve"]
 
 
 def _shadow_days(led: list[dict]) -> int | None:
