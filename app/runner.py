@@ -571,8 +571,17 @@ def run_curation(cfg: AppConfig, emit: Emit) -> dict:
                        if b.get("avg_conviction") else ""))
         rep = _run_curator(mem, client, log)
         save_memory(mem)
+        # Snapshot the desk's state (readiness, params, preset, throttle) so the
+        # Learning tab can show how the strategy drifts over time.
+        try:
+            from app import learning_report
+            snap = learning_report.append_snapshot()
+            log(f"[journal] readiness {snap['readiness_score']}/100 "
+                f"(stage: {snap['stage']}) recorded to the strategy journal.")
+        except Exception as exc:
+            log(f"[journal] snapshot skipped ({type(exc).__name__}: {exc}).")
         log("[done] curation complete - see the Learning tab for the active "
-            "lesson set.")
+            "lesson set and the deployment-readiness scorecard.")
     return rep
 
 

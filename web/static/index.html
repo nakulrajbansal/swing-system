@@ -95,10 +95,23 @@
 
     <!-- LEARNING -->
     <section class="page" id="page-learning">
-      <h2>Learning</h2><div class="pagesub">What the desk has learned from closed trades</div>
-      <div class="section">Lessons &amp; base rates<span class="desc">AI-curated; evidence-gated</span></div>
-      <div class="card"><button class="tool" onclick="run('curate')">Run AI curator</button>
-        <pre class="block" id="learnText" style="margin-top:10px">Loading…</pre></div>
+      <h2>Learning</h2><div class="pagesub">How the desk gets smarter as it trades — and whether it has earned real cash yet</div>
+
+      <div class="section">Deployment readiness<span class="desc">evidence-gated; the desk recommends, a human enables real money</span>
+        <button class="tool" style="float:right" onclick="run('curate')">Run AI curator</button></div>
+      <div class="card" id="readyCard"><span class="faint small">Loading…</span></div>
+
+      <div class="section">What the desk is adjusting<span class="desc">self-tuned parameters and which agents they move</span></div>
+      <div class="card" id="paramCard"><span class="faint small">Loading…</span></div>
+
+      <div class="section">Current strategy</div>
+      <div class="card" id="stratCard"><span class="faint small">Loading…</span></div>
+
+      <div class="section">Strategy evolution<span class="desc">how the record and readiness have moved over time</span></div>
+      <div class="card" id="evoCard"><span class="faint small">Loading…</span></div>
+
+      <div class="section">Lessons learned<span class="desc">AI-curated; evidence-gated</span></div>
+      <div class="card" id="lessonCard"><span class="faint small">Loading…</span></div>
     </section>
 
     <!-- SETTINGS -->

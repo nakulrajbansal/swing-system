@@ -209,9 +209,94 @@ function drawEquity(eq) {
 }
 
 // ---- learning ----
+const esc = s => String(s == null ? "" : s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const GMARK = { pass: "✓", progress: "◐", fail: "✗" };
+
 async function loadLearning() {
-  const l = await (await fetch("/api/learning")).json();
-  $("learnText").textContent = (l.lessons || "") + "\n\n" + "─".repeat(50) + "\n" + (l.ledger || "");
+  const r = await (await fetch("/api/learning")).json();
+  if (r.error) { $("readyCard").innerHTML = `<span class="faint small">${esc(r.error)}</span>`; return; }
+  renderReadiness(r); renderParams(r); renderStrategy(r); renderEvolution(r); renderLessons(r);
+}
+
+function renderReadiness(r) {
+  const rd = r.readiness, h = r.headline;
+  let g = rd.gates.map(x =>
+    `<div class="gate ${x.status}"><span class="mk">${GMARK[x.status]}</span>`
+    + `<div><div><span class="gname">${esc(x.name)}</span><span class="gdetail">${esc(x.detail)}</span></div>`
+    + `<div class="gwhy">${esc(x.why)}</div></div></div>`).join("");
+  const mintrl = rd.min_track_record == null
+    ? (rd.psr >= 0.95 ? "reached" : "n/a") : rd.min_track_record + " trades";
+  $("readyCard").innerHTML =
+    `<div class="ready-head"><div class="ready-score">${rd.score}<span class="max">/100</span></div>`
+    + `<div><div class="ready-verdict">${esc(rd.verdict)}</div>`
+    + `<div class="ready-stage">recommended stage: ${esc(rd.stage)}</div></div></div>`
+    + `<div class="meter"><span style="width:${rd.score}%"></span></div>`
+    + `<div style="margin-bottom:8px">`
+    + `<span class="kpi">scored <b>${h.n_scored}</b></span><span class="kpi">hit <b>${h.hit_rate}%</b></span>`
+    + `<span class="kpi">avg <b>${h.avg_return >= 0 ? "+" : ""}${h.avg_return}%</b></span>`
+    + (h.excess_avg != null ? `<span class="kpi">vs mkt <b>${h.excess_avg >= 0 ? "+" : ""}${h.excess_avg}%</b></span>` : "")
+    + `<span class="kpi">PSR <b>${Math.round(rd.psr * 100)}%</b></span>`
+    + `<span class="kpi">Sharpe <b>${rd.per_trade_sharpe}</b></span>`
+    + `<span class="kpi">to significance <b>${mintrl}</b></span>`
+    + (rd.brier != null ? `<span class="kpi">Brier <b>${rd.brier}</b></span><span class="kpi">maxDD <b>${Math.round(rd.max_drawdown * 100)}%</b></span>` : "")
+    + `</div>` + g
+    + `<div class="humangate">${esc(rd.human_gate)}</div>`;
+}
+
+function renderParams(r) {
+  $("paramCard").innerHTML = r.parameters.map(p =>
+    `<div class="param"><div class="pn">${esc(p.param)}</div><div class="pv">${esc(p.value)}</div>`
+    + `<div class="pmeta">affects → <span class="ag">${esc(p.affects)}</span></div>`
+    + `<div class="pmeta">evidence → ${esc(p.confidence)}</div></div>`).join("");
+}
+
+function renderStrategy(r) {
+  const s = r.strategy, co = r.learnings.cohorts || {};
+  let lens = "";
+  for (const [k, label] of [["hidden_gem", "hidden-gem"], ["core", "core"], ["moat_bullish", "moat-bullish"]]) {
+    const c = co[k] || {};
+    if (c.n) lens += `<span class="kpi">${label} <b>${c.win_rate_pct}%</b> (n=${c.n}, ${c.avg_return_pct >= 0 ? "+" : ""}${c.avg_return_pct}%)</span>`;
+  }
+  $("stratCard").innerHTML = `<div style="margin-bottom:8px">${esc(s.summary)}</div>`
+    + (s.top_lessons.length ? `<div class="muted small" style="margin-bottom:6px">active lessons in play:</div><ul style="margin:0 0 8px 18px;color:var(--muted)">`
+      + s.top_lessons.map(t => `<li>${esc(t)}</li>`).join("") + "</ul>" : "")
+    + (lens ? `<div class="muted small">lens performance: </div><div>${lens}</div>` : "");
+}
+
+function renderEvolution(r) {
+  const m = r.evolution.monthly || [], j = r.evolution.journal || [];
+  let h = "";
+  if (m.length) {
+    const maxN = Math.max(...m.map(x => x.n), 1);
+    h += `<div class="muted small" style="margin-bottom:4px">scored calls by month</div>`;
+    h += m.slice(-12).map(x =>
+      `<div class="evorow"><span style="width:62px">${x.month}</span>`
+      + `<span class="eb" style="width:${Math.round(120 * x.n / maxN)}px"></span>`
+      + `<span>n=${x.n} · hit ${x.hit}% · avg ${x.avg >= 0 ? "+" : ""}${x.avg}%</span></div>`).join("");
+  }
+  if (j.length >= 2) {
+    h += `<div class="muted small" style="margin:10px 0 4px">readiness over time</div>`;
+    h += j.slice(-8).map(s =>
+      `<div class="evorow"><span style="width:84px">${s.date}</span>`
+      + `<span class="eb" style="width:${Math.round(120 * (s.readiness_score || 0) / 100)}px"></span>`
+      + `<span>${s.readiness_score}/100 (${esc(s.stage)}) · n=${s.n_scored} · preset ${esc(s.preset || "?")}</span></div>`).join("");
+  }
+  $("evoCard").innerHTML = h || `<span class="faint small">History builds as recommendations mature and the curator runs.</span>`;
+}
+
+function renderLessons(r) {
+  const L = r.learnings;
+  let h = "";
+  if (L.patterns.length) {
+    h += `<div class="muted small" style="margin-bottom:4px">pattern lessons (from aggregates)</div><ul style="margin:0 0 10px 18px;color:var(--ink)">`
+      + L.patterns.map(p => `<li>${esc(p.text)} <span class="faint small">[${esc(p.kind)}]</span></li>`).join("") + "</ul>";
+  }
+  if (L.recent_anecdotes.length) {
+    h += `<div class="muted small" style="margin-bottom:4px">recent trade lessons</div><ul style="margin:0 0 8px 18px;color:var(--muted)">`
+      + L.recent_anecdotes.map(a => `<li>${esc(a.text)} <span class="faint small">${esc(a.as_of)}</span></li>`).join("") + "</ul>";
+  }
+  h += `<div class="faint small">${L.pending} lesson(s) pending more evidence before they carry weight.</div>`;
+  $("lessonCard").innerHTML = h;
 }
 
 // ---- auth ----

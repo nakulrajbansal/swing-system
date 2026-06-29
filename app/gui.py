@@ -842,8 +842,9 @@ class SwingApp:
         self.perf_out.configure(state="disabled")
 
     def _build_lessons(self, parent):
-        card = self._card(parent, "Learning memory",
-                          "advisory lessons + base rates that inform future runs",
+        card = self._card(parent, "Learning & deployment readiness",
+                          "what the desk has learned, the parameters it tunes, and "
+                          "whether the edge has earned real capital yet",
                           expand=True)
         bar = ttk.Frame(card, style="Card.TFrame")
         bar.pack(fill="x", pady=(0, 8))
@@ -868,13 +869,10 @@ class SwingApp:
 
     def _refresh_lessons(self):
         try:
-            from app.learning import load_memory, summarize
-            from app import reco_ledger
-            text = (summarize(load_memory())
-                    + "\n\n" + "-" * 60 + "\n"
-                    + reco_ledger.summarize())
+            from app import learning_report
+            text = learning_report.render_text(learning_report.build_report())
         except Exception as exc:
-            text = f"(could not load learning memory: {exc})"
+            text = f"(could not build the learning report: {exc})"
         self.lessons_out.configure(state="normal")
         self.lessons_out.delete("1.0", "end")
         self.lessons_out.insert("end", text + "\n")

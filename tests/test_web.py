@@ -42,6 +42,23 @@ def test_performance_and_learning_endpoints():
         assert client.get(path).status_code == 200
 
 
+def test_learning_endpoint_returns_the_structured_report(monkeypatch):
+    from app import learning_report
+    fake = {"headline": {"n_scored": 3, "stage": "shadow", "verdict": "NOT READY"},
+            "readiness": {"score": 20, "gates": [], "stage": "shadow",
+                          "verdict": "NOT READY", "psr": 0.1, "human_gate": "human"},
+            "parameters": [{"param": "Conviction calibration", "value": "-",
+                            "affects": "PM", "confidence": "thin"}],
+            "learnings": {"patterns": [], "recent_anecdotes": [], "pending": 0,
+                          "cohorts": {}},
+            "strategy": {"summary": "x", "top_lessons": [], "preset": "base"},
+            "evolution": {"monthly": [], "journal": []}}
+    monkeypatch.setattr(learning_report, "build_report", lambda: fake)
+    r = client.get("/api/learning").json()
+    assert r["readiness"]["score"] == 20
+    assert r["parameters"][0]["affects"] == "PM"
+
+
 def test_open_orders_and_cancel_endpoints(monkeypatch):
     # The endpoints call the names bound in the server module, so patch there.
     monkeypatch.setattr(server, "run_open_orders",

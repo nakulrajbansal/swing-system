@@ -316,10 +316,14 @@ def api_performance():
 
 @app.get("/api/learning")
 def api_learning():
-    from app import reco_ledger
-    from app.learning import load_memory, summarize
-    return {"lessons": summarize(load_memory()),
-            "ledger": reco_ledger.summarize()}
+    """The structured learning report: readiness scorecard, the parameters the
+    desk adapts (and which agents they move), current strategy, lens performance,
+    and how the strategy has evolved."""
+    from app import learning_report
+    try:
+        return learning_report.build_report()
+    except Exception as exc:                              # never 500 the tab
+        return {"error": f"{type(exc).__name__}: {exc}"}
 
 
 @app.get("/api/schedule")
