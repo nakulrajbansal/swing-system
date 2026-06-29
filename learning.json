@@ -1,0 +1,131 @@
+{
+  "decay": 0.98,
+  "entries": [
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended ON did not pay -13.1% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "ON",
+        "as_of": "2026-06-29",
+        "pnl_pct": -13.13,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended CSCO did not pay -5.3% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "CSCO",
+        "as_of": "2026-06-29",
+        "pnl_pct": -5.33,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended TXN did not pay -8.4% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "TXN",
+        "as_of": "2026-06-29",
+        "pnl_pct": -8.44,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended HPE did not pay -10.6% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "HPE",
+        "as_of": "2026-06-29",
+        "pnl_pct": -10.57,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended CNC paid +3.7% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "CNC",
+        "as_of": "2026-06-29",
+        "pnl_pct": 3.68,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "stated convictions run ~47pp ABOVE the realized win rate (20% over 5 scored calls) - treat conviction as optimistic and demand more confirmation before sizing up",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-06-29",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    }
+  ],
+  "outcomes": [
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "ON",
+      "conviction": 0.67,
+      "pnl_pct": -13.13,
+      "reason": "stop",
+      "as_of": "2026-06-29"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "CSCO",
+      "conviction": 0.67,
+      "pnl_pct": -5.33,
+      "reason": "time",
+      "as_of": "2026-06-29"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "TXN",
+      "conviction": 0.67,
+      "pnl_pct": -8.44,
+      "reason": "stop",
+      "as_of": "2026-06-29"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "HPE",
+      "conviction": 0.67,
+      "pnl_pct": -10.57,
+      "reason": "time",
+      "as_of": "2026-06-29"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "CNC",
+      "conviction": 0.67,
+      "pnl_pct": 3.68,
+      "reason": "time",
+      "as_of": "2026-06-29"
+    }
+  ]
+}
