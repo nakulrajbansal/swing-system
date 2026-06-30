@@ -84,6 +84,104 @@
       },
       "weight": 1.0,
       "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended TXN did not pay -6.6% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "TXN",
+        "as_of": "2026-06-30",
+        "pnl_pct": -6.62,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended CSCO did not pay -1.6% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "CSCO",
+        "as_of": "2026-06-30",
+        "pnl_pct": -1.56,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended NUE did not pay -6.1% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "NUE",
+        "as_of": "2026-06-30",
+        "pnl_pct": -6.08,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended CNC paid +5.1% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "CNC",
+        "as_of": "2026-06-30",
+        "pnl_pct": 5.13,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended HPE did not pay -8.2% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "HPE",
+        "as_of": "2026-06-30",
+        "pnl_pct": -8.21,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "stated convictions run ~47pp ABOVE the realized win rate (20% over 10 scored calls) - treat conviction as optimistic and demand more confirmation before sizing up",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-06-30",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "moat-bullish picks are NOT paying (0% of 5 scored) - demand stronger confirmation before trusting this lens",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-06-30",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
     }
   ],
   "outcomes": [
@@ -126,6 +224,46 @@
       "pnl_pct": 3.68,
       "reason": "time",
       "as_of": "2026-06-29"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "TXN",
+      "conviction": 0.67,
+      "pnl_pct": -6.62,
+      "reason": "time",
+      "as_of": "2026-06-30"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "CSCO",
+      "conviction": 0.67,
+      "pnl_pct": -1.56,
+      "reason": "time",
+      "as_of": "2026-06-30"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "NUE",
+      "conviction": 0.67,
+      "pnl_pct": -6.08,
+      "reason": "stop",
+      "as_of": "2026-06-30"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "CNC",
+      "conviction": 0.67,
+      "pnl_pct": 5.13,
+      "reason": "time",
+      "as_of": "2026-06-30"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "HPE",
+      "conviction": 0.67,
+      "pnl_pct": -8.21,
+      "reason": "time",
+      "as_of": "2026-06-30"
     }
   ]
 }
