@@ -409,6 +409,24 @@ def _order_role(o: dict, held_symbols: set) -> str:
     return "exit"
 
 
+_BASE_BUY_BAR = 0.55          # the standing conviction bar a BUY must clear
+
+
+def _throttle_bar(conviction_bump: float) -> float:
+    """The raised conviction bar while the desk is de-risking. Rounded because
+    0.55 + 0.05 is 0.6000000000000001 in float — without rounding, a name sitting
+    at exactly the intended 0.60 bar is wrongly held back."""
+    return round(_BASE_BUY_BAR + conviction_bump, 4)
+
+
+def _apply_throttle_bar(recs: list[dict], bar: float) -> tuple[list[dict], list[dict]]:
+    """Split BUY recs into (kept, held_back) at the raised bar. A name AT the bar
+    qualifies (>=), so the boundary is inclusive."""
+    kept = [r for r in recs if r["conviction"] >= bar]
+    held_back = [r for r in recs if r["conviction"] < bar]
+    return kept, held_back
+
+
 def _order_qty(o: dict) -> str:
     """Order quantity for display. Alpaca usually carries `qty`, but a notional
     or odd child leg can leave it null — fall back through the alternatives and
@@ -2639,10 +2657,11 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
 
         # Apply the self-throttle's raised entry bar: when de-risking, only the
         # higher-conviction calls survive (lower ones drop to WATCH).
+        throttled_back = 0
         if throttle["active"] and throttle["conviction_bump"] > 0:
-            bar = 0.55 + throttle["conviction_bump"]
-            held_back = [r for r in recs if r["conviction"] < bar]
-            recs = [r for r in recs if r["conviction"] >= bar]
+            bar = _throttle_bar(throttle["conviction_bump"])
+            recs, held_back = _apply_throttle_bar(recs, bar)
+            throttled_back = len(held_back)
             for r in held_back:
                 log(f"[throttle] holding back {r['symbol']} (conviction "
                     f"{r['conviction']:.2f} < raised bar {bar:.2f}) - watch, don't buy.")
@@ -2651,7 +2670,12 @@ def run_screen(cfg: AppConfig, emit: Emit) -> dict:
         log(f"{label} SCREEN RESULTS  ({today})  -- advisory only, no orders")
         log("=" * 60)
         if not recs:
-            log("No BUY among the shortlist (the agents passed on all of them).")
+            if throttled_back:
+                log(f"No BUY: the agents proposed {throttled_back} name(s) but the "
+                    "self-throttle held them ALL below its raised bar - the desk is "
+                    "standing down while its recent record is weak (see [throttle]).")
+            else:
+                log("No BUY among the shortlist (the agents passed on all of them).")
         for r in sorted(recs, key=lambda x: x["conviction"], reverse=True):
             pw = f", P(win) {r['p_win'] * 100:.0f}%" if r.get("p_win") else ""
             log(f"\n  RECOMMEND BUY {r['symbol']}  (conviction {r['conviction']}{pw}, "

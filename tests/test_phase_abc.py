@@ -452,6 +452,23 @@ def test_cancel_orders_by_id_flags_a_naked_stop(monkeypatch):
     assert any("UNPROTECTED" in ln for ln in lines)        # the naked warning
 
 
+def test_throttle_bar_keeps_a_name_at_exactly_the_raised_bar():
+    # Regression from the 2026-06-30 screen log: a +0.05 bump made the bar
+    # 0.55 + 0.05 = 0.6000000000000001 in float, so FFIV at exactly 0.60 was
+    # wrongly held back. The bar must be rounded so a name AT 0.60 qualifies.
+    from app.runner import _apply_throttle_bar, _throttle_bar
+
+    bar = _throttle_bar(0.05)
+    assert bar == 0.60                                     # not 0.6000000000000001
+    recs = [{"symbol": "FFIV", "conviction": 0.60},
+            {"symbol": "MRVL", "conviction": 0.55},
+            {"symbol": "AAA", "conviction": 0.61}]
+    kept, held = _apply_throttle_bar(recs, bar)
+    kept_syms = {r["symbol"] for r in kept}
+    assert kept_syms == {"FFIV", "AAA"}                    # 0.60 meets the 0.60 bar
+    assert {r["symbol"] for r in held} == {"MRVL"}         # 0.55 < 0.60 held back
+
+
 def test_order_qty_is_resilient_to_missing_fields():
     # Regression: a flattened OCO leg can lack a clean `qty`, which printed a bare
     # '?' in the cancel log. Fall back through the alternatives, never '?'.
