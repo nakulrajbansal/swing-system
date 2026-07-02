@@ -427,6 +427,18 @@ def _apply_throttle_bar(recs: list[dict], bar: float) -> tuple[list[dict], list[
     return kept, held_back
 
 
+def _latest_per_symbol(recs: list[dict]) -> list[dict]:
+    """One rec per symbol — the most recent by `date`. Used so a single broker
+    closure scores exactly one outcome even when a symbol has several open
+    executed recs (else the same sell fill is scored once per rec)."""
+    latest: dict[str, dict] = {}
+    for r in recs:
+        cur = latest.get(r["symbol"])
+        if cur is None or str(r.get("date") or "") > str(cur.get("date") or ""):
+            latest[r["symbol"]] = r
+    return list(latest.values())
+
+
 def _order_qty(o: dict) -> str:
     """Order quantity for display. Alpaca usually carries `qty`, but a notional
     or odd child leg can leave it null — fall back through the alternatives and
@@ -984,6 +996,13 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
                 if r.get("status") == "open" and r.get("executed")
                 and r["symbol"] not in held_syms
                 and r["symbol"] not in momentum_syms]
+        # One broker closure must score ONE outcome. A symbol can carry several
+        # open executed recs (bought across multiple recommendations); scoring
+        # each against the single sell fill double-counts the SAME closure (seen
+        # in the logs as a duplicate CRWD stop, twice at -0.7%). Keep only the
+        # most-recent executed rec per symbol here — that's the one mark_closed
+        # would close; any older open rec grades later on its own exit-by window.
+        gone = _latest_per_symbol(gone)
         if gone:
             sells: dict[str, dict] = {}
             buys: dict[str, dict] = {}

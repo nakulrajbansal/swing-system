@@ -469,6 +469,23 @@ def test_throttle_bar_keeps_a_name_at_exactly_the_raised_bar():
     assert {r["symbol"] for r in held} == {"MRVL"}         # 0.55 < 0.60 held back
 
 
+def test_latest_per_symbol_dedupes_so_one_closure_scores_once():
+    # Regression from the 2026-07-02 review log: CRWD had TWO open executed recs
+    # (bought 06-18 and 06-23), and a single broker stop fill scored BOTH at
+    # -0.7%, double-counting the closure in the learning data. The broker-close
+    # path must collapse to one rec per symbol — the most recent.
+    from app.runner import _latest_per_symbol
+
+    recs = [{"symbol": "CRWD", "date": "2026-06-18"},
+            {"symbol": "CRWD", "date": "2026-06-23"},
+            {"symbol": "AVT", "date": "2026-06-24"}]
+    out = _latest_per_symbol(recs)
+    assert len(out) == 2                                   # CRWD collapsed to one
+    crwd = [r for r in out if r["symbol"] == "CRWD"]
+    assert len(crwd) == 1 and crwd[0]["date"] == "2026-06-23"   # the most recent
+    assert {r["symbol"] for r in out} == {"CRWD", "AVT"}
+
+
 def test_order_qty_is_resilient_to_missing_fields():
     # Regression: a flattened OCO leg can lack a clean `qty`, which printed a bare
     # '?' in the cancel log. Fall back through the alternatives, never '?'.
