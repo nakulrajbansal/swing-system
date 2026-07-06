@@ -360,6 +360,26 @@ def place_manual_order(cfg: AppConfig, order: dict, emit: Emit) -> dict:
                         "shares. Reduce the quantity, free up cash (check open "
                         "orders holding funds), or skip this trade.")
                     return {"ok": False, "error": "insufficient buying power"}
+            # Gross-exposure heads-up: buying power alone lets the book margin
+            # itself past the desk's <=1.0x leverage plan. Warn (never block - a
+            # human may deliberately override; only automation is capped) when
+            # this order would push gross notional through the ceiling.
+            if ref_px and qty:
+                from system.config import DEFAULT_CONFIG
+                equity = float(acct.get("equity") or 0.0)
+                positions = broker._req("GET", "/v2/positions") or []
+                gross_now = sum(abs(float(p.get("market_value", 0) or 0))
+                                for p in positions)
+                ceiling = DEFAULT_CONFIG.limits.max_gross_exposure
+                if equity > 0:
+                    projected = (gross_now + float(ref_px) * qty) / equity
+                    if projected > ceiling * 1.05:
+                        log(f"[RISK] this order lifts gross exposure to "
+                            f"{projected:.2f}x equity (${gross_now + float(ref_px) * qty:,.0f} "
+                            f"vs ${equity:,.0f}), past the desk's {ceiling:.1f}x plan - "
+                            f"a 10% adverse move would be ~{projected * 10:.0f}% of the "
+                            "account. Proceeding (manual override); consider trimming a "
+                            "lower-conviction name or reducing size.")
         except Exception:
             pass                                    # pre-check is best-effort
         try:
@@ -425,6 +445,15 @@ def _apply_throttle_bar(recs: list[dict], bar: float) -> tuple[list[dict], list[
     kept = [r for r in recs if r["conviction"] >= bar]
     held_back = [r for r in recs if r["conviction"] < bar]
     return kept, held_back
+
+
+def _fill_scores_rec(fill_date: str, rec_date) -> bool:
+    """True if a sell `fill_date` may score a recommendation dated `rec_date`.
+    A rec cannot be closed by a fill that predates it — that fill belongs to a
+    prior position in the same name. Missing dates default to scoreable."""
+    if not rec_date or not fill_date:
+        return True
+    return str(fill_date) >= str(rec_date)
 
 
 def _latest_per_symbol(recs: list[dict]) -> list[dict]:
@@ -1024,6 +1053,16 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
                 entry_f = buys.get(r["symbol"], {})
                 entry_px = float(entry_f.get("price") or r.get("entry") or 0)
                 when = str(f.get("transaction_time", today))[:10] or today
+                # A recommendation cannot be closed by a fill that predates it.
+                # Without this guard a rec gets scored against a STALE sell fill
+                # from a prior position in the same name (seen in the ledger as
+                # CSCO's 06-23 rec scored on a 06-17 fill). Leave it to grade on
+                # its own exit-by window instead.
+                if not _fill_scores_rec(when, r.get("date")):
+                    log(f"  [skip] {r['symbol']}: newest sell fill {when} predates "
+                        f"the recommendation ({r['date']}) - not scoring it against "
+                        "a stale fill; it will grade on its own window.")
+                    continue
                 reason = _infer_exit_reason(px, r.get("stop"), r.get("target"))
                 closed = reco_ledger.mark_closed(r["symbol"], px, when, reason,
                                                  entry_price=entry_px or None,

@@ -486,6 +486,80 @@ def test_latest_per_symbol_dedupes_so_one_closure_scores_once():
     assert {r["symbol"] for r in out} == {"CRWD", "AVT"}
 
 
+def test_fill_scores_rec_rejects_stale_fills():
+    # Regression: CSCO's 06-23 rec was scored against a 06-17 sell fill from a
+    # prior position — a fill can't close a rec that did not yet exist.
+    from app.runner import _fill_scores_rec
+
+    assert _fill_scores_rec("2026-07-02", "2026-06-23") is True   # fill after rec
+    assert _fill_scores_rec("2026-06-23", "2026-06-23") is True   # same day: ok
+    assert _fill_scores_rec("2026-06-17", "2026-06-23") is False  # fill predates rec
+    assert _fill_scores_rec("2026-07-02", None) is True           # no rec date: ok
+    assert _fill_scores_rec(None, "2026-06-23") is True           # no fill date: ok
+
+
+class _ManualOrderBroker:
+    """Mock broker for place_manual_order: an account with equity/buying-power,
+    a set of open positions (for the gross-exposure check), and a submit that
+    records the last order."""
+
+    def __init__(self, equity, buying_power, positions):
+        self._acct = {"equity": str(equity), "buying_power": str(buying_power)}
+        self._positions = positions
+        self.submitted = None
+
+    def account(self):
+        return self._acct
+
+    def _req(self, method, path, payload=None):
+        if "positions" in path:
+            return self._positions
+        return {}
+
+    def submit_manual(self, sym, qty, **kw):
+        self.submitted = {"sym": sym, "qty": qty, **kw}
+        return {"id": "ord-1", "status": "accepted"}
+
+
+def test_manual_order_warns_when_it_levers_past_the_ceiling(monkeypatch):
+    from app import runner
+
+    # Equity 100k, already 95k gross; buying 20 @ $1000 = 20k -> 1.15x, past 1.0x.
+    broker = _ManualOrderBroker(100_000, 300_000,
+                                [{"market_value": "95000"}])
+    monkeypatch.setattr(runner, "_alpaca_broker", lambda cfg: broker)
+    monkeypatch.setattr("app.reco_ledger.mark_executed", lambda *a, **k: False)
+    cfg = AppConfig(alpaca_key_id="k", alpaca_secret="s", alpaca_env="paper")
+    lines: list[str] = []
+
+    res = runner.place_manual_order(
+        cfg, {"symbol": "XYZ", "qty": 20, "order_type": "limit",
+              "limit_price": 1000.0, "attach_bracket": False}, lines.append)
+
+    assert res["ok"] is True                               # warned, NOT blocked
+    assert any("[RISK]" in ln and "gross exposure" in ln for ln in lines)
+    assert broker.submitted["qty"] == 20                   # order still placed
+
+
+def test_manual_order_quiet_when_within_the_ceiling(monkeypatch):
+    from app import runner
+
+    # Equity 100k, 20k gross; buying 10 @ $1000 = 10k -> 0.30x, well under 1.0x.
+    broker = _ManualOrderBroker(100_000, 300_000,
+                                [{"market_value": "20000"}])
+    monkeypatch.setattr(runner, "_alpaca_broker", lambda cfg: broker)
+    monkeypatch.setattr("app.reco_ledger.mark_executed", lambda *a, **k: False)
+    cfg = AppConfig(alpaca_key_id="k", alpaca_secret="s", alpaca_env="paper")
+    lines: list[str] = []
+
+    res = runner.place_manual_order(
+        cfg, {"symbol": "XYZ", "qty": 10, "order_type": "limit",
+              "limit_price": 1000.0, "attach_bracket": False}, lines.append)
+
+    assert res["ok"] is True
+    assert not any("[RISK]" in ln for ln in lines)         # no false alarm
+
+
 def test_order_qty_is_resilient_to_missing_fields():
     # Regression: a flattened OCO leg can lack a clean `qty`, which printed a bare
     # '?' in the cancel log. Fall back through the alternatives, never '?'.
