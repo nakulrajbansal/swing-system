@@ -378,6 +378,146 @@
       },
       "weight": 1.0,
       "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended FTNT paid +7.5% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "FTNT",
+        "as_of": "2026-07-06",
+        "pnl_pct": 7.47,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended JBL did not pay -9.5% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "JBL",
+        "as_of": "2026-07-06",
+        "pnl_pct": -9.53,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended HPE did not pay -12.6% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "HPE",
+        "as_of": "2026-07-06",
+        "pnl_pct": -12.61,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended NXPI did not pay -9.8% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "NXPI",
+        "as_of": "2026-07-06",
+        "pnl_pct": -9.83,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended FTNT paid +7.5% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "FTNT",
+        "as_of": "2026-07-06",
+        "pnl_pct": 7.47,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended JBL did not pay -9.5% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "JBL",
+        "as_of": "2026-07-06",
+        "pnl_pct": -9.53,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended MPWR did not pay -13.1% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "MPWR",
+        "as_of": "2026-07-06",
+        "pnl_pct": -13.08,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended CNC paid +6.6% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "CNC",
+        "as_of": "2026-07-06",
+        "pnl_pct": 6.56,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended HPE did not pay -12.6% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "HPE",
+        "as_of": "2026-07-06",
+        "pnl_pct": -12.61,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "stated convictions run ~27pp ABOVE the realized win rate (40% over 30 scored calls) - treat conviction as optimistic and demand more confirmation before sizing up",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-07-06",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
     }
   ],
   "outcomes": [
@@ -548,6 +688,78 @@
       "pnl_pct": -6.9,
       "reason": "stop",
       "as_of": "2026-07-02"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "FTNT",
+      "conviction": 0.67,
+      "pnl_pct": 7.47,
+      "reason": "time",
+      "as_of": "2026-07-06"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "JBL",
+      "conviction": 0.67,
+      "pnl_pct": -9.53,
+      "reason": "time",
+      "as_of": "2026-07-06"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "HPE",
+      "conviction": 0.67,
+      "pnl_pct": -12.61,
+      "reason": "stop",
+      "as_of": "2026-07-06"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "NXPI",
+      "conviction": 0.67,
+      "pnl_pct": -9.83,
+      "reason": "stop",
+      "as_of": "2026-07-06"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "FTNT",
+      "conviction": 0.67,
+      "pnl_pct": 7.47,
+      "reason": "time",
+      "as_of": "2026-07-06"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "JBL",
+      "conviction": 0.67,
+      "pnl_pct": -9.53,
+      "reason": "time",
+      "as_of": "2026-07-06"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "MPWR",
+      "conviction": 0.67,
+      "pnl_pct": -13.08,
+      "reason": "stop",
+      "as_of": "2026-07-06"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "CNC",
+      "conviction": 0.67,
+      "pnl_pct": 6.56,
+      "reason": "time",
+      "as_of": "2026-07-06"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "HPE",
+      "conviction": 0.67,
+      "pnl_pct": -12.61,
+      "reason": "stop",
+      "as_of": "2026-07-06"
     }
   ]
 }
