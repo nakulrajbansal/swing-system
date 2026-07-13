@@ -19,6 +19,22 @@ from dataclasses import dataclass, field
 from harness.study.costs import CostModel, gap_aware_exit
 
 
+def to_broker_symbol(sym: str) -> str:
+    """Data-feed ticker -> Alpaca ticker. Class shares are hyphenated by the data
+    feed (yfinance: 'MOG-A', 'BRK-B') but Alpaca uses a dot ('MOG.A', 'BRK.B'), so
+    an order for a hyphenated class share is rejected 422 'asset not found'. US
+    equity symbols never legitimately contain a hyphen otherwise, so the mapping
+    is unambiguous."""
+    return sym.replace("-", ".") if sym else sym
+
+
+def to_data_symbol(sym: str) -> str:
+    """Alpaca ticker -> data-feed ticker (the inverse of `to_broker_symbol`), so a
+    filled 'MOG.A' position matches its 'MOG-A' plan/ledger row instead of reading
+    as an unmanaged, plan-less holding."""
+    return sym.replace(".", "-") if sym else sym
+
+
 def _flatten_orders(orders) -> list[dict]:
     """Yield each order plus its bracket/OCO/OTO child legs, recursively, as a
     flat list. Alpaca nests a complex order's protective legs under ``legs``;
@@ -228,7 +244,7 @@ class AlpacaBroker(Broker):
         if shares <= 0:
             return None
         payload = {
-            "symbol": symbol, "qty": str(int(shares)), "side": "buy",
+            "symbol": to_broker_symbol(symbol), "qty": str(int(shares)), "side": "buy",
             "type": "limit", "limit_price": round(float(band_high), 2),
             "time_in_force": "day", "order_class": "bracket",
             "take_profit": {"limit_price": round(float(target), 2)},
@@ -239,8 +255,9 @@ class AlpacaBroker(Broker):
     def positions(self) -> dict[str, BrokerPosition]:
         out: dict[str, BrokerPosition] = {}
         for p in self._req("GET", "/v2/positions"):
-            out[p["symbol"]] = BrokerPosition(
-                p["symbol"], int(float(p["qty"])), float(p["avg_entry_price"]),
+            sym = to_data_symbol(p["symbol"])
+            out[sym] = BrokerPosition(
+                sym, int(float(p["qty"])), float(p["avg_entry_price"]),
                 stop=0.0, target=0.0)
         return out
 
@@ -264,9 +281,11 @@ class AlpacaBroker(Broker):
             if oid in seen:
                 continue
             seen.add(oid)
+            if o.get("symbol"):                    # present symbols in data form
+                o["symbol"] = to_data_symbol(o["symbol"])
             flat.append(o)
         if symbol:
-            flat = [o for o in flat if o.get("symbol") == symbol]
+            flat = [o for o in flat if o.get("symbol") == to_data_symbol(symbol)]
         return flat
 
     def cancel_order(self, order_id: str):
@@ -291,7 +310,7 @@ class AlpacaBroker(Broker):
         if shares <= 0:
             return None
         payload = {
-            "symbol": symbol, "qty": str(int(shares)), "side": "buy",
+            "symbol": to_broker_symbol(symbol), "qty": str(int(shares)), "side": "buy",
             "type": "limit", "limit_price": round(float(limit), 2),
             "time_in_force": "day", "order_class": "oto",
             "stop_loss": {"stop_price": round(float(stop), 2)},
@@ -306,7 +325,7 @@ class AlpacaBroker(Broker):
         qty = int(qty)
         if qty <= 0:
             return {"error": "quantity must be > 0"}
-        payload = {"symbol": symbol, "qty": str(qty), "side": side,
+        payload = {"symbol": to_broker_symbol(symbol), "qty": str(qty), "side": side,
                    "type": order_type, "time_in_force": tif}
         if order_type == "limit":
             if not limit_price:
@@ -335,6 +354,9 @@ class AlpacaBroker(Broker):
             chunk = self._req("GET", url) or []
             if not chunk:
                 break
+            for a in chunk:                        # present symbols in data form
+                if a.get("symbol"):
+                    a["symbol"] = to_data_symbol(a["symbol"])
             out.extend(chunk)
             token = chunk[-1].get("id")        # cursor = id of the last row
             if len(chunk) < page:
@@ -349,18 +371,19 @@ class AlpacaBroker(Broker):
         qty = int(qty)
         if qty <= 0 or not (stop or target):
             return {"error": "nothing to place"}
+        bsym = to_broker_symbol(symbol)
         if stop and target:
-            payload = {"symbol": symbol, "qty": str(qty), "side": "sell",
+            payload = {"symbol": bsym, "qty": str(qty), "side": "sell",
                        "type": "limit", "time_in_force": "gtc",
                        "order_class": "oco",
                        "take_profit": {"limit_price": round(float(target), 2)},
                        "stop_loss": {"stop_price": round(float(stop), 2)}}
         elif stop:
-            payload = {"symbol": symbol, "qty": str(qty), "side": "sell",
+            payload = {"symbol": bsym, "qty": str(qty), "side": "sell",
                        "type": "stop", "stop_price": round(float(stop), 2),
                        "time_in_force": "gtc"}
         else:
-            payload = {"symbol": symbol, "qty": str(qty), "side": "sell",
+            payload = {"symbol": bsym, "qty": str(qty), "side": "sell",
                        "type": "limit", "limit_price": round(float(target), 2),
                        "time_in_force": "gtc"}
         return self._req("POST", "/v2/orders", payload)
@@ -370,6 +393,6 @@ class AlpacaBroker(Broker):
         market (Alpaca DELETE /v2/positions/{symbol})."""
         self.cancel_pending(symbol)
         try:
-            return self._req("DELETE", f"/v2/positions/{symbol}")
+            return self._req("DELETE", f"/v2/positions/{to_broker_symbol(symbol)}")
         except Exception:
             return None

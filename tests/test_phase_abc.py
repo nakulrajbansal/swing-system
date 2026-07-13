@@ -452,6 +452,58 @@ def test_cancel_orders_by_id_flags_a_naked_stop(monkeypatch):
     assert any("UNPROTECTED" in ln for ln in lines)        # the naked warning
 
 
+def test_symbol_normalization_round_trips_class_shares():
+    from system.execution.broker import to_broker_symbol, to_data_symbol
+
+    assert to_broker_symbol("MOG-A") == "MOG.A"            # data -> Alpaca
+    assert to_data_symbol("MOG.A") == "MOG-A"              # Alpaca -> data
+    assert to_broker_symbol("BRK-B") == "BRK.B"
+    assert to_broker_symbol("AAPL") == "AAPL"              # plain names untouched
+    assert to_data_symbol("AAPL") == "AAPL"
+    assert to_broker_symbol("") == "" and to_broker_symbol(None) is None
+
+
+def test_manual_order_sends_alpaca_class_symbol(monkeypatch):
+    # Regression from the 2026-07-13 order log: an order for the data-feed ticker
+    # 'MOG-A' was rejected 422 'asset not found' because Alpaca wants 'MOG.A'.
+    from system.execution.broker import AlpacaBroker
+
+    b = AlpacaBroker("k", "s", env="paper")
+    seen = {}
+
+    def fake(method, path, payload=None):
+        seen["payload"] = payload
+        return {"id": "ord-1", "status": "accepted"}
+
+    monkeypatch.setattr(b, "_req", fake)
+    b.submit_manual("MOG-A", 10, side="buy", order_type="limit", limit_price=200.0)
+    assert seen["payload"]["symbol"] == "MOG.A"            # dot form to the broker
+
+
+def test_broker_reads_present_class_symbols_in_data_form(monkeypatch):
+    # Positions / open orders / fills must map Alpaca 'MOG.A' back to 'MOG-A' so
+    # the review matches the position to its 'MOG-A' plan.
+    from system.execution.broker import AlpacaBroker
+
+    b = AlpacaBroker("k", "s", env="paper")
+
+    def fake(method, path, payload=None):
+        if "positions" in path:
+            return [{"symbol": "MOG.A", "qty": "10", "avg_entry_price": "200"}]
+        if "orders" in path:
+            return [{"id": "o1", "symbol": "MOG.A", "side": "sell", "type": "stop",
+                     "stop_price": 180.0}]
+        if "activities" in path:
+            return [{"id": "f1", "symbol": "MOG.A", "side": "buy", "price": "200"}]
+        return {}
+
+    monkeypatch.setattr(b, "_req", fake)
+    assert "MOG-A" in b.positions()                        # keyed in data form
+    assert b.open_orders()[0]["symbol"] == "MOG-A"
+    assert b.open_orders("MOG-A")[0]["id"] == "o1"         # filter accepts data form
+    assert b.fills(1)[0]["symbol"] == "MOG-A"
+
+
 def test_throttle_bar_keeps_a_name_at_exactly_the_raised_bar():
     # Regression from the 2026-06-30 screen log: a +0.05 bump made the bar
     # 0.55 + 0.05 = 0.6000000000000001 in float, so FFIV at exactly 0.60 was

@@ -234,7 +234,7 @@ def run_portfolio_status(cfg: AppConfig, emit: Emit) -> dict:
         try:
             broker = _alpaca_broker(cfg)
             acct = broker.account()
-            raw = broker._req("GET", "/v2/positions")
+            raw = _broker_positions(broker)
         except Exception as exc:
             log(f"[error] could not read Alpaca account: {exc}")
             return out
@@ -414,6 +414,18 @@ def place_manual_order(cfg: AppConfig, order: dict, emit: Emit) -> dict:
         return {"ok": True, "id": oid, "status": status}
 
 
+def _broker_positions(broker) -> list[dict]:
+    """Open positions (raw Alpaca dicts) with the symbol normalized to the
+    data-feed form, so a class share (Alpaca 'MOG.A') matches its ledger/plan
+    row ('MOG-A') instead of reading as an unmanaged, plan-less holding."""
+    from system.execution.broker import to_data_symbol
+    raw = broker._req("GET", "/v2/positions") or []
+    for p in raw:
+        if p.get("symbol"):
+            p["symbol"] = to_data_symbol(p["symbol"])
+    return raw
+
+
 def _order_role(o: dict, held_symbols: set) -> str:
     """Classify a working order for the operator: an unfilled BUY 'entry'
     (these reserve buying power), a protective 'stop' (downside guard on a held
@@ -497,8 +509,7 @@ def run_open_orders(cfg: AppConfig, emit: Emit) -> dict:
         try:
             broker = _alpaca_broker(cfg)
             orders = broker.open_orders()
-            held = {p.get("symbol")
-                    for p in (broker._req("GET", "/v2/positions") or [])}
+            held = {p.get("symbol") for p in _broker_positions(broker)}
         except Exception as exc:
             log(f"[error] could not read open orders: {exc}")
             return out
@@ -547,8 +558,7 @@ def cancel_orders(cfg: AppConfig, emit: Emit, order_ids=None,
         try:
             broker = _alpaca_broker(cfg)
             orders = broker.open_orders()
-            held = {p.get("symbol")
-                    for p in (broker._req("GET", "/v2/positions") or [])}
+            held = {p.get("symbol") for p in _broker_positions(broker)}
         except Exception as exc:
             log(f"[error] could not read open orders: {exc}")
             return out
@@ -837,7 +847,7 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
             return out
         try:
             broker = _alpaca_broker(cfg)
-            raw = broker._req("GET", "/v2/positions")
+            raw = _broker_positions(broker)
         except Exception as exc:
             log(f"[error] could not read Alpaca positions: {exc}")
             return out
