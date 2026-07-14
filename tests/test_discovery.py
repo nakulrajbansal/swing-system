@@ -207,10 +207,18 @@ def test_entry_timing_rewards_pullbacks_and_penalizes_chases():
 def test_gem_slot_count_self_tunes_from_realized_results():
     from app.strategy import gem_slot_count
 
+    def gem(n, wr, avg=0.0):
+        return {"hidden_gem": {"n": n, "win_rate_pct": wr, "avg_return_pct": avg}}
+
     assert gem_slot_count(None) == 2                                  # no data
-    assert gem_slot_count({"hidden_gem": {"n": 5, "win_rate_pct": 20}}) == 2
-    assert gem_slot_count({"hidden_gem": {"n": 12, "win_rate_pct": 35}}) == 1
-    assert gem_slot_count({"hidden_gem": {"n": 12, "win_rate_pct": 62}}) == 3
+    assert gem_slot_count(gem(5, 20)) == 2                            # too few to judge
+    assert gem_slot_count(gem(12, 35, avg=1.0)) == 1                  # weak-ish -> trim
+    assert gem_slot_count(gem(12, 62, avg=3.0)) == 3                  # paying -> lean in
+    # A demonstrably LOSING lens is starved to zero (win-rate or avg-return gate).
+    assert gem_slot_count(gem(15, 27, avg=-2.8)) == 0
+    assert gem_slot_count(gem(12, 45, avg=-2.0)) == 0                 # bleeds on ok hit rate
+    # A high hit rate with a POSITIVE avg still boosts; positive avg required.
+    assert gem_slot_count(gem(12, 62, avg=-0.5)) == 2                 # no boost without +avg
 
 
 def test_fresh_gap_outscores_stale_gap():

@@ -452,6 +452,36 @@ def test_cancel_orders_by_id_flags_a_naked_stop(monkeypatch):
     assert any("UNPROTECTED" in ln for ln in lines)        # the naked warning
 
 
+def test_preset_hysteresis_keeps_base_unless_challenger_is_decisively_ahead():
+    from app.strategy import PRESET_SWITCH_MARGIN_PP, _choose_preset
+
+    def board(base, timing):
+        return {"base": {"total": base, "sharpe": 1.0},
+                "timing": {"total": timing, "sharpe": 1.0},
+                "discovery": {"total": -5.0, "sharpe": 0.0},
+                "defensive": {"total": -5.0, "sharpe": 0.0}}
+
+    # Marginal edge over base -> keep base (don't chase in-sample noise).
+    assert _choose_preset(board(5.0, 5.0 + PRESET_SWITCH_MARGIN_PP - 0.5)) == "base"
+    # Decisive edge over base -> adopt the challenger.
+    assert _choose_preset(board(5.0, 5.0 + PRESET_SWITCH_MARGIN_PP + 1.0)) == "timing"
+    # Challenger "wins" but is negative -> keep base (never chase a losing tilt).
+    assert _choose_preset(board(-8.0, -1.0)) == "base"
+
+
+def test_extend_plan_trails_a_winner_once(tmp_path):
+    from app import reco_ledger
+
+    p = tmp_path / "ledger.json"
+    reco_ledger.record([{"symbol": "AAA", "entry": 100.0, "stop": 90.0,
+                         "target": 130.0, "hold_days": 10, "exit_by": "2026-07-01",
+                         "conviction": 0.6}], "screen", "2026-06-20", path=p)
+    r = reco_ledger.extend_plan("AAA", "2026-07-11", new_stop=100.0, path=p)
+    assert r["exit_by"] == "2026-07-11" and r["stop"] == 100.0 and r["extended"]
+    # One-shot: a second extend is refused.
+    assert reco_ledger.extend_plan("AAA", "2026-07-21", new_stop=105.0, path=p) is None
+
+
 def test_symbol_normalization_round_trips_class_shares():
     from system.execution.broker import to_broker_symbol, to_data_symbol
 

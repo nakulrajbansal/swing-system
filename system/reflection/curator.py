@@ -78,12 +78,15 @@ def assess(ledger_rows: list[dict]) -> dict:
     """Expectation vs realization, by lens and overall — plus the pattern
     lessons the evidence currently supports. Pure and deterministic."""
     scored = [r for r in ledger_rows if r.get("status") == "evaluated"]
+    # MUTUALLY-EXCLUSIVE lenses (gem > moat-bullish > core), so a lens lesson
+    # judges only that lens: without this, a bullish-moat pick that is ALSO a gem
+    # counts in both, and the gem drag makes 'moat-bullish' look worse than the
+    # non-gem moat picks actually are (they ran +1.7% while gems ran -2.8%).
     stats = {
         "overall": _bucket(scored),
-        "hidden_gem": _bucket([r for r in scored if r.get("hidden_gem")]),
-        "core": _bucket([r for r in scored if not r.get("hidden_gem")]),
-        "moat_bullish": _bucket([r for r in scored
-                                 if r.get("moat_stance") == "bullish"]),
+        "hidden_gem": _bucket([r for r in scored if _lens_of(r) == "hidden-gem"]),
+        "core": _bucket([r for r in scored if _lens_of(r) == "core"]),
+        "moat_bullish": _bucket([r for r in scored if _lens_of(r) == "moat-bullish"]),
     }
     as_of = max((str(r.get("evaluated_on") or "") for r in scored), default="")
     patterns: list[Lesson] = []
@@ -146,37 +149,82 @@ def assess(ledger_rows: list[dict]) -> dict:
     return {"stats": stats, "pattern_lessons": patterns, "calibration": calibration}
 
 
+AVG_POS = 1.0      # cohort avg return (%) at/above which a "worked" lesson holds
+AVG_NEG = -1.0     # ... at/below which a "did not pay" lesson holds
+
+
+def _cohort_returns(rows: list[dict]) -> dict:
+    """{lens: (n, avg_return_pct)} over scored calls, the evidence anecdote
+    lessons are gated on. Avg return (not win rate) captures payoff asymmetry —
+    the core lens pays on a ~50% hit rate a win-rate gate would miss."""
+    scored = [r for r in rows if r.get("status") == "evaluated"
+              and isinstance(r.get("return_pct"), (int, float))]
+    out: dict[str, tuple] = {}
+    for key in ("hidden-gem", "core", "moat-bullish"):
+        c = [r["return_pct"] for r in scored if _lens_of(r) == key]
+        out[key] = (len(c), round(sum(c) / len(c), 2) if c else 0.0)
+    return out
+
+
+def _lens_of(r: dict) -> str:
+    if r.get("hidden_gem"):
+        return "hidden-gem"
+    if r.get("moat_stance") == "bullish":
+        return "moat-bullish"
+    return "core"
+
+
 def curate(mem, ledger_rows: list[dict], client=None, model: str = "",
            max_llm_lessons: int = 2) -> dict:
     """One self-review pass over the lesson memory. Mutates `mem`; the caller
-    persists it. Returns a report dict for display."""
-    report = assess(ledger_rows)
+    persists it. Returns a report dict for display.
 
-    # Pending anecdotes: activate when the aggregate for their setup agrees,
-    # retire when it clearly contradicts, otherwise wait for more evidence.
+    Fully automated, evidence-gated — no human sign-off anywhere:
+      * every anecdote lesson is (re)judged against its LENS COHORT's realized
+        avg return: ACTIVE while that cohort backs its claim, demoted to pending
+        when the evidence is neutral, RETIRED when the evidence contradicts it;
+      * pattern lessons are recomputed from the aggregates each run and any whose
+        condition no longer holds is retired.
+    So a lesson carries weight only while the numbers keep earning it."""
+    report = assess(ledger_rows)
+    cohorts = _cohort_returns(ledger_rows)
+    # Migration / fallback: older anecdotes were saved without a cohort tag; map
+    # each symbol to the lens its scored rec used so they can be judged too.
+    sym_lens = {r["symbol"]: _lens_of(r) for r in ledger_rows
+                if r.get("status") == "evaluated" and r.get("symbol")}
+
+    # -- anecdotes: activation/retirement driven purely by cohort evidence -----
     activated = retired = 0
     keep = []
     for e in mem.entries:
-        if e.human_reviewed:
+        if e.lesson.kind:                      # pattern lessons handled below
             keep.append(e)
             continue
-        st = mem.setup_stats(e.lesson.setup_type)
-        n, wr = st.get("count", 0), st.get("win_rate_pct", 50)
+        was_active = e.human_reviewed
+        cohort = e.lesson.cohort or sym_lens.get(e.lesson.symbol, "")
+        n, avg = cohorts.get(cohort, (0, 0.0))
         worked = bool(e.lesson.thesis_correct)
-        if n >= MIN_BUCKET and ((worked and wr >= 55) or (not worked and wr <= 45)):
-            e.human_reviewed = True
+        supported = n >= MIN_BUCKET and ((worked and avg >= AVG_POS)
+                                         or (not worked and avg <= AVG_NEG))
+        contradicted = n >= MIN_RETIRE and ((worked and avg <= AVG_NEG)
+                                            or (not worked and avg >= AVG_POS))
+        if contradicted:
+            retired += 1                       # evidence rejects it -> not a lesson
+            continue
+        e.human_reviewed = supported           # active iff the cohort backs it now
+        if supported and not was_active:
             activated += 1
-            keep.append(e)
-        elif n >= MIN_RETIRE and ((worked and wr <= 40) or (not worked and wr >= 60)):
-            retired += 1                       # the anecdote misleads; drop it
-        else:
-            keep.append(e)                     # pending until evidence arrives
+        keep.append(e)
     mem.entries[:] = keep
 
-    # Evidence-gated pattern lessons. Each carries a stable `kind`, so we REPLACE
-    # the prior version of that kind rather than appending a reworded near-
-    # duplicate every run (which previously bloated the memory). Only a genuinely
-    # changed wording counts as "new" for the report.
+    # -- pattern lessons: recompute from aggregates; retire the stale ----------
+    supported_kinds = {les.kind for les in report["pattern_lessons"]}
+    before = len(mem.entries)
+    mem.entries[:] = [e for e in mem.entries
+                      if not e.lesson.kind or e.lesson.kind in supported_kinds
+                      or e.lesson.kind.startswith("llm:")]   # LLM synth persists
+    retired += before - len(mem.entries)       # patterns whose evidence lapsed
+
     new = 0
     for les in report["pattern_lessons"]:
         prior = [e for e in mem.entries if e.lesson.kind == les.kind]
@@ -199,11 +247,12 @@ def curate(mem, ledger_rows: list[dict], client=None, model: str = "",
             raw = client.complete(CURATOR,
                                   {"stats": report["stats"], "scored": scored},
                                   "CuratorLessons", model=model, max_tokens=600)
-            for item in (raw.get("lessons") or [])[:max_llm_lessons]:
+            for i, item in enumerate((raw.get("lessons") or [])[:max_llm_lessons]):
                 text = str(item.get("text", "")).strip()
                 if text and text not in existing:
                     mem.add(Lesson("confluence_swing", text,
-                                   bool(item.get("worked", False)), "curated"),
+                                   bool(item.get("worked", False)), "curated",
+                                   kind=f"llm:{abs(hash(text)) % 100000}"),
                             human_reviewed=True)
                     existing.add(text)
                     new += 1
@@ -212,4 +261,6 @@ def curate(mem, ledger_rows: list[dict], client=None, model: str = "",
 
     return {"activated": activated, "retired": retired, "new_patterns": new,
             "pending": sum(1 for e in mem.entries if not e.human_reviewed),
+            "active": sum(1 for e in mem.entries if e.human_reviewed),
+            "cohorts": cohorts,
             "stats": report["stats"], "calibration": report["calibration"]}

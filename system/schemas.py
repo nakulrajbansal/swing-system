@@ -186,6 +186,10 @@ class Lesson:
     # lesson per kind, replacing the old wording when the numbers move — so the
     # memory does not bloat with reworded near-duplicates. Empty for anecdotes.
     kind: str = ""
+    # The evidence cohort a per-trade anecdote belongs to ("hidden-gem", "core",
+    # "moat-bullish"): the curator activates the anecdote only while THAT cohort's
+    # realized results back its claim, and retires it when they contradict it.
+    cohort: str = ""
 
     def validate(self) -> "Lesson":
         return self

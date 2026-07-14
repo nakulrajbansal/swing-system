@@ -64,12 +64,30 @@ class LessonMemory:
     # -- reads -------------------------------------------------------------
     def relevant(self, setup_type: str, top: int = 3,
                  not_after: str | None = None) -> list[Lesson]:
-        # Only human-reviewed lessons carry weight (no self-authored authority).
+        """The lessons handed to the agents. Only ACTIVE (evidence-backed) lessons
+        carry weight, and the selection is BALANCED: generalizable PATTERN lessons
+        come first, then anecdotes chosen to include cautionary ('did not pay')
+        cases — so the agents get an honest read, not a survivorship-biased reel
+        of past winners."""
         pool = [e for e in self.entries
                 if e.human_reviewed and e.lesson.setup_type == setup_type
                 and _visible(e.lesson.as_of, not_after)]
-        pool.sort(key=lambda e: e.weight, reverse=True)
-        return [e.lesson for e in pool[:top]]
+        patterns = sorted((e for e in pool if e.lesson.kind),
+                          key=lambda e: e.weight, reverse=True)
+        cautions = sorted((e for e in pool if not e.lesson.kind
+                           and not e.lesson.thesis_correct),
+                          key=lambda e: e.weight, reverse=True)
+        wins = sorted((e for e in pool if not e.lesson.kind
+                       and e.lesson.thesis_correct),
+                      key=lambda e: e.weight, reverse=True)
+        # Patterns first; then alternate caution/win so neither side dominates.
+        ordered = list(patterns)
+        while cautions or wins:
+            if cautions:
+                ordered.append(cautions.pop(0))
+            if wins:
+                ordered.append(wins.pop(0))
+        return [e.lesson for e in ordered[:top]]
 
     def setup_stats(self, setup_type: str | None = None,
                     not_after: str | None = None) -> dict:

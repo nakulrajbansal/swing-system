@@ -43,12 +43,24 @@ WEIGHT_PRESETS: dict[str, dict] = {
 }
 
 
+# A challenger preset must beat `base` by at least this much trailing total
+# return (percentage points) to be adopted. Without a margin the nightly pick
+# chases in-sample noise — the tuner flip-flopped timing/discovery/defensive with
+# no realized benefit. A hysteresis band keeps the robust default unless a
+# challenger is decisively ahead.
+PRESET_SWITCH_MARGIN_PP = 3.0
+
+
 def select_preset(closes, metrics_fn, top_k: int = 5, hold_days: int = 10,
                   periods: int = 6) -> tuple[str, dict, dict]:
     """Holly-style nightly self-tuning: walk-forward the trailing `periods`
     hold-windows for every preset and return the one currently winning
     (name, weights, scoreboard). In-sample selection across four candidates —
-    advisory by design; callers disclose it in the log."""
+    advisory by design; callers disclose it in the log.
+
+    Hysteresis: a challenger is adopted only if it beats `base` by
+    ``PRESET_SWITCH_MARGIN_PP`` points AND is positive; otherwise the robust base
+    weighting is kept, so the desk stops churning weights on in-sample noise."""
     need = 215 + (periods + 1) * hold_days
     cl = closes.iloc[-need:] if len(closes) > need else closes
     board: dict[str, dict] = {}
@@ -61,8 +73,22 @@ def select_preset(closes, metrics_fn, top_k: int = 5, hold_days: int = 10,
                        if not res.get("error") else 0.0}
     if all(v["total"] == float("-inf") for v in board.values()):
         return "base", dict(WEIGHT_PRESETS["base"]), board
-    best = max(board, key=lambda nm: (board[nm]["total"], board[nm]["sharpe"]))
+    best = _choose_preset(board)
     return best, dict(WEIGHT_PRESETS[best]), board
+
+
+def _choose_preset(board: dict) -> str:
+    """Pick the preset from a walk-forward scoreboard, with hysteresis toward
+    `base`: the top challenger is adopted only if it beats base by
+    ``PRESET_SWITCH_MARGIN_PP`` points and is positive; else keep base."""
+    best = max(board, key=lambda nm: (board[nm]["total"], board[nm]["sharpe"]))
+    base_total = board.get("base", {}).get("total", 0.0)
+    if base_total == float("-inf"):
+        base_total = 0.0
+    if best != "base" and not (board[best]["total"] - base_total >= PRESET_SWITCH_MARGIN_PP
+                               and board[best]["total"] > 0):
+        return "base"
+    return best
 
 
 def _clamp(x, lo, hi):
@@ -239,13 +265,23 @@ def hidden_gem_score(m: dict) -> float:
 def gem_slot_count(cohorts: dict | None, default: int = 2) -> int:
     """Self-tuning lens allocation: once the ledger has scored enough hidden-gem
     picks, let the REALIZED results set how many shortlist slots the lens gets
-    — lean into what pays, starve what doesn't (advisory loop, never risk)."""
+    — lean into what pays, STARVE what doesn't (advisory loop, never risk).
+
+    A demonstrably losing lens can drop to ZERO slots: keeping a guaranteed slot
+    for a lens the record shows is negative just feeds the desk a losing idea
+    every screen (the hidden-gem cohort ran ~27% / -2.8% avg). Gating on avg
+    return as well as win rate catches a lens that bleeds on a not-terrible hit
+    rate."""
     g = (cohorts or {}).get("hidden_gem") or {}
-    n, wr = g.get("n", 0), g.get("win_rate_pct", 50)
+    n = g.get("n", 0)
+    wr = g.get("win_rate_pct", 50)
+    avg = g.get("avg_return_pct", 0.0)
     if n >= 10:
+        if wr < 30 or avg <= -1.5:      # clearly losing -> starve it entirely
+            return 0
         if wr < 40:
             return 1
-        if wr >= 58:
+        if wr >= 58 and avg > 0:
             return 3
     return default
 

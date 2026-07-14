@@ -95,6 +95,25 @@ def open_for(symbol: str, path=None) -> dict | None:
     return max(cands, key=lambda r: r.get("date") or "") if cands else None
 
 
+def extend_plan(symbol: str, new_exit_by: str, new_stop: float, path=None) -> dict | None:
+    """Roll a winning open position's exit date forward and raise its stop (a
+    one-shot trail, marked so it happens at most once). Returns the updated entry
+    or None. Lets a winner run on the market's money instead of a hard time-exit,
+    which the record shows leaves the big target moves on the table."""
+    led = load(path)
+    cands = [r for r in led if r.get("symbol") == symbol and r.get("status") == "open"]
+    if not cands:
+        return None
+    r = max(cands, key=lambda x: x.get("date") or "")
+    if r.get("extended"):
+        return None                                # already trailed once
+    r["exit_by"] = new_exit_by
+    r["stop"] = round(float(new_stop), 2)
+    r["extended"] = True
+    save(led, path)
+    return r
+
+
 def mark_closed(symbol: str, exit_price: float, when: str, reason: str,
                 entry_price: float | None = None, memory=None, path=None) -> dict | None:
     """Close out the most recent open entry for `symbol` with the REALIZED
@@ -117,11 +136,14 @@ def mark_closed(symbol: str, exit_price: float, when: str, reason: str,
         memory.record_outcome(TradeOutcome("confluence_swing", symbol, conv,
                                            pnl_pct, reason, when))
         verb = "paid" if pnl_pct > 0 else "did not pay"
+        # PENDING: the curator activates this only while the trade's lens cohort
+        # actually pays, and retires it otherwise (fully automated, evidence-gated).
         memory.add(Lesson("confluence_swing",
                           f"executed {symbol} {verb} {pnl_pct:+.1f}% (exit: {reason}).",
                           pnl_pct > 0, "clean" if reason in {"target", "time"} else "stopped",
-                          symbol=symbol, as_of=when, pnl_pct=pnl_pct, conviction=conv),
-                   human_reviewed=True)
+                          symbol=symbol, as_of=when, pnl_pct=pnl_pct, conviction=conv,
+                          cohort=_lens_cohort(r)),
+                   human_reviewed=False)
     return r
 
 
@@ -195,11 +217,12 @@ def evaluate(closes: pd.DataFrame, today: str, memory=None, path=None) -> dict:
             memory.record_outcome(TradeOutcome("confluence_swing", sym, conv,
                                                round(pnl_pct, 2), reason, r["exit_by"]))
             verb = "paid" if pnl_pct > 0 else "did not pay"
+            # PENDING: the curator activates only while this lens cohort pays.
             memory.add(Lesson("confluence_swing",
                               f"recommended {sym} {verb} {pnl_pct:+.1f}% (exit: {reason}).",
                               pnl_pct > 0, "clean" if reason in {"target", "time"} else "stopped",
                               symbol=sym, as_of=r["exit_by"], pnl_pct=round(pnl_pct, 2),
-                              conviction=conv), human_reviewed=True)
+                              conviction=conv, cohort=_lens_cohort(r)), human_reviewed=False)
     if changed:
         save(led, path)
     avg = round(sum(rets) / len(rets), 1) if rets else 0.0
@@ -260,6 +283,32 @@ def equity_curve(rows: list[dict] | None = None, path=None) -> dict:
             "total_return_pct": round((v - 1.0) * 100.0, 2),
             "avg_weight_pct": round(100.0 * sum(weights) / len(weights), 1)
             if weights else 0.0}
+
+
+def _lens_cohort(r: dict) -> str:
+    """The discovery lens a rec belongs to, used to validate its anecdote lesson
+    against the right realized cohort. Most specific first: a hidden-gem pick is
+    tagged 'hidden-gem', else a bullish-moat pick 'moat-bullish', else 'core'."""
+    if r.get("hidden_gem"):
+        return "hidden-gem"
+    if r.get("moat_stance") == "bullish":
+        return "moat-bullish"
+    return "core"
+
+
+def cohort_avg_returns(rows: list[dict] | None = None, path=None) -> dict:
+    """{cohort: (n, avg_return_pct)} over scored calls, by the same lens tags the
+    anecdote lessons carry — the evidence the curator gates lesson activation on.
+    Gating on AVG RETURN (not just win rate) captures payoff asymmetry: the core
+    lens pays on a ~50% hit rate, which a win-rate gate would miss."""
+    rows = load(path) if rows is None else rows
+    scored = [r for r in rows if r.get("status") == "evaluated"
+              and isinstance(r.get("return_pct"), (int, float))]
+    out: dict[str, tuple] = {}
+    for key in ("hidden-gem", "core", "moat-bullish"):
+        c = [r["return_pct"] for r in scored if _lens_cohort(r) == key]
+        out[key] = (len(c), round(sum(c) / len(c), 2) if c else 0.0)
+    return out
 
 
 def _cohort(rows: list[dict]) -> dict:

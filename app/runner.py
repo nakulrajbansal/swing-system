@@ -611,7 +611,7 @@ def _run_curator(mem, client, log: Emit) -> dict:
     log(f"[curator] self-review: {rep['activated']} lesson(s) activated by "
         f"evidence, {rep['retired']} retired as contradicted, "
         f"{rep['new_patterns']} pattern lesson(s) written "
-        f"({rep['pending']} pending more evidence).")
+        f"({rep.get('active', 0)} active, {rep['pending']} pending more evidence).")
     if rep.get("calibration"):
         log(f"[curator] calibration: {rep['calibration']}")
     return rep
@@ -956,6 +956,36 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
 
             # 1) TIME EXIT: past the plan's exit date -> close (the plan's own rule).
             if plan.get("exit_by") and today >= str(plan["exit_by"]):
+                # LET WINNERS RUN: a clear winner (>= +1R) at its time-exit is
+                # trailed once (stop up to breakeven, window rolled forward)
+                # rather than hard-closed — the record shows time exits average
+                # ~+1% while the few positions that reach target run to ~+19%,
+                # so cutting winners on the clock forfeits the fat tail. Bounded:
+                # extend at most once, and only with the downside locked to ~scratch.
+                r_mult = _r_multiple(avg, plan.get("stop"), cur)
+                already = plan.get("extended")
+                if (not already and r_mult is not None and r_mult >= 1.0
+                        and (cfg.place_orders or getattr(cfg, "auto_manage_exits", False))):
+                    new_stop = max(avg, float(plan.get("stop") or 0))   # >= breakeven
+                    new_exit = (datetime.date.fromisoformat(today)
+                                + datetime.timedelta(days=int(plan.get("hold_days") or 10))
+                                ).isoformat()
+                    try:
+                        broker.cancel_pending(sym)
+                        armed = _submit_exit_settled(
+                            broker, sym, int(qty), new_stop, plan.get("target"),
+                            log, retry=True)
+                    except Exception as exc:
+                        armed = {"error": str(exc)}
+                    if not (isinstance(armed, dict) and armed.get("error")):
+                        reco_ledger.extend_plan(sym, new_exit, new_stop)
+                        out.setdefault("extended", []).append(sym)
+                        log(f"  [manage] WINNER at time-exit ({r_mult:.1f}R) - stop "
+                            f"raised to breakeven {new_stop:.2f} and window rolled to "
+                            f"{new_exit} to let it run (one-shot trail).")
+                        continue
+                    log(f"  [manage] wanted to trail the winner but re-arming failed "
+                        f"({armed.get('error')}) - closing on the plan instead.")
                 log(f"  [exit] {today} >= planned exit {plan['exit_by']} -> "
                     "closing at market (time exit per the trade's own plan).")
                 try:
