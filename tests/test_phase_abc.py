@@ -585,9 +585,10 @@ class _ManualOrderBroker:
     a set of open positions (for the gross-exposure check), and a submit that
     records the last order."""
 
-    def __init__(self, equity, buying_power, positions):
+    def __init__(self, equity, buying_power, positions, legs=None):
         self._acct = {"equity": str(equity), "buying_power": str(buying_power)}
         self._positions = positions
+        self._legs = legs                       # child legs the confirmation echoes
         self.submitted = None
 
     def account(self):
@@ -600,7 +601,10 @@ class _ManualOrderBroker:
 
     def submit_manual(self, sym, qty, **kw):
         self.submitted = {"sym": sym, "qty": qty, **kw}
-        return {"id": "ord-1", "status": "accepted"}
+        resp = {"id": "ord-1", "status": "accepted"}
+        if self._legs is not None:
+            resp["legs"] = self._legs
+        return resp
 
 
 def test_manual_order_warns_when_it_levers_past_the_ceiling(monkeypatch):
@@ -640,6 +644,52 @@ def test_manual_order_quiet_when_within_the_ceiling(monkeypatch):
 
     assert res["ok"] is True
     assert not any("[RISK]" in ln for ln in lines)         # no false alarm
+
+
+def test_manual_bracket_warns_when_broker_drops_the_stop_leg(monkeypatch):
+    # Regression (CHEF 2026-07-15): a bracket was submitted but only the target
+    # leg came to rest - no protective stop. Verify the order path flags a missing
+    # stop leg in the broker's confirmation instead of trusting "submitted".
+    from app import runner
+
+    # Confirmation echoes ONLY a take-profit leg (limit) - the stop is missing.
+    broker = _ManualOrderBroker(100_000, 300_000, [{"market_value": "20000"}],
+                                legs=[{"type": "limit", "limit_price": "110.64"}])
+    monkeypatch.setattr(runner, "_alpaca_broker", lambda cfg: broker)
+    monkeypatch.setattr("app.reco_ledger.mark_executed", lambda *a, **k: False)
+    cfg = AppConfig(alpaca_key_id="k", alpaca_secret="s", alpaca_env="paper")
+    lines: list[str] = []
+
+    res = runner.place_manual_order(
+        cfg, {"symbol": "CHEF", "qty": 10, "order_type": "limit",
+              "limit_price": 97.44, "stop": 90.84, "target": 110.64,
+              "attach_bracket": True}, lines.append)
+
+    assert res["ok"] is True                               # warned, not blocked
+    assert any("[RISK]" in ln and "protective stop" in ln for ln in lines)
+
+
+def test_manual_bracket_quiet_when_stop_leg_is_attached(monkeypatch):
+    # The happy path: the confirmation carries both a take-profit AND a stop leg,
+    # so no missing-stop warning fires.
+    from app import runner
+
+    broker = _ManualOrderBroker(
+        100_000, 300_000, [{"market_value": "20000"}],
+        legs=[{"type": "limit", "limit_price": "110.64"},
+              {"type": "stop", "stop_price": "90.84"}])
+    monkeypatch.setattr(runner, "_alpaca_broker", lambda cfg: broker)
+    monkeypatch.setattr("app.reco_ledger.mark_executed", lambda *a, **k: False)
+    cfg = AppConfig(alpaca_key_id="k", alpaca_secret="s", alpaca_env="paper")
+    lines: list[str] = []
+
+    res = runner.place_manual_order(
+        cfg, {"symbol": "CHEF", "qty": 10, "order_type": "limit",
+              "limit_price": 97.44, "stop": 90.84, "target": 110.64,
+              "attach_bracket": True}, lines.append)
+
+    assert res["ok"] is True
+    assert not any("protective stop" in ln for ln in lines)   # no false alarm
 
 
 def test_order_qty_is_resilient_to_missing_fields():

@@ -404,6 +404,16 @@ def place_manual_order(cfg: AppConfig, order: dict, emit: Emit) -> dict:
         px = f"limit ${order.get('limit_price')}" if otype == "limit" else "market"
         log(f"[order] {cfg.alpaca_env.upper()}: BUY {qty} {sym} ({px}"
             f"{', + stop/target' if bracket else ''}) submitted - id {oid}, status {status}.")
+        # Verify the broker actually ATTACHED the protective stop. Alpaca echoes a
+        # bracket's child legs in the submit response; if the stop leg is missing,
+        # the fill would sit unprotected until the next review re-arms it. Surface
+        # it now (warn, don't block - the review self-heals) so the user can act.
+        if bracket and not _bracket_attached_a_stop(o):
+            log(f"[RISK] {sym}: the broker's confirmation does NOT show a protective "
+                f"stop attached to this bracket - if it fills, the downside is "
+                f"unguarded until it is armed. Run 'Review exits' after it fills; the "
+                f"review arms any missing stop automatically. If this recurs, the "
+                f"broker is dropping the stop leg - investigate before trading live.")
         # Link the order to its recommendation so Learning/Performance show
         # which calls were actually taken.
         from app import reco_ledger
@@ -1555,6 +1565,16 @@ def _has_resting_stop(resting: list[dict]) -> bool:
     A stop is the only order that guards the downside."""
     return any((str(o.get("type", "")).startswith("stop") or o.get("stop_price"))
                for o in (resting or []))
+
+
+def _bracket_attached_a_stop(order: dict) -> bool:
+    """True iff the broker's confirmation for a just-submitted BRACKET carries a
+    protective stop leg. Alpaca returns the parent order with its take-profit and
+    stop-loss children under ``legs`` (the take-profit is a plain limit, the stop
+    a stop/stop_limit). If the stop leg is absent, the entry can fill NAKED — so
+    we check the confirmation at order time rather than discovering the missing
+    stop on the next review (the CHEF 2026-07-15 case: only the target rested)."""
+    return _has_resting_stop((order or {}).get("legs") or [])
 
 
 _HELD_QTY_MARKERS = ("insufficient qty", "40310000", "available")
