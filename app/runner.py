@@ -1195,6 +1195,15 @@ def _maybe_place_orders(cfg: AppConfig, tickets, sector_map, log: Emit) -> None:
                                     target=t.target, sector=sector_map.get(t.symbol, "?"))
             log(f"  [orders] {t.symbol}: submitted {t.shares} sh - order id "
                 f"{o.get('id', '?')} status {o.get('status', '?')}")
+            # submit_entry is always a bracket (stop + target): verify the broker's
+            # confirmation actually carries the protective stop leg, so a dropped
+            # stop is surfaced now rather than on the next review.
+            if not _bracket_attached_a_stop(o):
+                log(f"  [RISK] {t.symbol}: the broker's confirmation does NOT show a "
+                    f"protective stop attached to this bracket - if it fills, the "
+                    f"downside is unguarded until the review arms it. Run 'Review "
+                    f"exits' after it fills; if this recurs the broker is dropping "
+                    f"the stop leg - investigate before trading live.")
         except Exception as exc:
             log(f"  [orders] {t.symbol}: FAILED - {exc}")
 

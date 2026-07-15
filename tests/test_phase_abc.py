@@ -692,6 +692,56 @@ def test_manual_bracket_quiet_when_stop_leg_is_attached(monkeypatch):
     assert not any("protective stop" in ln for ln in lines)   # no false alarm
 
 
+class _AutoEntryBroker:
+    """Mock broker for _maybe_place_orders: submit_entry echoes the child legs
+    the confirmation would carry (a bracket always has stop + target)."""
+
+    def __init__(self, legs):
+        self._legs = legs
+        self.submitted = None
+
+    def submit_entry(self, symbol, shares, **kw):
+        self.submitted = {"symbol": symbol, "shares": shares, **kw}
+        return {"id": "auto-1", "status": "accepted", "legs": self._legs}
+
+
+def _auto_ticket(symbol="AMD"):
+    import types
+    return types.SimpleNamespace(symbol=symbol, shares=10, entry=100.0,
+                                 stop=90.0, target=120.0)
+
+
+def test_auto_entry_warns_when_broker_drops_the_stop_leg(monkeypatch):
+    # The momentum auto-entry path is a bracket too: if the confirmation shows
+    # only a take-profit leg, flag the missing stop at order time.
+    from app import runner
+
+    broker = _AutoEntryBroker(legs=[{"type": "limit", "limit_price": "120.0"}])
+    monkeypatch.setattr(runner, "_alpaca_broker", lambda cfg: broker)
+    cfg = AppConfig(alpaca_key_id="k", alpaca_secret="s", alpaca_env="paper",
+                    place_orders=True)
+    lines: list[str] = []
+
+    runner._maybe_place_orders(cfg, [_auto_ticket()], {"AMD": "Tech"}, lines.append)
+
+    assert any("[RISK]" in ln and "protective stop" in ln for ln in lines)
+
+
+def test_auto_entry_quiet_when_stop_leg_is_attached(monkeypatch):
+    from app import runner
+
+    broker = _AutoEntryBroker(legs=[{"type": "limit", "limit_price": "120.0"},
+                                    {"type": "stop", "stop_price": "90.0"}])
+    monkeypatch.setattr(runner, "_alpaca_broker", lambda cfg: broker)
+    cfg = AppConfig(alpaca_key_id="k", alpaca_secret="s", alpaca_env="paper",
+                    place_orders=True)
+    lines: list[str] = []
+
+    runner._maybe_place_orders(cfg, [_auto_ticket()], {"AMD": "Tech"}, lines.append)
+
+    assert not any("protective stop" in ln for ln in lines)   # no false alarm
+
+
 def test_order_qty_is_resilient_to_missing_fields():
     # Regression: a flattened OCO leg can lack a clean `qty`, which printed a bare
     # '?' in the cancel log. Fall back through the alternatives, never '?'.
