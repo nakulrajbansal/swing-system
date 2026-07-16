@@ -18,10 +18,29 @@ self-authored authority is earned through realized evidence, not sign-off.
 
 from __future__ import annotations
 
+import datetime as _dt
+
 from system.schemas import Lesson
 
 MIN_BUCKET = 5      # a pattern needs at least this many scored outcomes
 MIN_RETIRE = 8      # contradicting an anecdote needs even more evidence
+LLM_TTL_DAYS = 21   # an LLM lesson the synthesis stops re-deriving retires after this
+LLM_MAX = 6         # hard cap on concurrent LLM lessons (the freshest are kept)
+
+
+def _parse_day(s):
+    try:
+        return _dt.date.fromisoformat(str(s)[:10])
+    except Exception:
+        return None
+
+
+def _days_stale(as_of: str, run_as_of: str):
+    """Days between an LLM lesson's last re-derivation (`as_of`) and the current
+    run (`run_as_of`), or None when either date is unparseable — in which case we
+    never age the lesson out blindly."""
+    a, b = _parse_day(as_of), _parse_day(run_as_of)
+    return (b - a).days if (a is not None and b is not None) else None
 
 
 def _bucket(rows: list[dict]) -> dict:
@@ -234,30 +253,68 @@ def curate(mem, ledger_rows: list[dict], client=None, model: str = "",
         if changed:
             new += 1
     existing = {e.lesson.lesson for e in mem.entries}
+    run_as_of = max((str(r.get("evaluated_on") or "")
+                     for r in ledger_rows if r.get("status") == "evaluated"),
+                    default="")
 
-    # Optional LLM synthesis: patterns the rule set has no name for, grounded
-    # strictly in the provided numbers (never invented trades).
+    # Optional LLM synthesis + lifecycle: patterns the rule set has no name for,
+    # grounded strictly in the provided numbers (never invented trades). Unlike a
+    # rule pattern, an LLM lesson has no recomputable condition, so it lives by
+    # "re-earn or retire": each run that re-derives it refreshes its as_of; one
+    # the synthesis stops producing ages out after LLM_TTL_DAYS, and a hard cap
+    # bounds the count. This keeps the automated-learning invariant — a lesson
+    # persists only while the evidence keeps regenerating it — with no human
+    # pruning. (Deterministic/offline runs never touch LLM lessons.)
     if client is not None and not getattr(client, "deterministic", True):
         from system.agents.prompts import CURATOR
         scored = [{k: r.get(k) for k in ("symbol", "date", "conviction",
                                          "return_pct", "outcome", "hidden_gem",
                                          "moat_stance", "sector")}
                   for r in ledger_rows if r.get("status") == "evaluated"][-40:]
+        fresh = None
         try:
             raw = client.complete(CURATOR,
                                   {"stats": report["stats"], "scored": scored},
                                   "CuratorLessons", model=model, max_tokens=600)
-            for i, item in enumerate((raw.get("lessons") or [])[:max_llm_lessons]):
-                text = str(item.get("text", "")).strip()
-                if text and text not in existing:
-                    mem.add(Lesson("confluence_swing", text,
-                                   bool(item.get("worked", False)), "curated",
-                                   kind=f"llm:{abs(hash(text)) % 100000}"),
-                            human_reviewed=True)
+            fresh = [(t, bool(item.get("worked", False)))
+                     for item in (raw.get("lessons") or [])[:max_llm_lessons]
+                     if (t := str(item.get("text", "")).strip())]
+        except Exception:
+            fresh = None                       # synthesis failed: don't age/prune
+
+        if fresh is not None:
+            fresh_texts = {t for t, _ in fresh}
+            by_text = {e.lesson.lesson: e for e in mem.entries
+                       if e.lesson.kind.startswith("llm:")}
+            for text, worked in fresh:
+                if text in by_text:
+                    by_text[text].lesson.as_of = run_as_of       # re-earned
+                elif text not in existing:
+                    mem.add(Lesson("confluence_swing", text, worked, "curated",
+                                   kind=f"llm:{abs(hash(text)) % 100000}",
+                                   as_of=run_as_of), human_reviewed=True)
                     existing.add(text)
                     new += 1
-        except Exception:
-            pass                               # synthesis is a bonus, never a gate
+            # Age out LLM lessons this run's synthesis no longer supports.
+            kept = []
+            for e in mem.entries:
+                if (not e.lesson.kind.startswith("llm:")
+                        or e.lesson.lesson in fresh_texts):
+                    kept.append(e)
+                    continue
+                stale = _days_stale(e.lesson.as_of, run_as_of)
+                if stale is not None and stale > LLM_TTL_DAYS:
+                    retired += 1               # not re-derived, past its grace
+                else:
+                    kept.append(e)
+            mem.entries[:] = kept
+            # Hard cap: keep only the freshest LLM lessons, retire the oldest.
+            llm = [e for e in mem.entries if e.lesson.kind.startswith("llm:")]
+            if len(llm) > LLM_MAX:
+                oldest = sorted(llm, key=lambda e: e.lesson.as_of or "")
+                drop = {id(e) for e in oldest[:len(llm) - LLM_MAX]}
+                mem.entries[:] = [e for e in mem.entries if id(e) not in drop]
+                retired += len(drop)
 
     return {"activated": activated, "retired": retired, "new_patterns": new,
             "pending": sum(1 for e in mem.entries if not e.human_reviewed),

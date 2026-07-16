@@ -109,6 +109,70 @@ def test_curator_replaces_reworded_pattern_lessons_instead_of_bloating():
     assert len(mem.entries) == after_first                # memory did NOT grow
 
 
+class _FakeLLM:
+    """A curator LLM stand-in: not deterministic, returns a fixed lesson set."""
+
+    def __init__(self, lessons):
+        self.deterministic = False
+        self._lessons = lessons
+
+    def complete(self, prompt, payload, name, model="", max_tokens=0):
+        return {"lessons": self._lessons}
+
+
+def _later(rows, day="2026-08-01"):
+    return [dict(r, evaluated_on=day) for r in rows]
+
+
+def test_curator_ages_out_llm_lesson_no_longer_synthesized():
+    # An LLM lesson has no rule condition, so it lives by "re-earn or retire":
+    # once the synthesis stops producing it and TTL lapses, it retires itself.
+    mem = _mem_with()
+    curate(mem, _cohort_rows("core", 2.0, 6),
+           client=_FakeLLM([{"text": "old insight", "worked": True}]), model="m")
+    assert any(e.lesson.lesson == "old insight" for e in mem.entries)
+
+    # A run well past the TTL that no longer re-derives "old insight".
+    rep = curate(mem, _later(_cohort_rows("core", 2.0, 6)),
+                 client=_FakeLLM([{"text": "new insight", "worked": True}]), model="m")
+    llm = [e.lesson.lesson for e in mem.entries if e.lesson.kind.startswith("llm:")]
+    assert "old insight" not in llm and "new insight" in llm   # aged out, replaced
+    assert rep["retired"] >= 1
+
+
+def test_curator_refreshes_resynthesized_llm_lesson_without_duplicating():
+    mem = _mem_with()
+    curate(mem, _cohort_rows("core", 2.0, 6),
+           client=_FakeLLM([{"text": "durable insight", "worked": True}]), model="m")
+    # Same lesson re-derived on a later run: refreshed (not aged), not duplicated.
+    curate(mem, _later(_cohort_rows("core", 2.0, 6)),
+           client=_FakeLLM([{"text": "durable insight", "worked": True}]), model="m")
+    llm = [e for e in mem.entries if e.lesson.kind.startswith("llm:")]
+    assert len(llm) == 1                                    # single, not doubled
+    assert llm[0].lesson.as_of == "2026-08-01"             # re-earned -> won't age
+
+
+def test_curator_caps_llm_lessons_at_the_max():
+    from system.reflection.curator import LLM_MAX
+    mem = _mem_with()
+    for i in range(LLM_MAX + 3):
+        mem.add(Lesson("confluence_swing", f"llm insight {i}", True, "curated",
+                       kind=f"llm:{i}", as_of="2026-06-24"), human_reviewed=True)
+    curate(mem, _cohort_rows("core", 2.0, 6),
+           client=_FakeLLM([{"text": "another", "worked": True}]), model="m")
+    llm = [e for e in mem.entries if e.lesson.kind.startswith("llm:")]
+    assert len(llm) <= LLM_MAX                              # bounded, freshest kept
+
+
+def test_curator_leaves_llm_lessons_untouched_on_deterministic_runs():
+    # No client (offline/deterministic): LLM lessons must NOT be pruned.
+    mem = _mem_with()
+    mem.add(Lesson("confluence_swing", "prior llm", True, "curated",
+                   kind="llm:9", as_of="2026-01-01"), human_reviewed=True)
+    curate(mem, _cohort_rows("core", 2.0, 6))              # no client
+    assert any(e.lesson.lesson == "prior llm" for e in mem.entries)
+
+
 def test_assess_flags_inverted_conviction_buckets():
     # Aggregate calibration nets out (avg conviction ~ win rate), but the HIGH-
     # conviction half loses while the LOW-conviction half wins — the desk is most

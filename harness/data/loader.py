@@ -245,34 +245,47 @@ def fetch_closes_volumes_batch(symbols: list[str], start: str, end: str | None =
     = symbols (missing names dropped). Chunked to stay within Yahoo's limits.
     Volume enables the liquidity floor and accumulation signals.
     """
+    import logging
     import yfinance as yf  # lazy
+
+    # yfinance logs its own "$SYM: possibly delisted; no price data found" line
+    # straight to the console for every name Yahoo can't serve (e.g. thinly
+    # covered class-A shares like CWEN-A, whose Class-C line CWEN is fine). That
+    # is raw library noise interleaved with our progress; quiet it here and emit
+    # a single tidy summary of the gaps ourselves (below).
+    yf_log = logging.getLogger("yfinance")
+    prev_level = yf_log.level
 
     c_frames, v_frames = [], []
     chunk = 100
-    for i in range(0, len(symbols), chunk):
-        part = symbols[i:i + chunk]
-        emit(f"[prefilter] downloading prices {i + 1}-{i + len(part)} of {len(symbols)} ...")
-        try:
-            data = yf.download(part, start=start, end=end, auto_adjust=True,
-                               progress=False, threads=True, group_by="column")
-        except Exception as exc:
-            emit(f"[prefilter] chunk failed ({exc}); skipping")
-            continue
-        if data is None or len(data) == 0:
-            continue
-        # With multiple tickers, yfinance returns a column MultiIndex (field, ticker).
-        if isinstance(data.columns, pd.MultiIndex):
-            lvl0 = data.columns.get_level_values(0)
-            close = data["Close"] if "Close" in lvl0 else None
-            vol = data["Volume"] if "Volume" in lvl0 else None
-        else:                                   # single ticker -> flat columns
-            close = data[["Close"]].rename(columns={"Close": part[0]})
-            vol = (data[["Volume"]].rename(columns={"Volume": part[0]})
-                   if "Volume" in data.columns else None)
-        if close is not None:
-            c_frames.append(close)
-        if vol is not None:
-            v_frames.append(vol)
+    yf_log.setLevel(logging.CRITICAL)
+    try:
+        for i in range(0, len(symbols), chunk):
+            part = symbols[i:i + chunk]
+            emit(f"[prefilter] downloading prices {i + 1}-{i + len(part)} of {len(symbols)} ...")
+            try:
+                data = yf.download(part, start=start, end=end, auto_adjust=True,
+                                   progress=False, threads=True, group_by="column")
+            except Exception as exc:
+                emit(f"[prefilter] chunk failed ({exc}); skipping")
+                continue
+            if data is None or len(data) == 0:
+                continue
+            # With multiple tickers, yfinance returns a column MultiIndex (field, ticker).
+            if isinstance(data.columns, pd.MultiIndex):
+                lvl0 = data.columns.get_level_values(0)
+                close = data["Close"] if "Close" in lvl0 else None
+                vol = data["Volume"] if "Volume" in lvl0 else None
+            else:                                   # single ticker -> flat columns
+                close = data[["Close"]].rename(columns={"Close": part[0]})
+                vol = (data[["Volume"]].rename(columns={"Volume": part[0]})
+                       if "Volume" in data.columns else None)
+            if close is not None:
+                c_frames.append(close)
+            if vol is not None:
+                v_frames.append(vol)
+    finally:
+        yf_log.setLevel(prev_level)
 
     def _merge(frames):
         if not frames:
@@ -281,7 +294,18 @@ def fetch_closes_volumes_batch(symbols: list[str], start: str, end: str | None =
         out = out.loc[:, ~out.columns.duplicated()]
         return out.dropna(how="all")
 
-    return _merge(c_frames), _merge(v_frames)
+    closes, volumes = _merge(c_frames), _merge(v_frames)
+    # One clean, actionable line for names Yahoo returned nothing for (dropped
+    # from the shortlist), instead of yfinance's per-name spam. Recurring gaps
+    # here are a data-provider issue, not a bug (the screen continues fine).
+    have = set(closes.columns)
+    missing = [s for s in symbols if s not in have]
+    if missing:
+        shown = ", ".join(missing[:12])
+        if len(missing) > 12:
+            shown += f", +{len(missing) - 12} more"
+        emit(f"[prefilter] no Yahoo price data for {len(missing)} name(s), skipped: {shown}")
+    return closes, volumes
 
 
 def fetch_closes_batch(symbols: list[str], start: str, end: str | None = None,
