@@ -27,10 +27,10 @@ These directly improve the odds or the evidence quality the readiness gate reads
 - [ ] **Calibration quality** — Brier score is the current weakest gate. Feed the
   conviction-calibration engine more signal (per-lens, per-sector base rates;
   shrinkage tuned on the growing sample) so stated P(win) tracks realized odds.
-- [ ] **Auto stop-raising via broker order-replace** — the review already *advises*
-  raising a winner's stop to breakeven/1R; make it *act* (cancel+replace the OCO
-  stop) under the asymmetric-autonomy invariant (only ever tightens risk). The
-  winner-extend one-shot trail is the first step; generalise it.
+- [x] **Auto stop-raising via broker order-replace** — the review now *acts* on a
+  ≥1R winner: cancel+replace the OCO stop up to breakeven (one-shot, never lowers)
+  under the asymmetric-autonomy invariant, gated by the managing flags. Advisory
+  when managing is off. Next: trail beyond breakeven (e.g. to 1R) as R climbs.
 - [ ] **Class-share data parity** — the broker normalises `MOG.A`↔`MOG-A`; give the
   *data loader* the same so class-share names are screenable where Yahoo serves
   them (genuine provider gaps like `CWEN-A` stay excluded, now logged cleanly).

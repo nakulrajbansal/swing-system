@@ -482,6 +482,32 @@ def test_extend_plan_trails_a_winner_once(tmp_path):
     assert reco_ledger.extend_plan("AAA", "2026-07-21", new_stop=105.0, path=p) is None
 
 
+def test_raise_stop_only_tightens_and_is_one_shot(tmp_path):
+    from app import reco_ledger
+
+    p = tmp_path / "ledger.json"
+    reco_ledger.record([{"symbol": "AAA", "entry": 100.0, "stop": 90.0,
+                         "target": 130.0, "hold_days": 10, "exit_by": "2026-07-30",
+                         "conviction": 0.6}], "screen", "2026-06-20", path=p)
+    # Raise the stop to breakeven; the exit window is left untouched.
+    r = reco_ledger.raise_stop("AAA", 100.0, path=p)
+    assert r["stop"] == 100.0 and r["stop_raised"] and r["exit_by"] == "2026-07-30"
+    # One-shot: a second raise is refused even if higher.
+    assert reco_ledger.raise_stop("AAA", 110.0, path=p) is None
+
+
+def test_raise_stop_never_lowers_an_existing_stop(tmp_path):
+    from app import reco_ledger
+
+    p = tmp_path / "ledger.json"
+    reco_ledger.record([{"symbol": "AAA", "entry": 100.0, "stop": 95.0,
+                         "target": 130.0, "hold_days": 10, "exit_by": "2026-07-30",
+                         "conviction": 0.6}], "screen", "2026-06-20", path=p)
+    # A "raise" below the current stop is refused (risk must only ever decrease).
+    assert reco_ledger.raise_stop("AAA", 90.0, path=p) is None
+    assert reco_ledger.load(path=p)[0]["stop"] == 95.0     # unchanged
+
+
 def test_symbol_normalization_round_trips_class_shares():
     from system.execution.broker import to_broker_symbol, to_data_symbol
 

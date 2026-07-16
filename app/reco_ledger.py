@@ -114,6 +114,27 @@ def extend_plan(symbol: str, new_exit_by: str, new_stop: float, path=None) -> di
     return r
 
 
+def raise_stop(symbol: str, new_stop: float, path=None) -> dict | None:
+    """Raise a winning open position's protective stop ONCE (risk-reducing only),
+    marked so it happens at most once and never LOWERS an existing stop. Returns
+    the updated entry or None. Distinct from :func:`extend_plan`: the exit-by
+    window is untouched — this only tightens the downside on a live winner, which
+    the asymmetric-autonomy invariant allows the review to do unattended."""
+    led = load(path)
+    cands = [r for r in led if r.get("symbol") == symbol and r.get("status") == "open"]
+    if not cands:
+        return None
+    r = max(cands, key=lambda x: x.get("date") or "")
+    if r.get("stop_raised"):
+        return None                                # already raised once
+    if float(new_stop) <= float(r.get("stop") or 0):
+        return None                                # only ever raise, never lower
+    r["stop"] = round(float(new_stop), 2)
+    r["stop_raised"] = True
+    save(led, path)
+    return r
+
+
 def mark_closed(symbol: str, exit_price: float, when: str, reason: str,
                 entry_price: float | None = None, memory=None, path=None) -> dict | None:
     """Close out the most recent open entry for `symbol` with the REALIZED

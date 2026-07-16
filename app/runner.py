@@ -850,7 +850,7 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
 
     cfg.apply_to_env()
     out = {"open": 0, "time_exits": [], "guardian_exits": [], "advised": [],
-           "protected": [], "unprotected": []}
+           "protected": [], "unprotected": [], "stop_raised": []}
     with _run_logger(emit, "review") as (log, _path):
         if not (cfg.alpaca_key_id and cfg.alpaca_secret):
             log("[error] Alpaca key id + secret required (Settings).")
@@ -1060,12 +1060,40 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
                         log(ln)
                 else:
                     log("  [guardian] HOLD - thesis intact.")
-                # Winner management: at >=1R unrealized, advise de-risking.
+                # Winner management: at >=1R unrealized, de-risk by raising the
+                # stop to breakeven. Tightening a stop only REDUCES risk, so the
+                # review may do it unattended (asymmetric autonomy) when managing
+                # is on; one-shot per position, and never lowers an existing stop.
                 r_mult = _r_multiple(avg, plan.get("stop"), cur)
-                if r_mult >= 1.0:
-                    log(f"  [manage] up {r_mult:.1f}R - consider raising the stop "
-                        f"to breakeven (~{avg:.2f}): with risk removed, the "
-                        "winner can run on the market's money.")
+                if r_mult is not None and r_mult >= 1.0:
+                    acts = cfg.place_orders or getattr(cfg, "auto_manage_exits", False)
+                    cur_stop = float(plan.get("stop") or 0)
+                    if acts and not plan.get("stop_raised") and avg > cur_stop:
+                        try:
+                            broker.cancel_pending(sym)
+                            armed = _submit_exit_settled(
+                                broker, sym, int(qty), avg, plan.get("target"),
+                                log, retry=True)
+                        except Exception as exc:
+                            armed = {"error": str(exc)}
+                        if not (isinstance(armed, dict) and armed.get("error")):
+                            reco_ledger.raise_stop(sym, avg)
+                            out.setdefault("stop_raised", []).append(sym)
+                            log(f"  [manage] up {r_mult:.1f}R - stop RAISED to "
+                                f"breakeven {avg:.2f} (risk removed; one-shot). The "
+                                "winner now runs on the market's money.")
+                        else:
+                            log(f"  [manage] up {r_mult:.1f}R - wanted to raise the "
+                                f"stop to breakeven but re-arming failed "
+                                f"({armed.get('error')}); leaving the current stop.")
+                    elif not acts:
+                        log(f"  [manage] up {r_mult:.1f}R - consider raising the stop "
+                            f"to breakeven (~{avg:.2f}): turn ON managing to let the "
+                            "review do it. With risk removed, the winner runs on the "
+                            "market's money.")
+                    else:
+                        log(f"  [manage] up {r_mult:.1f}R - stop already at/above "
+                            f"breakeven; letting the winner run.")
 
         # CLOSED AT THE BROKER: an executed plan whose position is gone was
         # sold by its resting stop/target (or manually). Score it NOW from the
@@ -1157,7 +1185,8 @@ def run_position_review(cfg: AppConfig, emit: Emit) -> dict:
         log(f"\n[done] review complete: {len(out['time_exits'])} time exit(s), "
             f"{len(out['guardian_exits'])} guardian exit(s), "
             f"{len(out['advised'])} advisory exit(s), "
-            f"{len(out['protected'])} position(s) newly protected.")
+            f"{len(out['protected'])} position(s) newly protected, "
+            f"{len(out['stop_raised'])} stop(s) raised to breakeven.")
         if out["unprotected"]:
             log(f"[warn] {len(out['unprotected'])} UNPROTECTED position(s) with no "
                 f"plan and no resting stop: {', '.join(out['unprotected'])}. "
