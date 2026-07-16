@@ -1,10 +1,16 @@
-"""Live price-loader behaviour (network calls are monkeypatched)."""
+"""Live price-loader behaviour (network calls are monkeypatched).
+
+yfinance is an OPTIONAL dependency (the `live-data` extra); the offline CI job
+installs only `.[dev]`, so skip cleanly there rather than erroring on import."""
 
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from harness.data import loader
+
+yf = pytest.importorskip("yfinance")
 
 
 def _multi(symbols, dates):
@@ -22,7 +28,6 @@ def _multi(symbols, dates):
 def test_batch_summarises_missing_names_cleanly(monkeypatch):
     # A name Yahoo can't serve (e.g. the thinly-covered class-A line CWEN-A) must
     # be dropped with ONE tidy summary line, not yfinance's per-name spam.
-    import yfinance as yf
     dates = pd.date_range("2026-07-01", periods=3)
 
     def fake_download(part, **kw):
@@ -42,7 +47,6 @@ def test_batch_summarises_missing_names_cleanly(monkeypatch):
 
 
 def test_batch_quiet_when_every_name_resolves(monkeypatch):
-    import yfinance as yf
     dates = pd.date_range("2026-07-01", periods=3)
     monkeypatch.setattr(yf, "download",
                         lambda part, **kw: _multi(
