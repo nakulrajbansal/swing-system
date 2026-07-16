@@ -1120,6 +1120,90 @@
       },
       "weight": 1.0,
       "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended AMD paid +2.2% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "AMD",
+        "as_of": "2026-07-16",
+        "pnl_pct": 2.19,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended INTC did not pay -14.4% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "INTC",
+        "as_of": "2026-07-16",
+        "pnl_pct": -14.42,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended MU did not pay -7.3% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "MU",
+        "as_of": "2026-07-16",
+        "pnl_pct": -7.29,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended HPE paid +14.9% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "HPE",
+        "as_of": "2026-07-16",
+        "pnl_pct": 14.94,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended CNC did not pay -1.8% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "CNC",
+        "as_of": "2026-07-16",
+        "pnl_pct": -1.84,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "hidden-gem picks are NOT paying (39% of 28 scored) - demand stronger confirmation before trusting this lens",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-07-16",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
     }
   ],
   "outcomes": [
@@ -1642,6 +1726,46 @@
       "pnl_pct": -4.75,
       "reason": "time",
       "as_of": "2026-07-15"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "AMD",
+      "conviction": 0.67,
+      "pnl_pct": 2.19,
+      "reason": "time",
+      "as_of": "2026-07-16"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "INTC",
+      "conviction": 0.67,
+      "pnl_pct": -14.42,
+      "reason": "time",
+      "as_of": "2026-07-16"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "MU",
+      "conviction": 0.67,
+      "pnl_pct": -7.29,
+      "reason": "time",
+      "as_of": "2026-07-16"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "HPE",
+      "conviction": 0.67,
+      "pnl_pct": 14.94,
+      "reason": "time",
+      "as_of": "2026-07-16"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "CNC",
+      "conviction": 0.67,
+      "pnl_pct": -1.84,
+      "reason": "time",
+      "as_of": "2026-07-16"
     }
   ]
 }
