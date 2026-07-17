@@ -1204,6 +1204,174 @@
       },
       "weight": 1.0,
       "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended AMD did not pay -9.3% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "AMD",
+        "as_of": "2026-07-17",
+        "pnl_pct": -9.26,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended INTC did not pay -17.7% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "INTC",
+        "as_of": "2026-07-17",
+        "pnl_pct": -17.7,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended DELL did not pay -5.0% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "DELL",
+        "as_of": "2026-07-17",
+        "pnl_pct": -4.96,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended MU did not pay -13.4% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "MU",
+        "as_of": "2026-07-17",
+        "pnl_pct": -13.36,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended HUM did not pay -1.6% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "HUM",
+        "as_of": "2026-07-17",
+        "pnl_pct": -1.62,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended AMD did not pay -9.3% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "AMD",
+        "as_of": "2026-07-17",
+        "pnl_pct": -9.26,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended INTC did not pay -17.7% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "INTC",
+        "as_of": "2026-07-17",
+        "pnl_pct": -17.7,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended DELL did not pay -5.0% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "DELL",
+        "as_of": "2026-07-17",
+        "pnl_pct": -4.96,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended MU did not pay -13.4% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "MU",
+        "as_of": "2026-07-17",
+        "pnl_pct": -13.36,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended HUM did not pay -1.6% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "HUM",
+        "as_of": "2026-07-17",
+        "pnl_pct": -1.62,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "stated convictions run ~23pp ABOVE the realized win rate (44% over 80 scored calls) - treat conviction as optimistic and demand more confirmation before sizing up",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-07-17",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "hidden-gem picks are NOT paying (34% of 32 scored) - demand stronger confirmation before trusting this lens",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-07-17",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
     }
   ],
   "outcomes": [
@@ -1766,6 +1934,86 @@
       "pnl_pct": -1.84,
       "reason": "time",
       "as_of": "2026-07-16"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "AMD",
+      "conviction": 0.67,
+      "pnl_pct": -9.26,
+      "reason": "time",
+      "as_of": "2026-07-17"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "INTC",
+      "conviction": 0.67,
+      "pnl_pct": -17.7,
+      "reason": "stop",
+      "as_of": "2026-07-17"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "DELL",
+      "conviction": 0.67,
+      "pnl_pct": -4.96,
+      "reason": "time",
+      "as_of": "2026-07-17"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "MU",
+      "conviction": 0.67,
+      "pnl_pct": -13.36,
+      "reason": "time",
+      "as_of": "2026-07-17"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "HUM",
+      "conviction": 0.67,
+      "pnl_pct": -1.62,
+      "reason": "time",
+      "as_of": "2026-07-17"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "AMD",
+      "conviction": 0.67,
+      "pnl_pct": -9.26,
+      "reason": "time",
+      "as_of": "2026-07-17"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "INTC",
+      "conviction": 0.67,
+      "pnl_pct": -17.7,
+      "reason": "stop",
+      "as_of": "2026-07-17"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "DELL",
+      "conviction": 0.67,
+      "pnl_pct": -4.96,
+      "reason": "time",
+      "as_of": "2026-07-17"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "MU",
+      "conviction": 0.67,
+      "pnl_pct": -13.36,
+      "reason": "time",
+      "as_of": "2026-07-17"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "HUM",
+      "conviction": 0.67,
+      "pnl_pct": -1.62,
+      "reason": "time",
+      "as_of": "2026-07-17"
     }
   ]
 }

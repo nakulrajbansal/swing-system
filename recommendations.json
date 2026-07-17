@@ -1624,9 +1624,13 @@
     "thesis": "Confluence of +142% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
     "setup_type": "confluence_swing",
     "source": "screen-sp500",
-    "status": "open",
+    "status": "evaluated",
     "hidden_gem": false,
-    "moat_stance": "bullish"
+    "moat_stance": "bullish",
+    "return_pct": -9.26,
+    "outcome": "time",
+    "evaluated_on": "2026-07-17",
+    "excess_pct": -9.18
   },
   {
     "id": "2026-07-03:INTC:screen-sp500",
@@ -1643,9 +1647,13 @@
     "thesis": "Confluence of +226% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
     "setup_type": "confluence_swing",
     "source": "screen-sp500",
-    "status": "open",
+    "status": "evaluated",
     "hidden_gem": false,
-    "moat_stance": "neutral"
+    "moat_stance": "neutral",
+    "return_pct": -17.7,
+    "outcome": "stop",
+    "evaluated_on": "2026-07-17",
+    "excess_pct": -17.62
   },
   {
     "id": "2026-07-03:DELL:screen-sp500",
@@ -1662,9 +1670,13 @@
     "thesis": "Confluence of +216% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
     "setup_type": "confluence_swing",
     "source": "screen-sp500",
-    "status": "open",
+    "status": "evaluated",
     "hidden_gem": false,
-    "moat_stance": "neutral"
+    "moat_stance": "neutral",
+    "return_pct": -4.96,
+    "outcome": "time",
+    "evaluated_on": "2026-07-17",
+    "excess_pct": -4.88
   },
   {
     "id": "2026-07-03:MU:screen-sp500",
@@ -1681,9 +1693,13 @@
     "thesis": "Confluence of +242% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
     "setup_type": "confluence_swing",
     "source": "screen-sp500",
-    "status": "open",
+    "status": "evaluated",
     "hidden_gem": true,
-    "moat_stance": "bullish"
+    "moat_stance": "bullish",
+    "return_pct": -13.36,
+    "outcome": "time",
+    "evaluated_on": "2026-07-17",
+    "excess_pct": -13.28
   },
   {
     "id": "2026-07-03:HUM:screen-sp500",
@@ -1700,9 +1716,13 @@
     "thesis": "Confluence of price within 3% of its 52-week high; +56% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
     "setup_type": "confluence_swing",
     "source": "screen-sp500",
-    "status": "open",
+    "status": "evaluated",
     "hidden_gem": true,
-    "moat_stance": "bearish"
+    "moat_stance": "bearish",
+    "return_pct": -1.62,
+    "outcome": "time",
+    "evaluated_on": "2026-07-17",
+    "excess_pct": -1.55
   },
   {
     "id": "2026-07-06:AMD:screen-sp500",
@@ -1719,9 +1739,13 @@
     "thesis": "Confluence of +142% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
     "setup_type": "confluence_swing",
     "source": "screen-sp500",
-    "status": "open",
+    "status": "evaluated",
     "hidden_gem": false,
-    "moat_stance": "bullish"
+    "moat_stance": "bullish",
+    "return_pct": -9.26,
+    "outcome": "time",
+    "evaluated_on": "2026-07-17",
+    "excess_pct": -9.18
   },
   {
     "id": "2026-07-06:INTC:screen-sp500",
@@ -1738,9 +1762,13 @@
     "thesis": "Confluence of +226% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
     "setup_type": "confluence_swing",
     "source": "screen-sp500",
-    "status": "open",
+    "status": "evaluated",
     "hidden_gem": false,
-    "moat_stance": "neutral"
+    "moat_stance": "neutral",
+    "return_pct": -17.7,
+    "outcome": "stop",
+    "evaluated_on": "2026-07-17",
+    "excess_pct": -17.62
   },
   {
     "id": "2026-07-06:DELL:screen-sp500",
@@ -1757,9 +1785,13 @@
     "thesis": "Confluence of +216% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
     "setup_type": "confluence_swing",
     "source": "screen-sp500",
-    "status": "open",
+    "status": "evaluated",
     "hidden_gem": false,
-    "moat_stance": "neutral"
+    "moat_stance": "neutral",
+    "return_pct": -4.96,
+    "outcome": "time",
+    "evaluated_on": "2026-07-17",
+    "excess_pct": -4.88
   },
   {
     "id": "2026-07-06:MU:screen-sp500",
@@ -1776,9 +1808,13 @@
     "thesis": "Confluence of +242% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
     "setup_type": "confluence_swing",
     "source": "screen-sp500",
-    "status": "open",
+    "status": "evaluated",
     "hidden_gem": true,
-    "moat_stance": "bullish"
+    "moat_stance": "bullish",
+    "return_pct": -13.36,
+    "outcome": "time",
+    "evaluated_on": "2026-07-17",
+    "excess_pct": -13.28
   },
   {
     "id": "2026-07-06:HUM:screen-sp500",
@@ -1795,9 +1831,13 @@
     "thesis": "Confluence of price within 3% of its 52-week high; +56% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
     "setup_type": "confluence_swing",
     "source": "screen-sp500",
-    "status": "open",
+    "status": "evaluated",
     "hidden_gem": true,
-    "moat_stance": "bearish"
+    "moat_stance": "bearish",
+    "return_pct": -1.62,
+    "outcome": "time",
+    "evaluated_on": "2026-07-17",
+    "excess_pct": -1.55
   },
   {
     "id": "2026-07-07:CNC:screen-sp500",
@@ -2558,5 +2598,100 @@
     "status": "open",
     "hidden_gem": true,
     "moat_stance": "bullish"
+  },
+  {
+    "id": "2026-07-17:FTNT:screen-sp500",
+    "date": "2026-07-17",
+    "symbol": "FTNT",
+    "action": "buy",
+    "sector": "Information Technology",
+    "entry": 160.78,
+    "stop": 147.3,
+    "target": 187.73,
+    "conviction": 0.67,
+    "hold_days": 10,
+    "exit_by": "2026-07-30",
+    "thesis": "Confluence of price within 4% of its 52-week high; +110% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
+    "setup_type": "confluence_swing",
+    "source": "screen-sp500",
+    "status": "open",
+    "hidden_gem": false,
+    "moat_stance": "bullish"
+  },
+  {
+    "id": "2026-07-17:HPE:screen-sp500",
+    "date": "2026-07-17",
+    "symbol": "HPE",
+    "action": "buy",
+    "sector": "Information Technology",
+    "entry": 45.13,
+    "stop": 39.28,
+    "target": 56.84,
+    "conviction": 0.67,
+    "hold_days": 10,
+    "exit_by": "2026-07-30",
+    "thesis": "Confluence of +106% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
+    "setup_type": "confluence_swing",
+    "source": "screen-sp500",
+    "status": "open",
+    "hidden_gem": false,
+    "moat_stance": "neutral"
+  },
+  {
+    "id": "2026-07-17:PANW:screen-sp500",
+    "date": "2026-07-17",
+    "symbol": "PANW",
+    "action": "buy",
+    "sector": "Information Technology",
+    "entry": 353.99,
+    "stop": 322.06,
+    "target": 417.84,
+    "conviction": 0.67,
+    "hold_days": 10,
+    "exit_by": "2026-07-30",
+    "thesis": "Confluence of price within 1% of its 52-week high; +85% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
+    "setup_type": "confluence_swing",
+    "source": "screen-sp500",
+    "status": "open",
+    "hidden_gem": false,
+    "moat_stance": "bullish"
+  },
+  {
+    "id": "2026-07-17:HUM:screen-sp500",
+    "date": "2026-07-17",
+    "symbol": "HUM",
+    "action": "buy",
+    "sector": "Health Care",
+    "entry": 386.48,
+    "stop": 355.72,
+    "target": 448.01,
+    "conviction": 0.67,
+    "hold_days": 10,
+    "exit_by": "2026-07-30",
+    "thesis": "Confluence of price within 6% of its 52-week high; +42% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
+    "setup_type": "confluence_swing",
+    "source": "screen-sp500",
+    "status": "open",
+    "hidden_gem": false,
+    "moat_stance": "bearish"
+  },
+  {
+    "id": "2026-07-17:CNC:screen-sp500",
+    "date": "2026-07-17",
+    "symbol": "CNC",
+    "action": "buy",
+    "sector": "Health Care",
+    "entry": 63.89,
+    "stop": 58.89,
+    "target": 73.9,
+    "conviction": 0.67,
+    "hold_days": 10,
+    "exit_by": "2026-07-30",
+    "thesis": "Confluence of +38% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
+    "setup_type": "confluence_swing",
+    "source": "screen-sp500",
+    "status": "open",
+    "hidden_gem": true,
+    "moat_stance": "neutral"
   }
 ]
