@@ -84,3 +84,44 @@ def test_strong_diverse_record_clears_critical_gates():
 def test_human_gate_is_always_present():
     rd = R.assess(_record(40, 0.62), shadow_days=150)
     assert "human action" in rd["human_gate"]
+
+
+def test_every_gate_carries_a_next_step_field():
+    # Explainability: each gate exposes next_step; passing gates carry None,
+    # every non-passing gate a concrete, non-empty action to clear it.
+    rd = R.assess(_record(5, 0.8), equity_curve=[1, 1.1, 1.2, 1.0, 1.1, 1.2],
+                  shadow_days=10)
+    for g in rd["gates"]:
+        assert "next_step" in g
+        if g["status"] == "pass":
+            assert g["next_step"] is None
+        else:
+            assert isinstance(g["next_step"], str) and g["next_step"].strip()
+
+
+def test_sample_size_next_step_quantifies_the_gap():
+    # A thin record (5 calls) must say exactly how many more to reach the bar.
+    rd = R.assess(_record(5, 0.8), shadow_days=10)
+    g = next(g for g in rd["gates"] if g["name"] == "Sample size")
+    assert g["status"] == "fail"
+    assert "more call" in g["next_step"]
+    assert str(R.MIN_SCORED_PROGRESS - 5) in g["next_step"]
+
+
+def test_diversity_next_step_names_the_missing_axis():
+    # Enough months but only one sector -> the step should ask for more sectors.
+    rows = _record(20, 0.6,
+                   months=("2026-01", "2026-02", "2026-03", "2026-04",
+                           "2026-05", "2026-06"),
+                   sectors=("Tech",))
+    rd = R.assess(rows, shadow_days=150)
+    g = next(g for g in rd["gates"] if g["name"] == "Diversity")
+    assert g["status"] != "pass"
+    assert "sector" in g["next_step"]
+
+
+def test_passed_gate_has_no_next_step():
+    # A strong, diverse record clears Sample size -> its next_step is None.
+    g = next(g for g in R.assess(_record(40, 0.62), shadow_days=150)["gates"]
+             if g["name"] == "Sample size")
+    assert g["status"] == "pass" and g["next_step"] is None

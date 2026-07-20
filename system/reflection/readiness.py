@@ -146,12 +146,34 @@ def _plural(n: int, noun: str) -> str:
     return f"{n} {noun}" + ("" if n == 1 else "s")
 
 
-def _gate(name: str, status: str, detail: str, why: str) -> dict:
-    """status: 'pass' | 'progress' | 'fail'."""
-    return {"name": name, "status": status, "detail": detail, "why": why}
+def _gate(name: str, status: str, detail: str, why: str,
+          next_step: str | None = None) -> dict:
+    """status: 'pass' | 'progress' | 'fail'.
+
+    `next_step` is the concrete, quantified action that would flip a non-passing
+    gate green (e.g. "score 20 more calls", "lift PSR to 95%") — the readiness
+    checklist the roadmap asks for, so the path to deployment is explicit rather
+    than a single opaque score. A passing gate carries next_step=None."""
+    return {"name": name, "status": status, "detail": detail, "why": why,
+            "next_step": None if status == "pass" else next_step}
 
 
 _SCORE = {"pass": 1.0, "progress": 0.5, "fail": 0.0}
+
+
+def _psr_next_step(psr: float, sr: float, mintrl: float, n: int) -> str:
+    """The concrete action to clear the PSR/edge-significance gate. When the
+    observed edge is non-positive no track length can prove it, so the only
+    honest step is to build a positive record; otherwise it's a trade count."""
+    if sr <= 0 or mintrl == math.inf:
+        return ("the observed per-trade edge is not positive — no track length "
+                "proves a zero edge; improve the win rate / avg return first.")
+    need = max(int(math.ceil(mintrl)) - n, 0)
+    if need > 0:
+        return (f"score ~{_plural(need, 'more call')} at the current edge to reach "
+                f"PSR {PSR_TARGET * 100:.0f}% (needs ~{mintrl:.0f} trades total).")
+    return (f"lift PSR from {psr * 100:.0f}% to {PSR_TARGET * 100:.0f}% — improve "
+            "the edge (higher/steadier per-trade return) or add trades.")
 
 
 def assess(scored: list[dict], equity_curve: list[float] | None = None,
@@ -177,11 +199,16 @@ def assess(scored: list[dict], equity_curve: list[float] | None = None,
     elif n >= MIN_SCORED_PROGRESS:
         gates.append(_gate("Sample size", "progress",
                            f"{n} scored calls (target {MIN_SCORED_OK})",
-                           "Few trades cannot separate skill from luck."))
+                           "Few trades cannot separate skill from luck.",
+                           f"score {_plural(MIN_SCORED_OK - n, 'more call')} "
+                           f"(to reach {MIN_SCORED_OK})."))
     else:
         gates.append(_gate("Sample size", "fail",
                            f"only {n} scored calls (need >= {MIN_SCORED_PROGRESS})",
-                           "Few trades cannot separate skill from luck."))
+                           "Few trades cannot separate skill from luck.",
+                           f"score {_plural(MIN_SCORED_PROGRESS - n, 'more call')} "
+                           f"(to reach {MIN_SCORED_PROGRESS}); {MIN_SCORED_OK} for a "
+                           "trustworthy record."))
 
     # G2 — EDGE SIGNIFICANCE: PSR / MinTRL (the statistical core).
     psr = probabilistic_sharpe(rets) if n >= 2 else 0.0
@@ -200,13 +227,15 @@ def assess(scored: list[dict], equity_curve: list[float] | None = None,
                            f"PSR {psr * 100:.0f}% (target {PSR_TARGET * 100:.0f}%); "
                            f"~{mintrl_txt} trades needed, have {n}",
                            "Probability the true edge beats zero, skew/kurtosis "
-                           "adjusted."))
+                           "adjusted.",
+                           _psr_next_step(psr, sr, mintrl, n)))
     else:
         gates.append(_gate("Edge is real (PSR)", "fail",
                            f"PSR {psr * 100:.0f}% (target {PSR_TARGET * 100:.0f}%); "
                            f"per-trade Sharpe {sr:.2f}",
                            "Probability the true edge beats zero, skew/kurtosis "
-                           "adjusted."))
+                           "adjusted.",
+                           _psr_next_step(psr, sr, mintrl, n)))
 
     # G3 — CALIBRATION: does stated conviction match realized odds?
     probs = [float(r["conviction"]) for r in scored
@@ -219,37 +248,52 @@ def assess(scored: list[dict], equity_curve: list[float] | None = None,
     if brier is None or n < MIN_CALIBRATED:
         gates.append(_gate("Calibration", "progress",
                            f"not yet judged (need {MIN_CALIBRATED} scored, have {n})",
-                           "Conviction must track real odds before it can size risk."))
+                           "Conviction must track real odds before it can size risk.",
+                           f"score {_plural(max(MIN_CALIBRATED - n, 0), 'more call')} "
+                           "to begin judging calibration."))
     elif brier <= BRIER_OK and rel.get("monotonic") is not False:
         gates.append(_gate("Calibration", "pass",
                            f"Brier {brier:.3f} (<= {BRIER_OK}); bands rank-ordered",
                            "Conviction must track real odds before it can size risk."))
-    elif brier <= BRIER_PROGRESS:
-        gates.append(_gate("Calibration", "progress",
-                           f"Brier {brier:.3f} (target <= {BRIER_OK})"
-                           + ("" if rel.get("monotonic") is not False
-                              else "; conviction bands are INVERTED"),
-                           "Conviction must track real odds before it can size risk."))
     else:
-        gates.append(_gate("Calibration", "fail",
-                           f"Brier {brier:.3f} (> {BRIER_PROGRESS} baseline)",
-                           "Conviction must track real odds before it can size risk."))
+        inverted = rel.get("monotonic") is False
+        step = ("un-invert the conviction bands (higher conviction must win more "
+                "often) via the calibration engine" if inverted
+                else f"tighten Brier from {brier:.3f} to <= {BRIER_OK} "
+                     "(stated conviction must track realized win rate more closely)")
+        if brier <= BRIER_PROGRESS:
+            gates.append(_gate("Calibration", "progress",
+                               f"Brier {brier:.3f} (target <= {BRIER_OK})"
+                               + ("; conviction bands are INVERTED" if inverted else ""),
+                               "Conviction must track real odds before it can size risk.",
+                               step))
+        else:
+            gates.append(_gate("Calibration", "fail",
+                               f"Brier {brier:.3f} (> {BRIER_PROGRESS} baseline)",
+                               "Conviction must track real odds before it can size risk.",
+                               step))
 
     # G4 — DRAWDOWN: survivable on the scored-return equity curve.
     mdd = max_drawdown(equity_curve or [])
     if equity_curve and len(equity_curve) >= 3:
+        dd_step = (f"cut max drawdown from {mdd * 100:.0f}% to no worse than "
+                   f"{MAX_DD_OK * 100:.0f}% (tighter stops / smaller size / less "
+                   "correlated names).")
         if mdd >= MAX_DD_OK:
             gates.append(_gate("Drawdown", "pass", f"max drawdown {mdd * 100:.0f}%",
                                "A real-money account has to survive the worst run."))
         elif mdd >= MAX_DD_FAIL:
             gates.append(_gate("Drawdown", "progress", f"max drawdown {mdd * 100:.0f}%",
-                               "A real-money account has to survive the worst run."))
+                               "A real-money account has to survive the worst run.",
+                               dd_step))
         else:
             gates.append(_gate("Drawdown", "fail", f"max drawdown {mdd * 100:.0f}%",
-                               "A real-money account has to survive the worst run."))
+                               "A real-money account has to survive the worst run.",
+                               dd_step))
     else:
         gates.append(_gate("Drawdown", "progress", "not enough scored calls yet",
-                           "A real-money account has to survive the worst run."))
+                           "A real-money account has to survive the worst run.",
+                           "score more calls to build an equity curve to measure."))
 
     # G5 — DIVERSITY: spread across time (regimes) and sectors, not one theme.
     # Keyed off ENTRY date (when the trade was live and exposed to a regime),
@@ -263,13 +307,19 @@ def assess(scored: list[dict], equity_curve: list[float] | None = None,
     if nm >= MIN_MONTHS_OK and ns >= MIN_SECTORS_OK:
         gates.append(_gate("Diversity", "pass", f"{md}, {sd}",
                            "An edge seen in one month or one theme may be a fluke."))
-    elif nm >= 3 and ns >= 2:
-        gates.append(_gate("Diversity", "progress",
-                           f"{md} (need {MIN_MONTHS_OK}), {sd} (need {MIN_SECTORS_OK})",
-                           "An edge seen in one month or one theme may be a fluke."))
     else:
-        gates.append(_gate("Diversity", "fail", f"{md}, {sd}",
-                           "An edge seen in one month or one theme may be a fluke."))
+        needs = []
+        if nm < MIN_MONTHS_OK:
+            needs.append(f"span {_plural(MIN_MONTHS_OK - nm, 'more calendar month')}")
+        if ns < MIN_SECTORS_OK:
+            needs.append(f"add {_plural(MIN_SECTORS_OK - ns, 'more sector')}")
+        div_step = " and ".join(needs) + " of scored calls."
+        status = "progress" if (nm >= 3 and ns >= 2) else "fail"
+        detail = (f"{md} (need {MIN_MONTHS_OK}), {sd} (need {MIN_SECTORS_OK})"
+                  if status == "progress" else f"{md}, {sd}")
+        gates.append(_gate("Diversity", status, detail,
+                           "An edge seen in one month or one theme may be a fluke.",
+                           div_step))
 
     # G6 — SHADOW DURATION: a real paper track, not a fast week of luck.
     if shadow_days is not None:
@@ -280,11 +330,18 @@ def assess(scored: list[dict], equity_curve: list[float] | None = None,
         elif shadow_days >= MIN_SHADOW_DAYS_PROGRESS:
             gates.append(_gate("Shadow track", "progress",
                                f"{shadow_days} days (target {MIN_SHADOW_DAYS_OK})",
-                               "Skill at swing frequency only shows over months."))
+                               "Skill at swing frequency only shows over months.",
+                               f"keep the paper track running "
+                               f"{_plural(MIN_SHADOW_DAYS_OK - shadow_days, 'more day')} "
+                               f"(to {MIN_SHADOW_DAYS_OK})."))
         else:
             gates.append(_gate("Shadow track", "fail",
                                f"{shadow_days} days (need >= {MIN_SHADOW_DAYS_PROGRESS})",
-                               "Skill at swing frequency only shows over months."))
+                               "Skill at swing frequency only shows over months.",
+                               f"keep the paper track running "
+                               f"{_plural(MIN_SHADOW_DAYS_PROGRESS - shadow_days, 'more day')} "
+                               f"(to {MIN_SHADOW_DAYS_PROGRESS}); {MIN_SHADOW_DAYS_OK} "
+                               "to fully clear."))
 
     # G7 — EDGE STABILITY: the recent half is not decaying vs the older half.
     stability = _stability(scored)
@@ -329,7 +386,9 @@ def _stability(scored: list[dict]) -> dict:
     if len(rows) < 2 * MIN_SCORED_PROGRESS:
         return _gate("Edge stability", "progress",
                      "not enough scored calls to judge decay yet",
-                     "A fading edge should stop a deployment.")
+                     "A fading edge should stop a deployment.",
+                     f"score up to {2 * MIN_SCORED_PROGRESS} calls so the recent "
+                     "half can be compared to the older half.")
     half = len(rows) // 2
     old = sum(float(r["return_pct"]) for r in rows[:half]) / half
     new_rows = rows[half:]
@@ -341,7 +400,11 @@ def _stability(scored: list[dict]) -> dict:
     if new >= 0:
         return _gate("Edge stability", "progress",
                      f"recent avg {new:+.1f}% below earlier {old:+.1f}%",
-                     "A fading edge should stop a deployment.")
+                     "A fading edge should stop a deployment.",
+                     f"lift the recent-half avg from {new:+.1f}% to at least "
+                     f"{0.6 * old:+.1f}% (60% of the earlier {old:+.1f}%).")
     return _gate("Edge stability", "fail",
                  f"recent avg {new:+.1f}% has turned negative (earlier {old:+.1f}%)",
-                 "A fading edge should stop a deployment.")
+                 "A fading edge should stop a deployment.",
+                 "restore a positive recent-half average — the edge is currently "
+                 "decaying; diagnose which lens/regime turned negative.")

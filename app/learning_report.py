@@ -264,6 +264,8 @@ def render_text(report: dict) -> str:
     for g in rd["gates"]:
         L.append(f"  {_gate_mark(g['status'])} {g['name']:<22} {g['detail']}")
         L.append(f"      ↳ {g['why']}")
+        if g.get("next_step"):
+            L.append(f"      → to clear: {g['next_step']}")
     L.append("")
     L.append(f"TRACK RECORD: {h['n_scored']} scored calls · hit {h['hit_rate']}% · "
              f"avg {h['avg_return']:+.1f}%"
