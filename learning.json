@@ -2450,6 +2450,118 @@
       },
       "weight": 1.0,
       "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended FTNT paid +2.4% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "FTNT",
+        "as_of": "2026-08-03",
+        "pnl_pct": 2.44,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended PANW did not pay -3.0% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "PANW",
+        "as_of": "2026-08-03",
+        "pnl_pct": -3.02,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended FFIV did not pay -1.5% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "FFIV",
+        "as_of": "2026-08-03",
+        "pnl_pct": -1.51,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended HUM did not pay -7.5% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "HUM",
+        "as_of": "2026-08-03",
+        "pnl_pct": -7.54,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended CNC did not pay -7.4% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "CNC",
+        "as_of": "2026-08-03",
+        "pnl_pct": -7.43,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "stated convictions run ~31pp ABOVE the realized win rate (36% over 135 scored calls) - treat conviction as optimistic and demand more confirmation before sizing up",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-08-03",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "hidden-gem picks are NOT paying (28% of 46 scored) - demand stronger confirmation before trusting this lens",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-08-03",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "moat-bullish picks are NOT paying (36% of 74 scored) - demand stronger confirmation before trusting this lens",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-08-03",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
     }
   ],
   "outcomes": [
@@ -3492,6 +3604,46 @@
       "pnl_pct": -7.59,
       "reason": "time",
       "as_of": "2026-07-31"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "FTNT",
+      "conviction": 0.67,
+      "pnl_pct": 2.44,
+      "reason": "time",
+      "as_of": "2026-08-03"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "PANW",
+      "conviction": 0.67,
+      "pnl_pct": -3.02,
+      "reason": "time",
+      "as_of": "2026-08-03"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "FFIV",
+      "conviction": 0.67,
+      "pnl_pct": -1.51,
+      "reason": "time",
+      "as_of": "2026-08-03"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "HUM",
+      "conviction": 0.67,
+      "pnl_pct": -7.54,
+      "reason": "stop",
+      "as_of": "2026-08-03"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "CNC",
+      "conviction": 0.67,
+      "pnl_pct": -7.43,
+      "reason": "stop",
+      "as_of": "2026-08-03"
     }
   ]
 }
