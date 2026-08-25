@@ -3822,6 +3822,104 @@
       },
       "weight": 1.0,
       "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended FTNT did not pay -5.5% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "FTNT",
+        "as_of": "2026-08-25",
+        "pnl_pct": -5.5,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended HPE did not pay -10.8% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "HPE",
+        "as_of": "2026-08-25",
+        "pnl_pct": -10.82,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended PANW did not pay -8.0% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "PANW",
+        "as_of": "2026-08-25",
+        "pnl_pct": -8.05,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended MPC paid +4.4% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "MPC",
+        "as_of": "2026-08-25",
+        "pnl_pct": 4.38,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended BBY paid +5.4% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "BBY",
+        "as_of": "2026-08-25",
+        "pnl_pct": 5.4,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "stated convictions run ~25pp ABOVE the realized win rate (42% over 206 scored calls) - treat conviction as optimistic and demand more confirmation before sizing up",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-08-25",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "hidden-gem picks are NOT paying (39% of 57 scored) - demand stronger confirmation before trusting this lens",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-08-25",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
     }
   ],
   "outcomes": [
@@ -5432,6 +5530,46 @@
       "pnl_pct": 7.52,
       "reason": "time",
       "as_of": "2026-08-24"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "FTNT",
+      "conviction": 0.67,
+      "pnl_pct": -5.5,
+      "reason": "time",
+      "as_of": "2026-08-25"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "HPE",
+      "conviction": 0.67,
+      "pnl_pct": -10.82,
+      "reason": "time",
+      "as_of": "2026-08-25"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "PANW",
+      "conviction": 0.67,
+      "pnl_pct": -8.05,
+      "reason": "stop",
+      "as_of": "2026-08-25"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "MPC",
+      "conviction": 0.67,
+      "pnl_pct": 4.38,
+      "reason": "time",
+      "as_of": "2026-08-25"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "BBY",
+      "conviction": 0.67,
+      "pnl_pct": 5.4,
+      "reason": "time",
+      "as_of": "2026-08-25"
     }
   ]
 }
