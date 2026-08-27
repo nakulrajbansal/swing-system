@@ -3920,6 +3920,174 @@
       },
       "weight": 1.0,
       "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended FTNT did not pay -8.4% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "FTNT",
+        "as_of": "2026-08-26",
+        "pnl_pct": -8.39,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended AMAT did not pay -10.2% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "AMAT",
+        "as_of": "2026-08-26",
+        "pnl_pct": -10.15,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended HPQ did not pay -8.5% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "HPQ",
+        "as_of": "2026-08-26",
+        "pnl_pct": -8.5,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended MPC paid +1.9% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "MPC",
+        "as_of": "2026-08-26",
+        "pnl_pct": 1.93,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended AXON did not pay -1.3% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "AXON",
+        "as_of": "2026-08-26",
+        "pnl_pct": -1.32,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended FTNT did not pay -1.5% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "FTNT",
+        "as_of": "2026-08-27",
+        "pnl_pct": -1.54,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended ANET paid +1.7% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "ANET",
+        "as_of": "2026-08-27",
+        "pnl_pct": 1.73,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended FFIV did not pay -0.9% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "FFIV",
+        "as_of": "2026-08-27",
+        "pnl_pct": -0.9,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended HUM paid +0.5% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "HUM",
+        "as_of": "2026-08-27",
+        "pnl_pct": 0.52,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended AXON did not pay -0.9% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "AXON",
+        "as_of": "2026-08-27",
+        "pnl_pct": -0.87,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "stated convictions run ~26pp ABOVE the realized win rate (41% over 216 scored calls) - treat conviction as optimistic and demand more confirmation before sizing up",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-08-27",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "hidden-gem picks are NOT paying (37% of 59 scored) - demand stronger confirmation before trusting this lens",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-08-27",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
     }
   ],
   "outcomes": [
@@ -5570,6 +5738,86 @@
       "pnl_pct": 5.4,
       "reason": "time",
       "as_of": "2026-08-25"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "FTNT",
+      "conviction": 0.67,
+      "pnl_pct": -8.39,
+      "reason": "stop",
+      "as_of": "2026-08-26"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "AMAT",
+      "conviction": 0.67,
+      "pnl_pct": -10.15,
+      "reason": "time",
+      "as_of": "2026-08-26"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "HPQ",
+      "conviction": 0.67,
+      "pnl_pct": -8.5,
+      "reason": "stop",
+      "as_of": "2026-08-26"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "MPC",
+      "conviction": 0.67,
+      "pnl_pct": 1.93,
+      "reason": "time",
+      "as_of": "2026-08-26"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "AXON",
+      "conviction": 0.67,
+      "pnl_pct": -1.32,
+      "reason": "time",
+      "as_of": "2026-08-26"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "FTNT",
+      "conviction": 0.67,
+      "pnl_pct": -1.54,
+      "reason": "time",
+      "as_of": "2026-08-27"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "ANET",
+      "conviction": 0.67,
+      "pnl_pct": 1.73,
+      "reason": "time",
+      "as_of": "2026-08-27"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "FFIV",
+      "conviction": 0.67,
+      "pnl_pct": -0.9,
+      "reason": "time",
+      "as_of": "2026-08-27"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "HUM",
+      "conviction": 0.67,
+      "pnl_pct": 0.52,
+      "reason": "time",
+      "as_of": "2026-08-27"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "AXON",
+      "conviction": 0.67,
+      "pnl_pct": -0.87,
+      "reason": "time",
+      "as_of": "2026-08-27"
     }
   ]
 }
