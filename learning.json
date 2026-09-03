@@ -4452,6 +4452,104 @@
       },
       "weight": 1.0,
       "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended EXPE did not pay -4.1% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "EXPE",
+        "as_of": "2026-09-03",
+        "pnl_pct": -4.08,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended NTAP did not pay -6.0% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "NTAP",
+        "as_of": "2026-09-03",
+        "pnl_pct": -5.98,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended HPQ paid +7.7% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "HPQ",
+        "as_of": "2026-09-03",
+        "pnl_pct": 7.67,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended IQV paid +1.5% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "IQV",
+        "as_of": "2026-09-03",
+        "pnl_pct": 1.55,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended AXON did not pay -11.6% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "AXON",
+        "as_of": "2026-09-03",
+        "pnl_pct": -11.58,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "stated convictions run ~25pp ABOVE the realized win rate (42% over 241 scored calls) - treat conviction as optimistic and demand more confirmation before sizing up",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-09-03",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "hidden-gem picks are NOT paying (34% of 64 scored) - demand stronger confirmation before trusting this lens",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-09-03",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
     }
   ],
   "outcomes": [
@@ -6342,6 +6440,46 @@
       "pnl_pct": -3.48,
       "reason": "time",
       "as_of": "2026-09-02"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "EXPE",
+      "conviction": 0.67,
+      "pnl_pct": -4.08,
+      "reason": "time",
+      "as_of": "2026-09-03"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "NTAP",
+      "conviction": 0.67,
+      "pnl_pct": -5.98,
+      "reason": "time",
+      "as_of": "2026-09-03"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "HPQ",
+      "conviction": 0.67,
+      "pnl_pct": 7.67,
+      "reason": "time",
+      "as_of": "2026-09-03"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "IQV",
+      "conviction": 0.67,
+      "pnl_pct": 1.55,
+      "reason": "time",
+      "as_of": "2026-09-03"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "AXON",
+      "conviction": 0.67,
+      "pnl_pct": -11.58,
+      "reason": "stop",
+      "as_of": "2026-09-03"
     }
   ]
 }
