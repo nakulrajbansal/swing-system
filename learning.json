@@ -4998,6 +4998,118 @@
       },
       "weight": 1.0,
       "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended CRL did not pay -3.5% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "CRL",
+        "as_of": "2026-09-14",
+        "pnl_pct": -3.46,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended ZBRA did not pay -0.9% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "ZBRA",
+        "as_of": "2026-09-14",
+        "pnl_pct": -0.9,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended EXPE did not pay -7.5% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "EXPE",
+        "as_of": "2026-09-14",
+        "pnl_pct": -7.49,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended FTNT did not pay -8.4% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "FTNT",
+        "as_of": "2026-09-14",
+        "pnl_pct": -8.43,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended VLO paid +8.8% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "VLO",
+        "as_of": "2026-09-14",
+        "pnl_pct": 8.78,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "stated convictions run ~28pp ABOVE the realized win rate (39% over 266 scored calls) - treat conviction as optimistic and demand more confirmation before sizing up",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-09-14",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "hidden-gem picks are NOT paying (33% of 69 scored) - demand stronger confirmation before trusting this lens",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-09-14",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "moat-bullish picks are NOT paying (37% of 158 scored) - demand stronger confirmation before trusting this lens",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-09-14",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
     }
   ],
   "outcomes": [
@@ -7088,6 +7200,46 @@
       "pnl_pct": -5.11,
       "reason": "stop",
       "as_of": "2026-09-11"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "CRL",
+      "conviction": 0.67,
+      "pnl_pct": -3.46,
+      "reason": "time",
+      "as_of": "2026-09-14"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "ZBRA",
+      "conviction": 0.67,
+      "pnl_pct": -0.9,
+      "reason": "time",
+      "as_of": "2026-09-14"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "EXPE",
+      "conviction": 0.67,
+      "pnl_pct": -7.49,
+      "reason": "stop",
+      "as_of": "2026-09-14"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "FTNT",
+      "conviction": 0.67,
+      "pnl_pct": -8.43,
+      "reason": "stop",
+      "as_of": "2026-09-14"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "VLO",
+      "conviction": 0.67,
+      "pnl_pct": 8.78,
+      "reason": "time",
+      "as_of": "2026-09-14"
     }
   ]
 }
