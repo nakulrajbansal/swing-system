@@ -6580,6 +6580,104 @@
       },
       "weight": 1.0,
       "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended IQV did not pay -0.4% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "IQV",
+        "as_of": "2026-10-02",
+        "pnl_pct": -0.38,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended CRL paid +5.7% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "CRL",
+        "as_of": "2026-10-02",
+        "pnl_pct": 5.73,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended ZBRA paid +6.4% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "ZBRA",
+        "as_of": "2026-10-02",
+        "pnl_pct": 6.4,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended NTAP paid +6.0% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "NTAP",
+        "as_of": "2026-10-02",
+        "pnl_pct": 6.02,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended WDAY did not pay -0.8% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "WDAY",
+        "as_of": "2026-10-02",
+        "pnl_pct": -0.76,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "stated convictions run ~22pp ABOVE the realized win rate (45% over 341 scored calls) - treat conviction as optimistic and demand more confirmation before sizing up",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-10-02",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "hidden-gem picks are NOT paying (37% of 84 scored) - demand stronger confirmation before trusting this lens",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-10-02",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
     }
   ],
   "outcomes": [
@@ -9270,6 +9368,46 @@
       "pnl_pct": 7.06,
       "reason": "time",
       "as_of": "2026-10-01"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "IQV",
+      "conviction": 0.67,
+      "pnl_pct": -0.38,
+      "reason": "time",
+      "as_of": "2026-10-02"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "CRL",
+      "conviction": 0.67,
+      "pnl_pct": 5.73,
+      "reason": "time",
+      "as_of": "2026-10-02"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "ZBRA",
+      "conviction": 0.67,
+      "pnl_pct": 6.4,
+      "reason": "time",
+      "as_of": "2026-10-02"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "NTAP",
+      "conviction": 0.67,
+      "pnl_pct": 6.02,
+      "reason": "time",
+      "as_of": "2026-10-02"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "WDAY",
+      "conviction": 0.67,
+      "pnl_pct": -0.76,
+      "reason": "time",
+      "as_of": "2026-10-02"
     }
   ]
 }
