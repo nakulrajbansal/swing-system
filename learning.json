@@ -7140,6 +7140,174 @@
       },
       "weight": 1.0,
       "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended HPQ did not pay -4.5% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "HPQ",
+        "as_of": "2026-10-12",
+        "pnl_pct": -4.51,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended ANET paid +3.6% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "ANET",
+        "as_of": "2026-10-12",
+        "pnl_pct": 3.58,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended DELL paid +7.2% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "DELL",
+        "as_of": "2026-10-12",
+        "pnl_pct": 7.21,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended VEEV paid +3.6% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "VEEV",
+        "as_of": "2026-10-12",
+        "pnl_pct": 3.64,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended WDAY did not pay -1.2% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "WDAY",
+        "as_of": "2026-10-12",
+        "pnl_pct": -1.16,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended SMCI did not pay -4.6% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "SMCI",
+        "as_of": "2026-10-13",
+        "pnl_pct": -4.63,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended MPC paid +9.2% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "MPC",
+        "as_of": "2026-10-13",
+        "pnl_pct": 9.2,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended ANET paid +3.1% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "ANET",
+        "as_of": "2026-10-13",
+        "pnl_pct": 3.12,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended CRL paid +5.2% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "CRL",
+        "as_of": "2026-10-13",
+        "pnl_pct": 5.24,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended WDAY paid +0.8% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "WDAY",
+        "as_of": "2026-10-13",
+        "pnl_pct": 0.8,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "stated convictions run ~20pp ABOVE the realized win rate (47% over 376 scored calls) - treat conviction as optimistic and demand more confirmation before sizing up",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-10-13",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "hidden-gem picks are NOT paying (40% of 91 scored) - demand stronger confirmation before trusting this lens",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-10-13",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
     }
   ],
   "outcomes": [
@@ -10070,6 +10238,86 @@
       "pnl_pct": 4.09,
       "reason": "time",
       "as_of": "2026-10-09"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "HPQ",
+      "conviction": 0.67,
+      "pnl_pct": -4.51,
+      "reason": "time",
+      "as_of": "2026-10-12"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "ANET",
+      "conviction": 0.67,
+      "pnl_pct": 3.58,
+      "reason": "time",
+      "as_of": "2026-10-12"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "DELL",
+      "conviction": 0.67,
+      "pnl_pct": 7.21,
+      "reason": "time",
+      "as_of": "2026-10-12"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "VEEV",
+      "conviction": 0.67,
+      "pnl_pct": 3.64,
+      "reason": "time",
+      "as_of": "2026-10-12"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "WDAY",
+      "conviction": 0.67,
+      "pnl_pct": -1.16,
+      "reason": "time",
+      "as_of": "2026-10-12"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "SMCI",
+      "conviction": 0.67,
+      "pnl_pct": -4.63,
+      "reason": "time",
+      "as_of": "2026-10-13"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "MPC",
+      "conviction": 0.67,
+      "pnl_pct": 9.2,
+      "reason": "time",
+      "as_of": "2026-10-13"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "ANET",
+      "conviction": 0.67,
+      "pnl_pct": 3.12,
+      "reason": "time",
+      "as_of": "2026-10-13"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "CRL",
+      "conviction": 0.67,
+      "pnl_pct": 5.24,
+      "reason": "time",
+      "as_of": "2026-10-13"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "WDAY",
+      "conviction": 0.67,
+      "pnl_pct": 0.8,
+      "reason": "time",
+      "as_of": "2026-10-13"
     }
   ]
 }
