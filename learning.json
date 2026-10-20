@@ -7504,6 +7504,244 @@
       },
       "weight": 1.0,
       "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended VEEV paid +9.5% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "VEEV",
+        "as_of": "2026-10-19",
+        "pnl_pct": 9.47,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended DELL did not pay -10.2% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "DELL",
+        "as_of": "2026-10-19",
+        "pnl_pct": -10.16,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended ZBRA did not pay -4.3% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "ZBRA",
+        "as_of": "2026-10-19",
+        "pnl_pct": -4.35,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended MPC paid +10.6% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "MPC",
+        "as_of": "2026-10-19",
+        "pnl_pct": 10.57,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended VLO paid +6.1% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "VLO",
+        "as_of": "2026-10-19",
+        "pnl_pct": 6.08,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended VEEV paid +9.9% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "VEEV",
+        "as_of": "2026-10-19",
+        "pnl_pct": 9.86,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended HPQ did not pay -6.9% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "HPQ",
+        "as_of": "2026-10-19",
+        "pnl_pct": -6.92,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended ZBRA did not pay -4.4% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "ZBRA",
+        "as_of": "2026-10-19",
+        "pnl_pct": -4.41,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended DELL did not pay -10.2% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "DELL",
+        "as_of": "2026-10-19",
+        "pnl_pct": -10.16,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended SWKS did not pay -4.5% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "SWKS",
+        "as_of": "2026-10-19",
+        "pnl_pct": -4.47,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended VEEV paid +9.0% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "VEEV",
+        "as_of": "2026-10-20",
+        "pnl_pct": 8.96,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended HPQ did not pay -7.5% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "HPQ",
+        "as_of": "2026-10-20",
+        "pnl_pct": -7.49,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended PSX paid +4.1% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "PSX",
+        "as_of": "2026-10-20",
+        "pnl_pct": 4.11,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended DELL did not pay -10.0% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "DELL",
+        "as_of": "2026-10-20",
+        "pnl_pct": -9.95,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended SMCI did not pay -10.0% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "SMCI",
+        "as_of": "2026-10-20",
+        "pnl_pct": -10.03,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "stated convictions run ~20pp ABOVE the realized win rate (47% over 401 scored calls) - treat conviction as optimistic and demand more confirmation before sizing up",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-10-20",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "hidden-gem picks are NOT paying (40% of 96 scored) - demand stronger confirmation before trusting this lens",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-10-20",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
     }
   ],
   "outcomes": [
@@ -10594,6 +10832,126 @@
       "pnl_pct": -10.78,
       "reason": "stop",
       "as_of": "2026-10-15"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "VEEV",
+      "conviction": 0.67,
+      "pnl_pct": 9.47,
+      "reason": "time",
+      "as_of": "2026-10-19"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "DELL",
+      "conviction": 0.67,
+      "pnl_pct": -10.16,
+      "reason": "stop",
+      "as_of": "2026-10-19"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "ZBRA",
+      "conviction": 0.67,
+      "pnl_pct": -4.35,
+      "reason": "time",
+      "as_of": "2026-10-19"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "MPC",
+      "conviction": 0.67,
+      "pnl_pct": 10.57,
+      "reason": "time",
+      "as_of": "2026-10-19"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "VLO",
+      "conviction": 0.67,
+      "pnl_pct": 6.08,
+      "reason": "time",
+      "as_of": "2026-10-19"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "VEEV",
+      "conviction": 0.67,
+      "pnl_pct": 9.86,
+      "reason": "time",
+      "as_of": "2026-10-19"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "HPQ",
+      "conviction": 0.67,
+      "pnl_pct": -6.92,
+      "reason": "time",
+      "as_of": "2026-10-19"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "ZBRA",
+      "conviction": 0.67,
+      "pnl_pct": -4.41,
+      "reason": "time",
+      "as_of": "2026-10-19"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "DELL",
+      "conviction": 0.67,
+      "pnl_pct": -10.16,
+      "reason": "stop",
+      "as_of": "2026-10-19"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "SWKS",
+      "conviction": 0.67,
+      "pnl_pct": -4.47,
+      "reason": "time",
+      "as_of": "2026-10-19"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "VEEV",
+      "conviction": 0.67,
+      "pnl_pct": 8.96,
+      "reason": "time",
+      "as_of": "2026-10-20"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "HPQ",
+      "conviction": 0.67,
+      "pnl_pct": -7.49,
+      "reason": "time",
+      "as_of": "2026-10-20"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "PSX",
+      "conviction": 0.67,
+      "pnl_pct": 4.11,
+      "reason": "time",
+      "as_of": "2026-10-20"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "DELL",
+      "conviction": 0.67,
+      "pnl_pct": -9.95,
+      "reason": "stop",
+      "as_of": "2026-10-20"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "SMCI",
+      "conviction": 0.67,
+      "pnl_pct": -10.03,
+      "reason": "stop",
+      "as_of": "2026-10-20"
     }
   ]
 }
