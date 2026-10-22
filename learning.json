@@ -7840,6 +7840,104 @@
       },
       "weight": 1.0,
       "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended SMCI did not pay -10.8% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "SMCI",
+        "as_of": "2026-10-22",
+        "pnl_pct": -10.85,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended RVTY paid +0.6% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "RVTY",
+        "as_of": "2026-10-22",
+        "pnl_pct": 0.64,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended VLO paid +0.2% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "VLO",
+        "as_of": "2026-10-22",
+        "pnl_pct": 0.17,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended VEEV paid +8.3% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "VEEV",
+        "as_of": "2026-10-22",
+        "pnl_pct": 8.35,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended PLTR did not pay -6.4% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "PLTR",
+        "as_of": "2026-10-22",
+        "pnl_pct": -6.35,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "stated convictions run ~20pp ABOVE the realized win rate (47% over 411 scored calls) - treat conviction as optimistic and demand more confirmation before sizing up",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-10-22",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "hidden-gem picks are NOT paying (39% of 98 scored) - demand stronger confirmation before trusting this lens",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-10-22",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
     }
   ],
   "outcomes": [
@@ -11090,6 +11188,46 @@
       "pnl_pct": -10.06,
       "reason": "stop",
       "as_of": "2026-10-21"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "SMCI",
+      "conviction": 0.67,
+      "pnl_pct": -10.85,
+      "reason": "stop",
+      "as_of": "2026-10-22"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "RVTY",
+      "conviction": 0.67,
+      "pnl_pct": 0.64,
+      "reason": "time",
+      "as_of": "2026-10-22"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "VLO",
+      "conviction": 0.67,
+      "pnl_pct": 0.17,
+      "reason": "time",
+      "as_of": "2026-10-22"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "VEEV",
+      "conviction": 0.67,
+      "pnl_pct": 8.35,
+      "reason": "time",
+      "as_of": "2026-10-22"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "PLTR",
+      "conviction": 0.67,
+      "pnl_pct": -6.35,
+      "reason": "stop",
+      "as_of": "2026-10-22"
     }
   ]
 }
