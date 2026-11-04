@@ -8484,6 +8484,104 @@
       },
       "weight": 1.0,
       "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended ZBRA did not pay -5.2% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "ZBRA",
+        "as_of": "2026-11-04",
+        "pnl_pct": -5.23,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended VLO did not pay -7.6% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "VLO",
+        "as_of": "2026-11-04",
+        "pnl_pct": -7.59,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended RVTY did not pay -3.6% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "RVTY",
+        "as_of": "2026-11-04",
+        "pnl_pct": -3.62,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended IQV did not pay -5.7% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "IQV",
+        "as_of": "2026-11-04",
+        "pnl_pct": -5.71,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended PLTR did not pay -8.2% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "PLTR",
+        "as_of": "2026-11-04",
+        "pnl_pct": -8.16,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "stated convictions run ~20pp ABOVE the realized win rate (47% over 446 scored calls) - treat conviction as optimistic and demand more confirmation before sizing up",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-11-04",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "hidden-gem picks are NOT paying (39% of 110 scored) - demand stronger confirmation before trusting this lens",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-11-04",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
     }
   ],
   "outcomes": [
@@ -12014,6 +12112,46 @@
       "pnl_pct": -8.47,
       "reason": "stop",
       "as_of": "2026-11-03"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "ZBRA",
+      "conviction": 0.67,
+      "pnl_pct": -5.23,
+      "reason": "stop",
+      "as_of": "2026-11-04"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "VLO",
+      "conviction": 0.67,
+      "pnl_pct": -7.59,
+      "reason": "stop",
+      "as_of": "2026-11-04"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "RVTY",
+      "conviction": 0.67,
+      "pnl_pct": -3.62,
+      "reason": "time",
+      "as_of": "2026-11-04"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "IQV",
+      "conviction": 0.67,
+      "pnl_pct": -5.71,
+      "reason": "stop",
+      "as_of": "2026-11-04"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "PLTR",
+      "conviction": 0.67,
+      "pnl_pct": -8.16,
+      "reason": "stop",
+      "as_of": "2026-11-04"
     }
   ]
 }
