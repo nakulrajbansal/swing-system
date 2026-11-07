@@ -11265,5 +11265,43 @@
     "status": "open",
     "hidden_gem": false,
     "moat_stance": "bullish"
+  },
+  {
+    "id": "2026-11-07:RVTY:screen-sp500",
+    "date": "2026-11-07",
+    "symbol": "RVTY",
+    "action": "buy",
+    "sector": "Health Care",
+    "entry": 155.11,
+    "stop": 139.49,
+    "target": 186.35,
+    "conviction": 0.67,
+    "hold_days": 10,
+    "exit_by": "2026-11-20",
+    "thesis": "Confluence of +57% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
+    "setup_type": "confluence_swing",
+    "source": "screen-sp500",
+    "status": "open",
+    "hidden_gem": false,
+    "moat_stance": "bullish"
+  },
+  {
+    "id": "2026-11-07:MTD:screen-sp500",
+    "date": "2026-11-07",
+    "symbol": "MTD",
+    "action": "buy",
+    "sector": "Health Care",
+    "entry": 1722.15,
+    "stop": 1626.63,
+    "target": 1913.19,
+    "conviction": 0.67,
+    "hold_days": 10,
+    "exit_by": "2026-11-20",
+    "thesis": "Confluence of price within 0% of its 52-week high; +60% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
+    "setup_type": "confluence_swing",
+    "source": "screen-sp500",
+    "status": "open",
+    "hidden_gem": false,
+    "moat_stance": "bullish"
   }
 ]
