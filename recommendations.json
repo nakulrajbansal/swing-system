@@ -10578,9 +10578,13 @@
     "thesis": "Confluence of price within 3% of its 52-week high; +104% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
     "setup_type": "confluence_swing",
     "source": "screen-sp500",
-    "status": "open",
+    "status": "evaluated",
     "hidden_gem": false,
-    "moat_stance": "neutral"
+    "moat_stance": "neutral",
+    "return_pct": -7.13,
+    "outcome": "stop",
+    "evaluated_on": "2026-11-10",
+    "excess_pct": -4.59
   },
   {
     "id": "2026-10-28:VLO:screen-sp500",
@@ -10597,9 +10601,13 @@
     "thesis": "Confluence of +79% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
     "setup_type": "confluence_swing",
     "source": "screen-sp500",
-    "status": "open",
+    "status": "evaluated",
     "hidden_gem": false,
-    "moat_stance": "neutral"
+    "moat_stance": "neutral",
+    "return_pct": -7.95,
+    "outcome": "stop",
+    "evaluated_on": "2026-11-10",
+    "excess_pct": -5.41
   },
   {
     "id": "2026-10-28:P:screen-sp500",
@@ -10616,9 +10624,13 @@
     "thesis": "Confluence of +85% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
     "setup_type": "confluence_swing",
     "source": "screen-sp500",
-    "status": "open",
+    "status": "evaluated",
     "hidden_gem": false,
-    "moat_stance": "bullish"
+    "moat_stance": "bullish",
+    "return_pct": -12.14,
+    "outcome": "stop",
+    "evaluated_on": "2026-11-10",
+    "excess_pct": -9.6
   },
   {
     "id": "2026-10-28:PLTR:screen-sp500",
@@ -10635,9 +10647,13 @@
     "thesis": "Confluence of price within 5% of its 52-week high; +41% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
     "setup_type": "confluence_swing",
     "source": "screen-sp500",
-    "status": "open",
+    "status": "evaluated",
     "hidden_gem": false,
-    "moat_stance": "bullish"
+    "moat_stance": "bullish",
+    "return_pct": -8.11,
+    "outcome": "stop",
+    "evaluated_on": "2026-11-10",
+    "excess_pct": -5.57
   },
   {
     "id": "2026-10-28:PTC:screen-sp500",
@@ -10654,9 +10670,13 @@
     "thesis": "Confluence of price within 5% of its 52-week high; +42% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
     "setup_type": "confluence_swing",
     "source": "screen-sp500",
-    "status": "open",
+    "status": "evaluated",
     "hidden_gem": true,
-    "moat_stance": "bullish"
+    "moat_stance": "bullish",
+    "return_pct": 0.46,
+    "outcome": "time",
+    "evaluated_on": "2026-11-10",
+    "excess_pct": 3.0
   },
   {
     "id": "2026-10-29:P:screen-sp500",
@@ -10673,9 +10693,13 @@
     "thesis": "Confluence of +97% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
     "setup_type": "confluence_swing",
     "source": "screen-sp500",
-    "status": "open",
+    "status": "evaluated",
     "hidden_gem": false,
-    "moat_stance": "bullish"
+    "moat_stance": "bullish",
+    "return_pct": -11.52,
+    "outcome": "stop",
+    "evaluated_on": "2026-11-10",
+    "excess_pct": -9.35
   },
   {
     "id": "2026-10-29:PLTR:screen-sp500",
@@ -10692,9 +10716,13 @@
     "thesis": "Confluence of price within 5% of its 52-week high; +44% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
     "setup_type": "confluence_swing",
     "source": "screen-sp500",
-    "status": "open",
+    "status": "evaluated",
     "hidden_gem": false,
-    "moat_stance": "bullish"
+    "moat_stance": "bullish",
+    "return_pct": -7.9,
+    "outcome": "stop",
+    "evaluated_on": "2026-11-10",
+    "excess_pct": -5.73
   },
   {
     "id": "2026-10-29:RVTY:screen-sp500",
@@ -10711,9 +10739,13 @@
     "thesis": "Confluence of price within 0% of its 52-week high; +97% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
     "setup_type": "confluence_swing",
     "source": "screen-sp500",
-    "status": "open",
+    "status": "evaluated",
     "hidden_gem": false,
-    "moat_stance": "bullish"
+    "moat_stance": "bullish",
+    "return_pct": -7.06,
+    "outcome": "stop",
+    "evaluated_on": "2026-11-10",
+    "excess_pct": -4.89
   },
   {
     "id": "2026-10-29:VEEV:screen-sp500",
@@ -10730,9 +10762,13 @@
     "thesis": "Confluence of price within 3% of its 52-week high; +98% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
     "setup_type": "confluence_swing",
     "source": "screen-sp500",
-    "status": "open",
+    "status": "evaluated",
     "hidden_gem": false,
-    "moat_stance": "bullish"
+    "moat_stance": "bullish",
+    "return_pct": -1.27,
+    "outcome": "time",
+    "evaluated_on": "2026-11-10",
+    "excess_pct": 0.9
   },
   {
     "id": "2026-10-29:PTC:screen-sp500",
@@ -10749,9 +10785,13 @@
     "thesis": "Confluence of price within 4% of its 52-week high; +42% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
     "setup_type": "confluence_swing",
     "source": "screen-sp500",
-    "status": "open",
+    "status": "evaluated",
     "hidden_gem": true,
-    "moat_stance": "bullish"
+    "moat_stance": "bullish",
+    "return_pct": 0.55,
+    "outcome": "time",
+    "evaluated_on": "2026-11-10",
+    "excess_pct": 2.72
   },
   {
     "id": "2026-10-30:VEEV:screen-sp500",
@@ -11302,6 +11342,101 @@
     "source": "screen-sp500",
     "status": "open",
     "hidden_gem": false,
+    "moat_stance": "bullish"
+  },
+  {
+    "id": "2026-11-10:RVTY:screen-sp500",
+    "date": "2026-11-10",
+    "symbol": "RVTY",
+    "action": "buy",
+    "sector": "Health Care",
+    "entry": 160.72,
+    "stop": 145.1,
+    "target": 191.96,
+    "conviction": 0.67,
+    "hold_days": 10,
+    "exit_by": "2026-11-23",
+    "thesis": "Confluence of price within 3% of its 52-week high; +62% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
+    "setup_type": "confluence_swing",
+    "source": "screen-sp500",
+    "status": "open",
+    "hidden_gem": false,
+    "moat_stance": "bullish"
+  },
+  {
+    "id": "2026-11-10:TMO:screen-sp500",
+    "date": "2026-11-10",
+    "symbol": "TMO",
+    "action": "buy",
+    "sector": "Health Care",
+    "entry": 721.63,
+    "stop": 675.84,
+    "target": 813.21,
+    "conviction": 0.67,
+    "hold_days": 10,
+    "exit_by": "2026-11-23",
+    "thesis": "Confluence of price within 0% of its 52-week high; +57% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
+    "setup_type": "confluence_swing",
+    "source": "screen-sp500",
+    "status": "open",
+    "hidden_gem": false,
+    "moat_stance": "neutral"
+  },
+  {
+    "id": "2026-11-10:A:screen-sp500",
+    "date": "2026-11-10",
+    "symbol": "A",
+    "action": "buy",
+    "sector": "Health Care",
+    "entry": 180.17,
+    "stop": 169.39,
+    "target": 201.72,
+    "conviction": 0.67,
+    "hold_days": 10,
+    "exit_by": "2026-11-23",
+    "thesis": "Confluence of price within 1% of its 52-week high; +60% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
+    "setup_type": "confluence_swing",
+    "source": "screen-sp500",
+    "status": "open",
+    "hidden_gem": false,
+    "moat_stance": "bullish"
+  },
+  {
+    "id": "2026-11-10:ACN:screen-sp500",
+    "date": "2026-11-10",
+    "symbol": "ACN",
+    "action": "buy",
+    "sector": "Information Technology",
+    "entry": 254.37,
+    "stop": 233.48,
+    "target": 296.14,
+    "conviction": 0.67,
+    "hold_days": 10,
+    "exit_by": "2026-11-23",
+    "thesis": "Confluence of +53% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
+    "setup_type": "confluence_swing",
+    "source": "screen-sp500",
+    "status": "open",
+    "hidden_gem": false,
+    "moat_stance": "bullish"
+  },
+  {
+    "id": "2026-11-10:PTC:screen-sp500",
+    "date": "2026-11-10",
+    "symbol": "PTC",
+    "action": "buy",
+    "sector": "Information Technology",
+    "entry": 195.87,
+    "stop": 191.48,
+    "target": 204.65,
+    "conviction": 0.67,
+    "hold_days": 10,
+    "exit_by": "2026-11-23",
+    "thesis": "Confluence of price within 0% of its 52-week high; +36% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
+    "setup_type": "confluence_swing",
+    "source": "screen-sp500",
+    "status": "open",
+    "hidden_gem": true,
     "moat_stance": "bullish"
   }
 ]
