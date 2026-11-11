@@ -8946,6 +8946,104 @@
       },
       "weight": 1.0,
       "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended VEEV did not pay -2.4% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "VEEV",
+        "as_of": "2026-11-11",
+        "pnl_pct": -2.37,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended P did not pay -11.3% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "P",
+        "as_of": "2026-11-11",
+        "pnl_pct": -11.28,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended ZBRA did not pay -5.5% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "ZBRA",
+        "as_of": "2026-11-11",
+        "pnl_pct": -5.47,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended PLTR did not pay -7.8% (exit: stop).",
+        "thesis_correct": false,
+        "execution_quality": "stopped",
+        "symbol": "PLTR",
+        "as_of": "2026-11-11",
+        "pnl_pct": -7.81,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended PTC paid +0.5% (exit: time).",
+        "thesis_correct": true,
+        "execution_quality": "clean",
+        "symbol": "PTC",
+        "as_of": "2026-11-11",
+        "pnl_pct": 0.52,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "stated convictions run ~22pp ABOVE the realized win rate (45% over 471 scored calls) - treat conviction as optimistic and demand more confirmation before sizing up",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-11-11",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "hidden-gem picks are NOT paying (40% of 116 scored) - demand stronger confirmation before trusting this lens",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-11-11",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
     }
   ],
   "outcomes": [
@@ -12676,6 +12774,46 @@
       "pnl_pct": 0.55,
       "reason": "time",
       "as_of": "2026-11-10"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "VEEV",
+      "conviction": 0.67,
+      "pnl_pct": -2.37,
+      "reason": "time",
+      "as_of": "2026-11-11"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "P",
+      "conviction": 0.67,
+      "pnl_pct": -11.28,
+      "reason": "stop",
+      "as_of": "2026-11-11"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "ZBRA",
+      "conviction": 0.67,
+      "pnl_pct": -5.47,
+      "reason": "stop",
+      "as_of": "2026-11-11"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "PLTR",
+      "conviction": 0.67,
+      "pnl_pct": -7.81,
+      "reason": "stop",
+      "as_of": "2026-11-11"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "PTC",
+      "conviction": 0.67,
+      "pnl_pct": 0.52,
+      "reason": "time",
+      "as_of": "2026-11-11"
     }
   ]
 }
