@@ -9380,6 +9380,48 @@
       },
       "weight": 1.0,
       "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended RVTY did not pay -4.7% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "RVTY",
+        "as_of": "2026-11-18",
+        "pnl_pct": -4.72,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "recommended VEEV did not pay -5.0% (exit: time).",
+        "thesis_correct": false,
+        "execution_quality": "clean",
+        "symbol": "VEEV",
+        "as_of": "2026-11-18",
+        "pnl_pct": -5.04,
+        "conviction": 0.67
+      },
+      "weight": 1.0,
+      "human_reviewed": true
+    },
+    {
+      "lesson": {
+        "setup_type": "confluence_swing",
+        "lesson": "stated convictions run ~22pp ABOVE the realized win rate (45% over 493 scored calls) - treat conviction as optimistic and demand more confirmation before sizing up",
+        "thesis_correct": false,
+        "execution_quality": "curated",
+        "symbol": "",
+        "as_of": "2026-11-18",
+        "pnl_pct": 0.0,
+        "conviction": 0.0
+      },
+      "weight": 1.0,
+      "human_reviewed": true
     }
   ],
   "outcomes": [
@@ -13310,6 +13352,22 @@
       "pnl_pct": -6.58,
       "reason": "time",
       "as_of": "2026-11-17"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "RVTY",
+      "conviction": 0.67,
+      "pnl_pct": -4.72,
+      "reason": "time",
+      "as_of": "2026-11-18"
+    },
+    {
+      "setup_type": "confluence_swing",
+      "symbol": "VEEV",
+      "conviction": 0.67,
+      "pnl_pct": -5.04,
+      "reason": "time",
+      "as_of": "2026-11-18"
     }
   ]
 }
