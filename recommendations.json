@@ -12059,5 +12059,43 @@
     "status": "open",
     "hidden_gem": false,
     "moat_stance": "bearish"
+  },
+  {
+    "id": "2026-11-19:MTD:screen-sp500",
+    "date": "2026-11-19",
+    "symbol": "MTD",
+    "action": "buy",
+    "sector": "Health Care",
+    "entry": 1712.95,
+    "stop": 1625.11,
+    "target": 1888.62,
+    "conviction": 0.67,
+    "hold_days": 10,
+    "exit_by": "2026-12-02",
+    "thesis": "Confluence of price within 3% of its 52-week high; +58% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
+    "setup_type": "confluence_swing",
+    "source": "screen-sp500",
+    "status": "open",
+    "hidden_gem": false,
+    "moat_stance": "bullish"
+  },
+  {
+    "id": "2026-11-19:HUM:screen-sp500",
+    "date": "2026-11-19",
+    "symbol": "HUM",
+    "action": "buy",
+    "sector": "Health Care",
+    "entry": 443.34,
+    "stop": 407.3,
+    "target": 515.41,
+    "conviction": 0.67,
+    "hold_days": 10,
+    "exit_by": "2026-12-02",
+    "thesis": "Confluence of price within 4% of its 52-week high; +46% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
+    "setup_type": "confluence_swing",
+    "source": "screen-sp500",
+    "status": "open",
+    "hidden_gem": false,
+    "moat_stance": "bearish"
   }
 ]
