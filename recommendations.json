@@ -12143,5 +12143,43 @@
     "status": "open",
     "hidden_gem": false,
     "moat_stance": "neutral"
+  },
+  {
+    "id": "2026-11-21:MTD:screen-sp500",
+    "date": "2026-11-21",
+    "symbol": "MTD",
+    "action": "buy",
+    "sector": "Health Care",
+    "entry": 1705.66,
+    "stop": 1614.72,
+    "target": 1887.53,
+    "conviction": 0.67,
+    "hold_days": 10,
+    "exit_by": "2026-12-04",
+    "thesis": "Confluence of price within 3% of its 52-week high; +55% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
+    "setup_type": "confluence_swing",
+    "source": "screen-sp500",
+    "status": "open",
+    "hidden_gem": false,
+    "moat_stance": "bullish"
+  },
+  {
+    "id": "2026-11-21:PTC:screen-sp500",
+    "date": "2026-11-21",
+    "symbol": "PTC",
+    "action": "buy",
+    "sector": "Information Technology",
+    "entry": 195.63,
+    "stop": 192.46,
+    "target": 201.98,
+    "conviction": 0.67,
+    "hold_days": 10,
+    "exit_by": "2026-12-04",
+    "thesis": "Confluence of price within 0% of its 52-week high; +32% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
+    "setup_type": "confluence_swing",
+    "source": "screen-sp500",
+    "status": "open",
+    "hidden_gem": false,
+    "moat_stance": "bullish"
   }
 ]
