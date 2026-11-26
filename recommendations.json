@@ -12337,5 +12337,43 @@
     "status": "open",
     "hidden_gem": false,
     "moat_stance": "neutral"
+  },
+  {
+    "id": "2026-11-26:REGN:screen-sp500",
+    "date": "2026-11-26",
+    "symbol": "REGN",
+    "action": "buy",
+    "sector": "Health Care",
+    "entry": 981.87,
+    "stop": 920.0,
+    "target": 1105.6,
+    "conviction": 0.67,
+    "hold_days": 10,
+    "exit_by": "2026-12-10",
+    "thesis": "Confluence of price within 0% of its 52-week high; +60% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
+    "setup_type": "confluence_swing",
+    "source": "screen-sp500",
+    "status": "open",
+    "hidden_gem": false,
+    "moat_stance": "bullish"
+  },
+  {
+    "id": "2026-11-26:MCK:screen-sp500",
+    "date": "2026-11-26",
+    "symbol": "MCK",
+    "action": "buy",
+    "sector": "Health Care",
+    "entry": 1077.32,
+    "stop": 1026.34,
+    "target": 1179.27,
+    "conviction": 0.67,
+    "hold_days": 10,
+    "exit_by": "2026-12-10",
+    "thesis": "Confluence of price within 2% of its 52-week high; +45% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
+    "setup_type": "confluence_swing",
+    "source": "screen-sp500",
+    "status": "open",
+    "hidden_gem": false,
+    "moat_stance": "bearish"
   }
 ]
