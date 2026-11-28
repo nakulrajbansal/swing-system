@@ -12433,5 +12433,43 @@
     "status": "open",
     "hidden_gem": false,
     "moat_stance": "bearish"
+  },
+  {
+    "id": "2026-11-28:MCK:screen-sp500",
+    "date": "2026-11-28",
+    "symbol": "MCK",
+    "action": "buy",
+    "sector": "Health Care",
+    "entry": 1075.66,
+    "stop": 1026.42,
+    "target": 1174.13,
+    "conviction": 0.67,
+    "hold_days": 10,
+    "exit_by": "2026-12-11",
+    "thesis": "Confluence of price within 3% of its 52-week high; +46% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
+    "setup_type": "confluence_swing",
+    "source": "screen-sp500",
+    "status": "open",
+    "hidden_gem": false,
+    "moat_stance": "bearish"
+  },
+  {
+    "id": "2026-11-28:CAH:screen-sp500",
+    "date": "2026-11-28",
+    "symbol": "CAH",
+    "action": "buy",
+    "sector": "Health Care",
+    "entry": 282.86,
+    "stop": 270.49,
+    "target": 307.6,
+    "conviction": 0.67,
+    "hold_days": 10,
+    "exit_by": "2026-12-11",
+    "thesis": "Confluence of price within 0% of its 52-week high; +46% 6-month momentum suggests under-reaction; expect continuation/drift over the 2-20 day window.",
+    "setup_type": "confluence_swing",
+    "source": "screen-sp500",
+    "status": "open",
+    "hidden_gem": false,
+    "moat_stance": "bearish"
   }
 ]
